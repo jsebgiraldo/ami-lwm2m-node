@@ -11,6 +11,7 @@ project(ami-lwm2m-client
 target_sources(app PRIVATE
     src/main.c
     src/lwm2m_obj_power_meter.c
+    src/firmware_update.c
 )
 
 # Include path for custom LwM2M object internal headers

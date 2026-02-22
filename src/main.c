@@ -28,13 +28,16 @@
 #include "lwm2m_obj_power_meter.h"
 #include "lwm2m_observation.h"
 
+/* Firmware update (Object 5) */
+extern void init_firmware_update(void);
+
 LOG_MODULE_REGISTER(ami_lwm2m, LOG_LEVEL_INF);
 
 /* ---- Configuration ---- */
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "XIAO-ESP32-C6"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.8.0"
+#define CLIENT_FIRMWARE_VER     "0.9.0"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -167,6 +170,9 @@ static int lwm2m_setup(void)
 	if (ret < 0) {
 		LOG_ERR("Failed to create Power Meter inst: %d", ret);
 	}
+
+	/* Initialize firmware update callbacks (Object 5) */
+	init_firmware_update();
 
 	LOG_INF("LwM2M objects configured");
 	LOG_INF("  Server: %s", LWM2M_SERVER_URI);
