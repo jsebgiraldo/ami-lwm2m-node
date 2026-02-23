@@ -26,10 +26,16 @@
 #include <openthread/instance.h>
 
 #include "lwm2m_obj_power_meter.h"
+#include "lwm2m_obj_thread_diag.h"
 #include "lwm2m_observation.h"
 
 /* Firmware update (Object 5) */
 extern void init_firmware_update(void);
+
+/* Thread connectivity monitoring (Objects 4 + 10243) */
+extern void init_connmon_thread(void);
+extern void init_thread_diag_object(void);
+extern void update_connectivity_metrics(void);
 
 LOG_MODULE_REGISTER(ami_lwm2m, LOG_LEVEL_INF);
 
@@ -37,7 +43,7 @@ LOG_MODULE_REGISTER(ami_lwm2m, LOG_LEVEL_INF);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "XIAO-ESP32-C6"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.9.0"
+#define CLIENT_FIRMWARE_VER     "0.10.0"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -173,6 +179,10 @@ static int lwm2m_setup(void)
 
 	/* Initialize firmware update callbacks (Object 5) */
 	init_firmware_update();
+
+	/* Initialize Thread connectivity monitoring */
+	init_thread_diag_object();
+	init_connmon_thread();
 
 	LOG_INF("LwM2M objects configured");
 	LOG_INF("  Server: %s", LWM2M_SERVER_URI);
@@ -353,9 +363,13 @@ int main(void)
 	/* Main loop — update sensors periodically */
 	LOG_INF("Entering sensor loop (every 30 seconds)");
 
+	/* Initial update so resources have real values before first sleep */
+	update_connectivity_metrics();
+
 	while (1) {
 		k_sleep(SENSOR_UPDATE_INTERVAL);
 		update_sensors();
+		update_connectivity_metrics();
 	}
 
 	return 0;
