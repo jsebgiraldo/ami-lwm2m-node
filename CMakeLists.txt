@@ -13,6 +13,10 @@ target_sources(app PRIVATE
     src/lwm2m_obj_power_meter.c
     src/firmware_update.c
     src/thread_conn_monitor.c
+    src/lwm2m_obj_thread_net.c
+    src/lwm2m_obj_thread_neighbor.c
+    src/lwm2m_obj_thread_commission.c
+    src/lwm2m_obj_thread_cli.c
 )
 
 # Include path for custom LwM2M object internal headers

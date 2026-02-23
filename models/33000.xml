@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <LWM2M xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-       xsi:noNamespaceSchemaLocation="http://www.openmobilealliance.org/tech/profiles/LWM2M.xsd">
+       xsi:noNamespaceSchemaLocation="http://www.openmobilealliance.org/tech/profiles/LWM2M-v1_1.xsd">
   <Object ObjectType="MODefinition">
-    <Name>Thread Network Diagnostics</Name>
-    <Description1>Thread 802.15.4 network diagnostics for AMI nodes. Reports role, RLOC16, partition ID, channel, parent link metrics (RSSI, LQI), and MAC counters.</Description1>
+    <Name>Thread MAC Diagnostics</Name>
+    <Description1>Thread MAC-layer counters and device state for AMI nodes. Role, Partition ID, and 8 MAC counters. Network config moved to Object 10483, neighbor info to Object 10485.</Description1>
     <ObjectID>33000</ObjectID>
-    <ObjectURN>urn:oma:lwm2m:x:33000</ObjectURN>
-    <LWM2MVersion>1.0</LWM2MVersion>
-    <ObjectVersion>1.0</ObjectVersion>
+    <ObjectURN>urn:oma:lwm2m:x:33000:2.0</ObjectURN>
+    <LWM2MVersion>1.1</LWM2MVersion>
+    <ObjectVersion>2.0</ObjectVersion>
     <MultipleInstances>Single</MultipleInstances>
     <Mandatory>Optional</Mandatory>
     <Resources>
@@ -22,16 +22,6 @@
         <Description>Current Thread device role: Disabled, Detached, Child, Router, or Leader.</Description>
       </Item>
       <Item ID="1">
-        <Name>RLOC16</Name>
-        <Operations>R</Operations>
-        <MultipleInstances>Single</MultipleInstances>
-        <Mandatory>Mandatory</Mandatory>
-        <Type>Integer</Type>
-        <RangeEnumeration>0..65535</RangeEnumeration>
-        <Units/>
-        <Description>Thread Routing Locator (16-bit short address).</Description>
-      </Item>
-      <Item ID="2">
         <Name>Partition ID</Name>
         <Operations>R</Operations>
         <MultipleInstances>Single</MultipleInstances>
@@ -41,57 +31,7 @@
         <Units/>
         <Description>Thread network partition identifier.</Description>
       </Item>
-      <Item ID="3">
-        <Name>Channel</Name>
-        <Operations>R</Operations>
-        <MultipleInstances>Single</MultipleInstances>
-        <Mandatory>Mandatory</Mandatory>
-        <Type>Integer</Type>
-        <RangeEnumeration>11..26</RangeEnumeration>
-        <Units/>
-        <Description>IEEE 802.15.4 radio channel number.</Description>
-      </Item>
-      <Item ID="4">
-        <Name>Parent RSSI Average</Name>
-        <Operations>R</Operations>
-        <MultipleInstances>Single</MultipleInstances>
-        <Mandatory>Mandatory</Mandatory>
-        <Type>Integer</Type>
-        <RangeEnumeration>-128..0</RangeEnumeration>
-        <Units>dBm</Units>
-        <Description>Average RSSI of the link to the parent router.</Description>
-      </Item>
-      <Item ID="5">
-        <Name>Parent RSSI Last</Name>
-        <Operations>R</Operations>
-        <MultipleInstances>Single</MultipleInstances>
-        <Mandatory>Mandatory</Mandatory>
-        <Type>Integer</Type>
-        <RangeEnumeration>-128..0</RangeEnumeration>
-        <Units>dBm</Units>
-        <Description>Most recent RSSI of the link to the parent router.</Description>
-      </Item>
-      <Item ID="6">
-        <Name>Parent Link Quality In</Name>
-        <Operations>R</Operations>
-        <MultipleInstances>Single</MultipleInstances>
-        <Mandatory>Mandatory</Mandatory>
-        <Type>Integer</Type>
-        <RangeEnumeration>0..3</RangeEnumeration>
-        <Units/>
-        <Description>Link Quality Indicator from the parent (0=unknown, 1=weak, 2=average, 3=good).</Description>
-      </Item>
-      <Item ID="7">
-        <Name>Parent RLOC16</Name>
-        <Operations>R</Operations>
-        <MultipleInstances>Single</MultipleInstances>
-        <Mandatory>Mandatory</Mandatory>
-        <Type>Integer</Type>
-        <RangeEnumeration>0..65535</RangeEnumeration>
-        <Units/>
-        <Description>RLOC16 address of the parent router.</Description>
-      </Item>
-      <Item ID="8">
+      <Item ID="2">
         <Name>TX Total</Name>
         <Operations>R</Operations>
         <MultipleInstances>Single</MultipleInstances>
@@ -101,7 +41,7 @@
         <Units/>
         <Description>Total number of MAC frames transmitted.</Description>
       </Item>
-      <Item ID="9">
+      <Item ID="3">
         <Name>RX Total</Name>
         <Operations>R</Operations>
         <MultipleInstances>Single</MultipleInstances>
@@ -111,7 +51,7 @@
         <Units/>
         <Description>Total number of MAC frames received.</Description>
       </Item>
-      <Item ID="10">
+      <Item ID="4">
         <Name>TX Unicast</Name>
         <Operations>R</Operations>
         <MultipleInstances>Single</MultipleInstances>
@@ -121,7 +61,7 @@
         <Units/>
         <Description>Number of unicast MAC frames transmitted.</Description>
       </Item>
-      <Item ID="11">
+      <Item ID="5">
         <Name>RX Unicast</Name>
         <Operations>R</Operations>
         <MultipleInstances>Single</MultipleInstances>
@@ -131,7 +71,7 @@
         <Units/>
         <Description>Number of unicast MAC frames received.</Description>
       </Item>
-      <Item ID="12">
+      <Item ID="6">
         <Name>TX Broadcast</Name>
         <Operations>R</Operations>
         <MultipleInstances>Single</MultipleInstances>
@@ -141,7 +81,7 @@
         <Units/>
         <Description>Number of broadcast MAC frames transmitted.</Description>
       </Item>
-      <Item ID="13">
+      <Item ID="7">
         <Name>RX Broadcast</Name>
         <Operations>R</Operations>
         <MultipleInstances>Single</MultipleInstances>
@@ -151,7 +91,7 @@
         <Units/>
         <Description>Number of broadcast MAC frames received.</Description>
       </Item>
-      <Item ID="14">
+      <Item ID="8">
         <Name>TX Error Abort</Name>
         <Operations>R</Operations>
         <MultipleInstances>Single</MultipleInstances>
@@ -161,7 +101,7 @@
         <Units/>
         <Description>Number of MAC transmissions aborted due to errors.</Description>
       </Item>
-      <Item ID="15">
+      <Item ID="9">
         <Name>RX Error No Frame</Name>
         <Operations>R</Operations>
         <MultipleInstances>Single</MultipleInstances>
@@ -172,5 +112,6 @@
         <Description>Number of RX errors with no frame received.</Description>
       </Item>
     </Resources>
+    <Description2/>
   </Object>
 </LWM2M>

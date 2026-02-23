@@ -27,12 +27,16 @@
 
 #include "lwm2m_obj_power_meter.h"
 #include "lwm2m_obj_thread_diag.h"
+#include "lwm2m_obj_thread_net.h"
+#include "lwm2m_obj_thread_neighbor.h"
+#include "lwm2m_obj_thread_commission.h"
+#include "lwm2m_obj_thread_cli.h"
 #include "lwm2m_observation.h"
 
 /* Firmware update (Object 5) */
 extern void init_firmware_update(void);
 
-/* Thread connectivity monitoring (Objects 4 + 10243) */
+/* Thread connectivity monitoring (Objects 4 + 33000) */
 extern void init_connmon_thread(void);
 extern void init_thread_diag_object(void);
 extern void update_connectivity_metrics(void);
@@ -43,7 +47,7 @@ LOG_MODULE_REGISTER(ami_lwm2m, LOG_LEVEL_INF);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "XIAO-ESP32-C6"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.11.0"
+#define CLIENT_FIRMWARE_VER     "0.12.0"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -183,6 +187,12 @@ static int lwm2m_setup(void)
 	/* Initialize Thread connectivity monitoring */
 	init_thread_diag_object();
 	init_connmon_thread();
+
+	/* Initialize standard Thread objects (OMA 10483-10486) */
+	init_thread_net_object();
+	init_thread_neighbor_object();
+	init_thread_commission_object();
+	init_thread_cli_object();
 
 	LOG_INF("LwM2M objects configured");
 	LOG_INF("  Server: %s", LWM2M_SERVER_URI);
@@ -365,11 +375,15 @@ int main(void)
 
 	/* Initial update so resources have real values before first sleep */
 	update_connectivity_metrics();
+	update_thread_network();
+	update_thread_neighbors();
 
 	while (1) {
 		k_sleep(SENSOR_UPDATE_INTERVAL);
 		update_sensors();
 		update_connectivity_metrics();
+		update_thread_network();
+		update_thread_neighbors();
 	}
 
 	return 0;

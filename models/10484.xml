@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LWM2M xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:noNamespaceSchemaLocation="http://www.openmobilealliance.org/tech/profiles/LWM2M-v1_1.xsd">
+  <Object ObjectType="MODefinition">
+    <Name>Thread Commissioning</Name>
+    <Description1>This LWM2M object is used to commission Thread devices to the network</Description1>
+    <ObjectID>10484</ObjectID>
+    <ObjectURN>urn:oma:lwm2m:x:10484</ObjectURN>
+    <LWM2MVersion>1.1</LWM2MVersion>
+    <ObjectVersion>1.0</ObjectVersion>
+    <MultipleInstances>Single</MultipleInstances>
+    <Mandatory>Optional</Mandatory>
+    <Resources>
+      <Item ID="0">
+        <Name>Joiner EUI64</Name>
+        <Operations>RW</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>The EUI64 address of the Joiner to commission. Use '*' for wildcard (any Joiner).</Description>
+      </Item>
+      <Item ID="1">
+        <Name>Joiner PSKd</Name>
+        <Operations>RW</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>The Pre-Shared Key for the Device (PSKd) used during commissioning.</Description>
+      </Item>
+      <Item ID="2">
+        <Name>Start Commissioning</Name>
+        <Operations>E</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type/>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>Execute to start the commissioning process with the configured Joiner EUI64 and PSKd.</Description>
+      </Item>
+      <Item ID="3">
+        <Name>Cancel Commissioning</Name>
+        <Operations>E</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type/>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>Execute to cancel the active commissioning process.</Description>
+      </Item>
+      <Item ID="4">
+        <Name>Commissioning State</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>The current state of the commissioner: 0 = Disabled, 1 = Active.</Description>
+      </Item>
+      <Item ID="5">
+        <Name>Pending Joiner IDs</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Multiple</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>A list of Joiner IDs currently pending for commissioning.</Description>
+      </Item>
+    </Resources>
+    <Description2/>
+  </Object>
+</LWM2M>

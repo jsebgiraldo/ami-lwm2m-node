@@ -10,24 +10,12 @@
  *   RID 5: Router IP Addresses — Thread Leader ALOC / parent RLOC address
  *   RID 8: Cell ID = Thread Partition ID
  *
- * Object 33000 (Thread Network Diagnostics) — Custom:
- *   Thread-mesh-specific data NOT available in Object 4:
+ * Object 33000 (Thread MAC Diagnostics) — Custom (reduced v2.0):
  *   RID 0: Thread Role (string: "Disabled"/"Detached"/"Child"/"Router"/"Leader")
- *   RID 1: RLOC16
- *   RID 2: Partition ID
- *   RID 3: Thread Channel
- *   RID 4: Parent RSSI (dBm, average)
- *   RID 5: Parent RSSI Last (dBm)
- *   RID 6: Parent Link Quality In (0-3)
- *   RID 7: Parent RLOC16
- *   RID 8: TX Total (MAC counter)
- *   RID 9: RX Total (MAC counter)
- *   RID 10: TX Unicast (MAC counter)
- *   RID 11: RX Unicast (MAC counter)
- *   RID 12: TX Broadcast (MAC counter)
- *   RID 13: RX Broadcast (MAC counter)
- *   RID 14: TX Error Abort (MAC counter)
- *   RID 15: RX Error No Frame (MAC counter)
+ *   RID 1: Partition ID
+ *   RID 2-9: MAC Counters (TX/RX Total, Unicast, Broadcast, Errors)
+ *
+ * Note: RLOC16, Channel, Parent RSSI/LQI/RLOC moved to Objects 10483/10485.
  */
 
 #include <zephyr/kernel.h>
@@ -50,21 +38,15 @@
 LOG_MODULE_REGISTER(thread_conn, LOG_LEVEL_INF);
 
 /* ================================================================
- * Object 33000 — Thread Network Diagnostics (Custom)
+ * Object 33000 — Thread MAC Diagnostics (Reduced v2.0)
  * ================================================================ */
 
-#define THREAD_DIAG_MAX_ID    16  /* resource IDs 0..15 */
+#define THREAD_DIAG_MAX_ID    10  /* resource IDs 0..9 */
 #define THREAD_DIAG_MAX_INST  1
 
-/* Static data buffers */
+/* Static data buffers — reduced: only Role, Partition ID, MAC counters */
 static char     role_str[12];
-static uint16_t rloc16_val;
 static uint32_t partition_id_val;
-static uint16_t channel_val;
-static int16_t  parent_rssi_avg;
-static int16_t  parent_rssi_last;
-static uint8_t  parent_lqi;
-static uint16_t parent_rloc16_val;
 static uint32_t tx_total;
 static uint32_t rx_total;
 static uint32_t tx_unicast;
@@ -76,15 +58,10 @@ static uint32_t rx_err_no_frame;
 
 /* LwM2M object structures */
 static struct lwm2m_engine_obj thread_diag_obj;
+
 static struct lwm2m_engine_obj_field thread_diag_fields[] = {
 	OBJ_FIELD_DATA(TD_ROLE_RID, R, STRING),
-	OBJ_FIELD_DATA(TD_RLOC16_RID, R, U16),
 	OBJ_FIELD_DATA(TD_PARTITION_ID_RID, R, U32),
-	OBJ_FIELD_DATA(TD_CHANNEL_RID, R, U16),
-	OBJ_FIELD_DATA(TD_PARENT_RSSI_AVG_RID, R, S16),
-	OBJ_FIELD_DATA(TD_PARENT_RSSI_LAST_RID, R, S16),
-	OBJ_FIELD_DATA(TD_PARENT_LQI_RID, R, U8),
-	OBJ_FIELD_DATA(TD_PARENT_RLOC16_RID, R, U16),
 	OBJ_FIELD_DATA(TD_TX_TOTAL_RID, R, U32),
 	OBJ_FIELD_DATA(TD_RX_TOTAL_RID, R, U32),
 	OBJ_FIELD_DATA(TD_TX_UNICAST_RID, R, U32),
@@ -107,20 +84,8 @@ static struct lwm2m_engine_obj_inst *thread_diag_create(uint16_t obj_inst_id)
 
 	INIT_OBJ_RES_DATA(TD_ROLE_RID, thread_diag_res, i, thread_diag_ri, j,
 			  role_str, sizeof(role_str));
-	INIT_OBJ_RES_DATA(TD_RLOC16_RID, thread_diag_res, i, thread_diag_ri, j,
-			  &rloc16_val, sizeof(rloc16_val));
 	INIT_OBJ_RES_DATA(TD_PARTITION_ID_RID, thread_diag_res, i, thread_diag_ri, j,
 			  &partition_id_val, sizeof(partition_id_val));
-	INIT_OBJ_RES_DATA(TD_CHANNEL_RID, thread_diag_res, i, thread_diag_ri, j,
-			  &channel_val, sizeof(channel_val));
-	INIT_OBJ_RES_DATA(TD_PARENT_RSSI_AVG_RID, thread_diag_res, i, thread_diag_ri, j,
-			  &parent_rssi_avg, sizeof(parent_rssi_avg));
-	INIT_OBJ_RES_DATA(TD_PARENT_RSSI_LAST_RID, thread_diag_res, i, thread_diag_ri, j,
-			  &parent_rssi_last, sizeof(parent_rssi_last));
-	INIT_OBJ_RES_DATA(TD_PARENT_LQI_RID, thread_diag_res, i, thread_diag_ri, j,
-			  &parent_lqi, sizeof(parent_lqi));
-	INIT_OBJ_RES_DATA(TD_PARENT_RLOC16_RID, thread_diag_res, i, thread_diag_ri, j,
-			  &parent_rloc16_val, sizeof(parent_rloc16_val));
 	INIT_OBJ_RES_DATA(TD_TX_TOTAL_RID, thread_diag_res, i, thread_diag_ri, j,
 			  &tx_total, sizeof(tx_total));
 	INIT_OBJ_RES_DATA(TD_RX_TOTAL_RID, thread_diag_res, i, thread_diag_ri, j,
@@ -150,7 +115,7 @@ void init_thread_diag_object(void)
 	struct lwm2m_engine_obj_inst *obj_inst = NULL;
 
 	thread_diag_obj.obj_id = THREAD_DIAG_OBJECT_ID;
-	thread_diag_obj.version_major = 1;
+	thread_diag_obj.version_major = 2;
 	thread_diag_obj.version_minor = 0;
 	thread_diag_obj.is_core = false;
 	thread_diag_obj.fields = thread_diag_fields;
@@ -165,7 +130,8 @@ void init_thread_diag_object(void)
 	}
 
 	/* Set initial role */
-	strncpy(role_str, "Detached", sizeof(role_str));
+	lwm2m_set_string(&LWM2M_OBJ(THREAD_DIAG_OBJECT_ID, 0, TD_ROLE_RID),
+			 "Detached");
 }
 
 /* ================================================================
@@ -252,34 +218,12 @@ void update_connectivity_metrics(void)
 
 	/* ---- Thread role ---- */
 	otDeviceRole role = otThreadGetDeviceRole(ot);
-	strncpy(role_str, role_to_str(role), sizeof(role_str) - 1);
-	role_str[sizeof(role_str) - 1] = '\0';
-
-	/* ---- RLOC16 ---- */
-	rloc16_val = otThreadGetRloc16(ot);
+	const char *role_name = role_to_str(role);
+	lwm2m_set_string(&LWM2M_OBJ(THREAD_DIAG_OBJECT_ID, 0, TD_ROLE_RID),
+			 role_name);
 
 	/* ---- Partition ID ---- */
 	partition_id_val = otThreadGetPartitionId(ot);
-
-	/* ---- Channel ---- */
-	channel_val = otLinkGetChannel(ot);
-
-	/* ---- Parent info (for Object 33000) ---- */
-	int8_t rssi_avg = 0, rssi_last = 0;
-
-	if (otThreadGetParentAverageRssi(ot, &rssi_avg) == OT_ERROR_NONE) {
-		parent_rssi_avg = (int16_t)rssi_avg;
-	}
-	if (otThreadGetParentLastRssi(ot, &rssi_last) == OT_ERROR_NONE) {
-		parent_rssi_last = (int16_t)rssi_last;
-	}
-
-	/* Get parent info for LQI and RLOC16 */
-	otRouterInfo parent_info;
-	if (otThreadGetParentInfo(ot, &parent_info) == OT_ERROR_NONE) {
-		parent_lqi = parent_info.mLinkQualityIn;
-		parent_rloc16_val = parent_info.mRloc16;
-	}
 
 	/* ---- REAL RSSI for Object 4 ---- */
 	/* Scan ALL neighbors to find the best RSSI (works for Router AND Child) */
@@ -287,9 +231,16 @@ void update_connectivity_metrics(void)
 	int16_t best_rssi = compute_best_neighbor_rssi(ot, &best_lqi);
 
 	/* Fallback to parent RSSI if neighbor table is empty (e.g. just attached) */
-	if (best_rssi <= -128 && parent_rssi_avg != 0) {
-		best_rssi = parent_rssi_avg;
-		best_lqi = parent_lqi;
+	if (best_rssi <= -128) {
+		int8_t p_rssi = 0;
+		if (otThreadGetParentAverageRssi(ot, &p_rssi) == OT_ERROR_NONE &&
+		    p_rssi != 0) {
+			best_rssi = (int16_t)p_rssi;
+			otRouterInfo pi;
+			if (otThreadGetParentInfo(ot, &pi) == OT_ERROR_NONE) {
+				best_lqi = pi.mLinkQualityIn;
+			}
+		}
 	}
 
 	/* ---- MAC Counters ---- */
@@ -379,15 +330,11 @@ void update_connectivity_metrics(void)
 	lwm2m_notify_observer(4, 0, 3);   /* Link Quality */
 	lwm2m_notify_observer(4, 0, 4);   /* IP Addresses */
 	lwm2m_notify_observer(4, 0, 5);   /* Router IP */
-	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_PARENT_RSSI_AVG_RID);
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_TX_TOTAL_RID);
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_RX_TOTAL_RID);
 
 	LOG_INF("Obj4: RSSI=%ddBm LQI=%u%% IPs=%d router=%s",
 		best_rssi, lqi_to_percent(best_lqi), ip_count, router_ip_str);
-	LOG_INF("Obj33000: role=%s RLOC=0x%04X part=%u ch=%u "
-		"parentRSSI=%d/%d TX=%u RX=%u",
-		role_str, rloc16_val, partition_id_val, channel_val,
-		parent_rssi_avg, parent_rssi_last,
-		tx_total, rx_total);
+	LOG_INF("Obj33000: role=%s part=%u TX=%u RX=%u",
+		role_str, partition_id_val, tx_total, rx_total);
 }

@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LWM2M xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:noNamespaceSchemaLocation="http://www.openmobilealliance.org/tech/profiles/LWM2M-v1_1.xsd">
+  <Object ObjectType="MODefinition">
+    <Name>Thread Neighbor Information</Name>
+    <Description1>This LWM2M object is used to describe the Thread neighbor table with details about each neighbor</Description1>
+    <ObjectID>10485</ObjectID>
+    <ObjectURN>urn:oma:lwm2m:x:10485</ObjectURN>
+    <LWM2MVersion>1.1</LWM2MVersion>
+    <ObjectVersion>1.0</ObjectVersion>
+    <MultipleInstances>Multiple</MultipleInstances>
+    <Mandatory>Optional</Mandatory>
+    <Resources>
+      <Item ID="0">
+        <Name>Role</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>The role of the neighbor: 0 = Child, 1 = Router, 2 = Leader.</Description>
+      </Item>
+      <Item ID="1">
+        <Name>RLOC16</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>The RLOC16 short address of the neighbor in hex format (e.g. 0x0400).</Description>
+      </Item>
+      <Item ID="2">
+        <Name>Age</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration/>
+        <Units>s</Units>
+        <Description>Time in seconds since last heard from this neighbor.</Description>
+      </Item>
+      <Item ID="3">
+        <Name>Average RSSI</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration/>
+        <Units>dBm</Units>
+        <Description>The average RSSI of received frames from this neighbor.</Description>
+      </Item>
+      <Item ID="4">
+        <Name>Last RSSI</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration/>
+        <Units>dBm</Units>
+        <Description>The RSSI of the last received frame from this neighbor.</Description>
+      </Item>
+      <Item ID="5">
+        <Name>Rx On When Idle</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Boolean</Type>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>Whether the neighbor has its receiver on when idle.</Description>
+      </Item>
+      <Item ID="6">
+        <Name>Full Thread Device</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Boolean</Type>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>Whether the neighbor is a Full Thread Device (FTD).</Description>
+      </Item>
+      <Item ID="7">
+        <Name>Full Network Data</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Boolean</Type>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>Whether the neighbor has full network data.</Description>
+      </Item>
+      <Item ID="8">
+        <Name>Extended MAC Address</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>The extended MAC address of the neighbor.</Description>
+      </Item>
+      <Item ID="9">
+        <Name>LQI In</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>The incoming Link Quality Indicator (LQI) value (0-255).</Description>
+      </Item>
+      <Item ID="10">
+        <Name>LQI Out</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>The outgoing Link Quality Indicator (LQI) value (0-255).</Description>
+      </Item>
+      <Item ID="11">
+        <Name>Frame Error Rate</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration>0..100</RangeEnumeration>
+        <Units>%</Units>
+        <Description>The frame error rate percentage for communication with this neighbor.</Description>
+      </Item>
+      <Item ID="12">
+        <Name>Message Error Rate</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration>0..100</RangeEnumeration>
+        <Units>%</Units>
+        <Description>The message error rate percentage for communication with this neighbor.</Description>
+      </Item>
+      <Item ID="13">
+        <Name>Queued Messages</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration/>
+        <Units/>
+        <Description>The number of queued messages for this neighbor.</Description>
+      </Item>
+    </Resources>
+    <Description2/>
+  </Object>
+</LWM2M>
