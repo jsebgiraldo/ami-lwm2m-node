@@ -165,6 +165,8 @@ static int neighbor_delete_cb(uint16_t obj_inst_id)
  * ================================================================ */
 void init_thread_neighbor_object(void)
 {
+	struct lwm2m_engine_obj_inst *obj_inst = NULL;
+
 	thread_neighbor_obj.obj_id = THREAD_NEIGHBOR_OBJECT_ID;
 	thread_neighbor_obj.version_major = 1;
 	thread_neighbor_obj.version_minor = 0;
@@ -176,8 +178,18 @@ void init_thread_neighbor_object(void)
 	thread_neighbor_obj.delete_cb = neighbor_delete_cb;
 	lwm2m_register_obj(&thread_neighbor_obj);
 
-	/* Don't create instances now — they'll be created dynamically
-	 * when neighbors are discovered in update_thread_neighbors() */
+	/* Create instance 0 at init so Leshan always sees at least one */
+	int ret = lwm2m_create_obj_inst(THREAD_NEIGHBOR_OBJECT_ID, 0, &obj_inst);
+	if (ret < 0) {
+		LOG_ERR("Failed to create initial neighbor instance: %d", ret);
+		return;
+	}
+
+	/* Set default string values with proper data_len */
+	lwm2m_set_string(&LWM2M_OBJ(THREAD_NEIGHBOR_OBJECT_ID, 0,
+				     NI_RLOC16_RID), "N/A");
+	lwm2m_set_string(&LWM2M_OBJ(THREAD_NEIGHBOR_OBJECT_ID, 0,
+				     NI_EXT_MAC_RID), "N/A");
 
 	LOG_INF("Object 10485 (Thread Neighbor) initialized (max %d)",
 		NI_MAX_INSTANCES);
@@ -203,7 +215,8 @@ void update_thread_neighbors(void)
 		return;
 	}
 
-	static int prev_count = 0;
+	/* Instance 0 always exists (created in init), so prev starts at 1 */
+	static int prev_count = 1;
 
 	openthread_mutex_lock();
 
@@ -229,7 +242,7 @@ void update_thread_neighbors(void)
 				sizeof(nd[count].ext_mac_str));
 		nd[count].lqi_in = (int32_t)ninfo.mLinkQualityIn;
 		nd[count].lqi_out = 0; /* Not directly available in OT */
-		/* Frame/Message error rates: OT uses 0xFFFF scale → convert to % */
+		/* Frame/Message error rates: OT uses 0xFFFF scale -> convert to % */
 		nd[count].frame_error =
 			(double)ninfo.mFrameErrorRate * 100.0 / 0xFFFF;
 		nd[count].msg_error =
@@ -241,8 +254,11 @@ void update_thread_neighbors(void)
 
 	openthread_mutex_unlock();
 
-	/* Create new instances if count increased */
-	for (int i = prev_count; i < count; i++) {
+	/* Keep at least instance 0 alive (created in init) */
+	int effective = count > 0 ? count : 1;
+
+	/* Create new instances if effective > prev_count (instance 0 already exists) */
+	for (int i = prev_count; i < effective; i++) {
 		struct lwm2m_engine_obj_inst *inst = NULL;
 		int ret = lwm2m_create_obj_inst(THREAD_NEIGHBOR_OBJECT_ID, i, &inst);
 		if (ret < 0) {
@@ -250,16 +266,35 @@ void update_thread_neighbors(void)
 		}
 	}
 
-	/* Delete excess instances if count decreased */
-	for (int i = count; i < prev_count; i++) {
+	/* Delete excess instances if effective < prev_count (never delete inst 0) */
+	for (int i = effective; i < prev_count; i++) {
 		lwm2m_delete_object_inst(&LWM2M_OBJ(THREAD_NEIGHBOR_OBJECT_ID, i));
 		neighbor_inst_created[i] = false;
 	}
 
-	prev_count = count;
+	prev_count = effective;
+
+	/* Update string resources via lwm2m_set_string for proper data_len */
+	for (int i = 0; i < count; i++) {
+		lwm2m_set_string(&LWM2M_OBJ(THREAD_NEIGHBOR_OBJECT_ID, i,
+					     NI_RLOC16_RID),
+				 nd[i].rloc16_str);
+		lwm2m_set_string(&LWM2M_OBJ(THREAD_NEIGHBOR_OBJECT_ID, i,
+					     NI_EXT_MAC_RID),
+				 nd[i].ext_mac_str);
+	}
+
+	/* If no neighbors, clear instance 0 with defaults */
+	if (count == 0) {
+		memset(&nd[0], 0, sizeof(nd[0]));
+		lwm2m_set_string(&LWM2M_OBJ(THREAD_NEIGHBOR_OBJECT_ID, 0,
+					     NI_RLOC16_RID), "N/A");
+		lwm2m_set_string(&LWM2M_OBJ(THREAD_NEIGHBOR_OBJECT_ID, 0,
+					     NI_EXT_MAC_RID), "N/A");
+	}
 
 	/* Notify observers for all active instances */
-	for (int i = 0; i < count; i++) {
+	for (int i = 0; i < effective; i++) {
 		lwm2m_notify_observer(THREAD_NEIGHBOR_OBJECT_ID, i, NI_AVG_RSSI_RID);
 		lwm2m_notify_observer(THREAD_NEIGHBOR_OBJECT_ID, i, NI_AGE_RID);
 	}
