@@ -32,6 +32,7 @@
 #include "lwm2m_obj_thread_commission.h"
 #include "lwm2m_obj_thread_cli.h"
 #include "lwm2m_observation.h"
+#include "dlms_meter.h"
 
 /* Firmware update (Object 5) */
 extern void init_firmware_update(void);
@@ -63,8 +64,12 @@ static char endpoint_name[32];
 static const struct gpio_dt_spec led0 =
 	GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios, {0});
 
-/* ---- Simulated 3-Phase sensor accumulator ---- */
-static double energy_kwh = 0.0;
+/* ---- DLMS Meter readings ---- */
+static struct meter_readings last_readings;
+static bool meter_initialized;
+
+/* Forward declarations */
+static void update_sensors_fallback(void);
 
 /* ---- LwM2M context ---- */
 static struct lwm2m_ctx client_ctx;
@@ -200,101 +205,75 @@ static int lwm2m_setup(void)
 	return 0;
 }
 
-/* ---- Simulated 3-Phase sensor update ---- */
+/* ---- Read real meter data via RS485/DLMS ---- */
 static void update_sensors(void)
 {
-	/* Simulate realistic 3-phase measurements */
-	double v_r = 118.0 + (sys_rand32_get() % 60) / 10.0;  /* 118-124V */
-	double v_s = 118.0 + (sys_rand32_get() % 60) / 10.0;
-	double v_t = 118.0 + (sys_rand32_get() % 60) / 10.0;
+	int ret;
 
-	double i_r = 4.0 + (sys_rand32_get() % 30) / 10.0;    /* 4.0-7.0A */
-	double i_s = 3.5 + (sys_rand32_get() % 30) / 10.0;
-	double i_t = 3.0 + (sys_rand32_get() % 30) / 10.0;
+	if (!meter_initialized) {
+		ret = meter_init();
+		if (ret < 0) {
+			LOG_ERR("Meter init failed: %d — using fallback", ret);
+			update_sensors_fallback();
+			return;
+		}
+		meter_initialized = true;
+	}
 
-	double pf = 0.85 + (sys_rand32_get() % 10) / 100.0;   /* 0.85-0.95 */
-	double freq = 59.9 + (sys_rand32_get() % 20) / 100.0; /* 59.9-60.1 Hz */
+	/* Full poll cycle: connect → read → disconnect */
+	ret = meter_poll(&last_readings);
+	if (ret < 0) {
+		LOG_WRN("Meter poll failed (%d) — using fallback", ret);
+		update_sensors_fallback();
+		return;
+	}
 
-	/* Active power per phase: P = V * I * PF (kW) */
-	double p_r = v_r * i_r * pf / 1000.0;
-	double p_s = v_s * i_s * pf / 1000.0;
-	double p_t = v_t * i_t * pf / 1000.0;
+	/* Push real readings to LwM2M */
+	meter_push_to_lwm2m(&last_readings);
+}
 
-	/* Reactive power: Q = V * I * sin(acos(PF)) (kvar) */
-	double sin_phi = 0.527;  /* approx sin(acos(0.85)) */
-	double q_r = v_r * i_r * sin_phi / 1000.0;
-	double q_s = v_s * i_s * sin_phi / 1000.0;
-	double q_t = v_t * i_t * sin_phi / 1000.0;
+/* ---- Fallback: no meter data available — send zeros ---- */
+static void update_sensors_fallback(void)
+{
+	/* Set all Object 10242 resources to 0.0 */
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_TENSION_R_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_CURRENT_R_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_R_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_POWER_R_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_APPARENT_POWER_R_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_POWER_FACTOR_R_RID), 0.0);
 
-	/* Apparent power: S = V * I (kVA) */
-	double s_r = v_r * i_r / 1000.0;
-	double s_s = v_s * i_s / 1000.0;
-	double s_t = v_t * i_t / 1000.0;
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_TENSION_S_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_CURRENT_S_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_S_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_POWER_S_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_APPARENT_POWER_S_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_POWER_FACTOR_S_RID), 0.0);
 
-	/* Totals */
-	double p_total = p_r + p_s + p_t;
-	double q_total = q_r + q_s + q_t;
-	double s_total = s_r + s_s + s_t;
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_TENSION_T_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_CURRENT_T_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_T_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_POWER_T_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_APPARENT_POWER_T_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_POWER_FACTOR_T_RID), 0.0);
 
-	/* Energy accumulator */
-	energy_kwh += p_total * (30.0 / 3600.0);  /* 30s interval */
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_3P_ACTIVE_POWER_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_3P_REACTIVE_POWER_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_3P_APPARENT_POWER_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_3P_POWER_FACTOR_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_ENERGY_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_ENERGY_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_APPARENT_ENERGY_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_FREQUENCY_RID), 0.0);
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_NEUTRAL_CURRENT_RID), 0.0);
 
-	/* Neutral current (vector sum, simplified) */
-	double i_n = (i_r - i_s) * 0.3;  /* Simplified unbalance */
-	if (i_n < 0) { i_n = -i_n; }
-
-	/* ---- Set all Object 10242 resources ---- */
-
-	/* Phase R */
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_TENSION_R_RID), v_r);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_CURRENT_R_RID), i_r);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_R_RID), p_r);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_POWER_R_RID), q_r);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_APPARENT_POWER_R_RID), s_r);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_POWER_FACTOR_R_RID), pf);
-
-	/* Phase S */
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_TENSION_S_RID), v_s);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_CURRENT_S_RID), i_s);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_S_RID), p_s);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_POWER_S_RID), q_s);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_APPARENT_POWER_S_RID), s_s);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_POWER_FACTOR_S_RID), pf);
-
-	/* Phase T */
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_TENSION_T_RID), v_t);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_CURRENT_T_RID), i_t);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_T_RID), p_t);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_POWER_T_RID), q_t);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_APPARENT_POWER_T_RID), s_t);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_POWER_FACTOR_T_RID), pf);
-
-	/* Totals */
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_3P_ACTIVE_POWER_RID), p_total);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_3P_REACTIVE_POWER_RID), q_total);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_3P_APPARENT_POWER_RID), s_total);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_3P_POWER_FACTOR_RID), pf);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_ENERGY_RID), energy_kwh);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_ENERGY_RID), q_total * (30.0 / 3600.0));
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_APPARENT_ENERGY_RID), s_total * (30.0 / 3600.0));
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_FREQUENCY_RID), freq);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_NEUTRAL_CURRENT_RID), i_n);
-
-	/* Notify observers for key resources */
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_TENSION_R_RID);
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_CURRENT_R_RID);
-	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_TENSION_S_RID);
-	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_CURRENT_S_RID);
-	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_TENSION_T_RID);
-	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_CURRENT_T_RID);
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_3P_ACTIVE_POWER_RID);
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_ENERGY_RID);
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_FREQUENCY_RID);
 
-	LOG_INF("3P: R=%.1fV/%.1fA  S=%.1fV/%.1fA  T=%.1fV/%.1fA  "
-		"P=%.2fkW  E=%.3fkWh  f=%.1fHz",
-		v_r, i_r, v_s, i_s, v_t, i_t,
-		p_total, energy_kwh, freq);
+	LOG_INF("No meter data — sending zeros");
 }
 
 /* ---- Main ---- */
@@ -317,6 +296,10 @@ static void build_endpoint_name(void)
 int main(void)
 {
 	int ret;
+
+	/* raw printk — bypasses LOG system, goes directly to uart_console */
+	printk("\n\n*** AMI MAIN ENTRY ***\n");
+	printk("*** Firmware: v%s ***\n", CLIENT_FIRMWARE_VER);
 
 	LOG_INF("=== AMI LwM2M Node v%s ===", CLIENT_FIRMWARE_VER);
 	LOG_INF("Board: %s", CONFIG_BOARD);

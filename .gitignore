@@ -14,3 +14,40 @@ __pycache__/
 # OS
 Thumbs.db
 .DS_Store
+
+# ---- Debug / temp files (not part of firmware) ----
+
+# TB Edge deployment & debug scripts
+edge/
+
+# Root-level debug/capture scripts
+_ssh_logs.py
+boot_capture.py
+capture_after_powercycle.py
+check_edge.py
+clean_reset.py
+flash_capture.py
+power_cycle_capture.py
+raw_capture.py
+shell_diag.py
+shell_quick.py
+test_shell.py
+
+# Backup / old config files
+CMakeLists_boottest.txt
+CMakeLists_orig.txt
+prj_bisect_thread.conf
+prj_boottest.conf
+prj_full_debug.conf
+prj_orig.conf
+
+# Debug outputs & binary captures
+boot_output.txt
+diag_output.txt
+last_capture.bin
+
+# Test / scratch source
+src/boot_test.c
+
+# Large binaries
+tesis-rev22.pdf

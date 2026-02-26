@@ -35,9 +35,9 @@ LOG_MODULE_REGISTER(thread_cli, LOG_LEVEL_INF);
 /* ================================================================
  * Static data buffers
  * ================================================================ */
-static char cli_version[32];
+static char cli_version[64];
 static char cli_command[128];
-static char cli_result[128];
+static char cli_result[256];
 
 /* ================================================================
  * LwM2M Object structures

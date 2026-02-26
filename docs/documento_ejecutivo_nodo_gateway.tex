@@ -1,0 +1,829 @@
+% =============================================================================
+% DOCUMENTO EJECUTIVO — Nodo IoT Thread/LwM2M y Pasarela de Borde
+% Tesis: Arquitectura IoT Centrada en Pasarelas de Borde
+%        Implementación de Protocolos basados en 6LoWPAN para Smart Energy
+% Autor: Juan Sebastian Giraldo Duque
+% Universidad Nacional de Colombia — Sede Manizales
+% Maestría en Ingeniería / Automatización Industrial
+% Fecha: Febrero 2025
+% =============================================================================
+
+\documentclass[11pt,a4paper]{article}
+
+% --- Paquetes ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-tabla]{babel}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{amsmath}
+\usepackage{siunitx}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+% --- Colores ---
+\definecolor{unal-green}{RGB}{0,100,60}
+\definecolor{thread-blue}{RGB}{30,80,160}
+\definecolor{coap-orange}{RGB}{220,120,30}
+\definecolor{codebg}{RGB}{245,245,248}
+\definecolor{success-green}{RGB}{34,139,34}
+\definecolor{fail-red}{RGB}{200,30,30}
+
+% --- Hyperref ---
+\hypersetup{
+    colorlinks=true,
+    linkcolor=thread-blue,
+    citecolor=unal-green,
+    urlcolor=coap-orange
+}
+
+% --- Listings ---
+\lstset{
+    basicstyle=\ttfamily\footnotesize,
+    backgroundcolor=\color{codebg},
+    frame=single,
+    breaklines=true,
+    tabsize=4,
+    showstringspaces=false,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    keywordstyle=\color{thread-blue}\bfseries,
+    commentstyle=\color{unal-green}\itshape,
+}
+
+% --- Encabezado ---
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textit{Documento Ejecutivo — Nodo IoT y Gateway de Borde}}
+\fancyhead[R]{\small\textit{Giraldo Duque, 2025}}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% --- Formato secciones ---
+\titleformat{\section}
+    {\Large\bfseries\color{unal-green}}{\thesection}{1em}{}
+\titleformat{\subsection}
+    {\large\bfseries\color{thread-blue}}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}
+    {\normalsize\bfseries}{\thesubsubsection}{1em}{}
+
+% =============================================================================
+\begin{document}
+
+% --- Portada ---
+\begin{titlepage}
+\centering
+\vspace*{2cm}
+{\Large\bfseries Universidad Nacional de Colombia}\\[0.3cm]
+{\normalsize Facultad de Ingeniería y Arquitectura — Sede Manizales}\\[0.3cm]
+{\normalsize Departamento de Automatización Industrial}\\[2cm]
+
+{\Huge\bfseries\color{unal-green} Documento Ejecutivo}\\[0.8cm]
+{\LARGE\bfseries Nodo IoT Thread/LwM2M y\\Pasarela de Borde}\\[0.5cm]
+{\large Hallazgos de Implementación y Optimización de Rendimiento}\\[2cm]
+
+{\large Tesis:}\\[0.3cm]
+{\Large\itshape Arquitectura IoT Centrada en Pasarelas de Borde}\\[0.2cm]
+{\large\itshape Implementación de Protocolos basados en 6LoWPAN para Smart Energy}\\[2cm]
+
+{\large\bfseries Juan Sebastian Giraldo Duque}\\[0.3cm]
+{\normalsize Maestría en Ingeniería / Automatización Industrial}\\[3cm]
+
+{\normalsize Manizales, Colombia — Febrero 2025}
+\end{titlepage}
+
+% --- Índice ---
+\tableofcontents
+\newpage
+
+% =============================================================================
+\section{Resumen Ejecutivo}
+% =============================================================================
+
+Este documento sintetiza los hallazgos técnicos obtenidos durante el diseño, implementación y validación del \textbf{Nivel 1} (nodos IoT) y \textbf{Nivel 2} (pasarela de borde) de la arquitectura AMI propuesta en la tesis \textit{``Arquitectura IoT Centrada en Pasarelas de Borde --- Implementación de Protocolos basados en 6LoWPAN para Smart Energy''}. Se documenta:
+
+\begin{enumerate}[leftmargin=1.5cm]
+    \item La arquitectura completa del firmware Zephyr RTOS sobre ESP32-C6 con pila OpenThread 1.4 + LwM2M.
+    \item El modelo de objetos LwM2M implementado: 11 objetos con $\sim$130 recursos.
+    \item La pasarela de borde basada en Raspberry Pi 4 con OTBR + Leshan LwM2M Server.
+    \item Las pruebas de rendimiento CoAP/LwM2M con tres configuraciones de optimización (V1, V2, V3).
+    \item Los hallazgos clave sobre retransmisiones CoAP, temporización Californium y latencias extremo a extremo.
+\end{enumerate}
+
+\noindent\textbf{Resultado principal:} La configuración V3 alcanzó una tasa de éxito del \textbf{97,3\,\%} (214/220 lecturas exitosas) en la lectura de recursos LwM2M a través de la cadena completa Leshan REST API $\rightarrow$ CoAP $\rightarrow$ Thread mesh $\rightarrow$ ESP32-C6, con latencia mediana de \SI{33}{\milli\second} y recuperación de lecturas lentas en la banda de 5--10 segundos gracias a la sinergia entre retransmisiones rápidas Californium y ventana extendida de la API Leshan.
+
+% =============================================================================
+\section{Arquitectura del Sistema}
+% =============================================================================
+
+La arquitectura implementada sigue un modelo jerárquico de tres niveles alineado con ISO/IEC 30141:2024, diseñado para infraestructura de medición avanzada (AMI) en redes de energía inteligente (Smart Energy).
+
+\subsection{Visión General de la Arquitectura}
+
+\begin{table}[H]
+\centering
+\caption{Arquitectura jerárquica de tres niveles del sistema AMI}
+\label{tab:arquitectura}
+\begin{tabularx}{\textwidth}{c l X}
+\toprule
+\textbf{Nivel} & \textbf{Componente} & \textbf{Descripción} \\
+\midrule
+\textbf{1} & Nodos IoT Thread & 60 nodos XIAO ESP32-C6 con Thread mesh (IEEE 802.15.4 / 6LoWPAN / CoAP / LwM2M), conectados a medidores Emsitech P2000-T vía RS-485 DLMS/COSEM \\
+\addlinespace
+\textbf{2} & Pasarela de Borde & Raspberry Pi 4 ejecutando OpenThread Border Router (OTBR) con Leshan LwM2M Server, PostgreSQL+TimescaleDB, Grafana; enlace HaLow STA (IEEE 802.11ah) hacia Nivel 3 \\
+\addlinespace
+\textbf{3} & Backhaul / Cloud & Wi-Fi HaLow (\SI{4}{\mega\bit\per\second}, \SI{1}{\kilo\meter}) vía Morse Micro AP hacia servidor ThingsBoard on-premise o Cloud \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Pila de Protocolos de Comunicación}
+
+La pila completa implementa 7 capas desde la capa física IEEE 802.15.4 hasta LwM2M 1.1:
+
+\begin{table}[H]
+\centering
+\caption{Pila de protocolos del nodo IoT Thread/LwM2M}
+\label{tab:pila}
+\begin{tabularx}{\textwidth}{l l X}
+\toprule
+\textbf{Capa} & \textbf{Protocolo} & \textbf{Implementación} \\
+\midrule
+Aplicación & LwM2M 1.1 & Cliente Zephyr nativo, objetos IPSO Smart Objects \\
+Transporte & CoAP (RFC 7252) & RESTful sobre UDP, extensiones Observe (RFC 7641) \\
+Red IPv6 & 6LoWPAN & Compresión IPHC: headers IPv6/UDP 60 bytes $\rightarrow$ 6--12 bytes \\
+Mesh & Thread 1.4 (FTD) & Red mesh auto-configurable, MLE, Router \\
+MAC & IEEE 802.15.4 & CSMA/CA, ACK automático, \SI{250}{\kilo\bit\per\second} \\
+Física & \SI{2.4}{\giga\hertz} & ESP32-C6 radio, TX \SI{+21}{\dBm}, RX \SI{-105}{\dBm} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\noindent\textbf{MTU efectivo:} \SI{127}{\byte} MAC $-$ \SI{25}{\byte} overhead = \SI{102}{\byte} payload disponible para datos de aplicación. La fragmentación 6LoWPAN permite payloads JSON de hasta \SI{385}{\byte} en 5 fragmentos IEEE 802.15.4.
+
+% =============================================================================
+\section{Nodo IoT: Hardware y Firmware}
+% =============================================================================
+
+\subsection{Plataforma de Hardware: XIAO ESP32-C6}
+
+El nodo IoT se basa en el módulo \textbf{XIAO ESP32-C6} de Seeed Studio (\SI{21 x 17.5}{\milli\meter}), con las siguientes especificaciones:
+
+\begin{table}[H]
+\centering
+\caption{Especificaciones del SoC ESP32-C6 para nodo AMI}
+\label{tab:esp32c6}
+\begin{tabularx}{\textwidth}{l X}
+\toprule
+\textbf{Característica} & \textbf{Valor} \\
+\midrule
+CPU & RISC-V RV32IMAC @ \SI{160}{\mega\hertz} \\
+SRAM & \SI{512}{\kilo\byte} \\
+Flash & \SI{4}{\mega\byte} (SPI) \\
+Radio IEEE 802.15.4 & TX \SI{+21}{\dBm}, RX \SI{-105}{\dBm} \\
+Acelerador criptográfico & AES-256, SHA-256, RSA, ECC \\
+Periféricos & UART$\times$2, SPI, I\textsuperscript{2}C, ADC 12-bit \\
+Alimentación & \SI{5}{\volt} desde puerto auxiliar del medidor, regulado a \SI{3.3}{\volt} \\
+Consumo SoC activo & \SI{19.3}{\milli\ampere} \\
+Consumo sistema completo & \SI{27}{\milli\ampere} (incluyendo RS-485 + LDO) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Plataforma de Firmware: Zephyr RTOS}
+
+El firmware se construye sobre \textbf{Zephyr RTOS 4.3.99} con los siguientes componentes:
+
+\begin{itemize}[leftmargin=1.2cm]
+    \item \textbf{RTOS:} Zephyr (independiente de fabricante, portabilidad multi-chipset)
+    \item \textbf{Board target:} \texttt{xiao\_esp32c6/esp32c6/hpcore}
+    \item \textbf{Build system:} CMake + West (Zephyr meta-tool)
+    \item \textbf{Concurrencia:} 4 hilos cooperativos (\texttt{main}, \texttt{openthread}, \texttt{lwm2m\_engine}, \texttt{net\_mgmt}), stack de \SI{4}{\kilo\byte} cada uno
+\end{itemize}
+
+\subsubsection{Huella de Memoria del Firmware}
+
+\begin{table}[H]
+\centering
+\caption{Consumo de memoria del firmware compilado (v0.12.0)}
+\label{tab:memoria}
+\begin{tabular}{l r r r}
+\toprule
+\textbf{Región} & \textbf{Usado} & \textbf{Disponible} & \textbf{Utilización} \\
+\midrule
+Flash (código + datos) & \SI{603}{\kilo\byte} & \SI{4096}{\kilo\byte} & 14,7\,\% \\
+SRAM (heap + stacks) & \SI{252}{\kilo\byte} & \SI{512}{\kilo\byte} & 49,2\,\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Configuración de Red Thread}
+
+La red Thread se configura mediante Kconfig (\texttt{prj.conf}) con parámetros estáticos que deben coincidir con el OTBR:
+
+\begin{table}[H]
+\centering
+\caption{Parámetros de red Thread configurados}
+\label{tab:thread-params}
+\begin{tabularx}{\textwidth}{l l X}
+\toprule
+\textbf{Parámetro} & \textbf{Valor} & \textbf{Descripción} \\
+\midrule
+Canal & 25 & Canal IEEE 802.15.4 (\SI{2.475}{\giga\hertz}) \\
+PAN ID & 0xABCD (43981) & Identificador de red Personal Area Network \\
+Network Name & \texttt{AMI-Pilot-2025} & Nombre de la red Thread \\
+Extended PAN ID & \texttt{12:34:56:78:90:ab:cd:ef} & Identificador extendido \\
+Network Key & 128 bits (precompartida) & Clave maestra de cifrado \\
+Rol del dispositivo & FTD (Full Thread Device) & Router con capacidad de reenvío \\
+Versión Thread & 1.4 & Con soporte TCP nativo (RFC 9293) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Endpoint LwM2M}
+
+Cada nodo se registra en el servidor Leshan con un nombre de endpoint único derivado de los últimos 2 bytes de la dirección MAC del SoC:
+
+\begin{center}
+\texttt{ami-esp32c6-\textit{XXXX}}
+\end{center}
+
+\noindent Ejemplo: \texttt{ami-esp32c6-25c0}. La comunicación LwM2M se realiza sobre CoAP/UDP hacia la dirección mesh-local del OTBR donde ejecuta Leshan:
+
+\begin{lstlisting}[language=bash,caption={URI del servidor LwM2M}]
+coap://[fdc6:63fd:328d:66df:6a54:12ef:8c67:bd1c]:5683
+\end{lstlisting}
+
+\subsubsection{Parámetros CoAP del Cliente}
+
+\begin{table}[H]
+\centering
+\caption{Configuración CoAP del cliente LwM2M}
+\label{tab:coap-client}
+\begin{tabular}{l r l}
+\toprule
+\textbf{Parámetro} & \textbf{Valor} & \textbf{Descripción} \\
+\midrule
+\texttt{ACK\_TIMEOUT} & \SI{5000}{\milli\second} & Timeout inicial de retransmisión \\
+\texttt{MAX\_RETRANSMIT} & 3 & Máximo reintentos exponenciales \\
+\texttt{BLOCK\_SIZE} & \SI{512}{\byte} & Tamaño de bloque CoAP \\
+\texttt{MAX\_MESSAGES} & 16 & Buffer de mensajes del engine \\
+\texttt{DEFAULT\_LIFETIME} & \SI{300}{\second} & Lifetime de registro LwM2M \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% =============================================================================
+\section{Modelo de Objetos LwM2M}
+% =============================================================================
+
+El firmware implementa un modelo completo de 11 objetos LwM2M con aproximadamente 130 recursos, cubriendo desde objetos estándar OMA hasta objetos custom para diagnóstico Thread.
+
+\subsection{Inventario Completo de Objetos}
+
+\begin{longtable}{r l c l}
+\caption{Objetos LwM2M implementados en el nodo AMI} \label{tab:objetos} \\
+\toprule
+\textbf{ID} & \textbf{Nombre} & \textbf{Inst.} & \textbf{Tipo} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{c}{\textit{(continuación de Tabla \ref{tab:objetos})}} \\
+\toprule
+\textbf{ID} & \textbf{Nombre} & \textbf{Inst.} & \textbf{Tipo} \\
+\midrule
+\endhead
+0 & Security & 1 & OMA estándar \\
+1 & Server & 1 & OMA estándar \\
+3 & Device & 1 & OMA estándar \\
+4 & Connectivity Monitoring & 1 & OMA estándar \\
+5 & Firmware Update & 1 & OMA estándar \\
+10242 & 3-Phase Power Meter & 1 & Custom (31 recursos) \\
+10483 & Thread Network & 1 & Custom (12 recursos) \\
+10484 & Thread Commission & 1 & Custom (6 recursos) \\
+10485 & Thread Neighbor & 0--3 & Custom (14 recursos/inst.) \\
+10486 & Thread CLI & 1 & Custom (4 recursos) \\
+33000 & Thread MAC Diagnostics & 1 & Custom (10 recursos) \\
+\bottomrule
+\end{longtable}
+
+\subsection{Objeto 10242: Medidor de Potencia Trifásico}
+
+El objeto custom 10242 constituye el corazón de la telemetría AMI, mapeando las magnitudes eléctricas de un medidor trifásico Emsitech P2000-T. Contiene \textbf{31 recursos} organizados por fase (R/S/T), totales, energía y parámetros del sistema:
+
+\begin{longtable}{r l c l}
+\caption{Recursos del Objeto 10242 — 3-Phase Power Meter} \label{tab:obj10242} \\
+\toprule
+\textbf{RID} & \textbf{Nombre} & \textbf{Tipo} & \textbf{Unidad} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{c}{\textit{(continuación de Tabla \ref{tab:obj10242})}} \\
+\toprule
+\textbf{RID} & \textbf{Nombre} & \textbf{Tipo} & \textbf{Unidad} \\
+\midrule
+\endhead
+\multicolumn{4}{l}{\textbf{Fase R (L1)}} \\
+0 & Voltage\_R & Float & V \\
+1 & Current\_R & Float & A \\
+2 & Active\_Power\_R & Float & kW \\
+3 & Reactive\_Power\_R & Float & kvar \\
+4 & Apparent\_Power\_R & Float & kVA \\
+5 & Power\_Factor\_R & Float & --- \\
+\addlinespace
+\multicolumn{4}{l}{\textbf{Fase S (L2)}} \\
+6 & Voltage\_S & Float & V \\
+7 & Current\_S & Float & A \\
+8 & Active\_Power\_S & Float & kW \\
+9 & Reactive\_Power\_S & Float & kvar \\
+10 & Apparent\_Power\_S & Float & kVA \\
+11 & Power\_Factor\_S & Float & --- \\
+\addlinespace
+\multicolumn{4}{l}{\textbf{Fase T (L3)}} \\
+12 & Voltage\_T & Float & V \\
+13 & Current\_T & Float & A \\
+14 & Active\_Power\_T & Float & kW \\
+15 & Reactive\_Power\_T & Float & kvar \\
+16 & Apparent\_Power\_T & Float & kVA \\
+17 & Power\_Factor\_T & Float & --- \\
+\addlinespace
+\multicolumn{4}{l}{\textbf{Totales Trifásicos}} \\
+18 & Total\_Active\_Power & Float & kW \\
+19 & Total\_Reactive\_Power & Float & kvar \\
+20 & Total\_Apparent\_Power & Float & kVA \\
+21 & Total\_Power\_Factor & Float & --- \\
+\addlinespace
+\multicolumn{4}{l}{\textbf{Energía Acumulada}} \\
+22 & Active\_Energy & Float & kWh \\
+23 & Reactive\_Energy & Float & kvarh \\
+24 & Apparent\_Energy & Float & kVAh \\
+\addlinespace
+\multicolumn{4}{l}{\textbf{Sistema}} \\
+25 & Frequency & Float & Hz \\
+26 & Neutral\_Current & Float & A \\
+27--30 & Reservado & --- & --- \\
+\bottomrule
+\end{longtable}
+
+\noindent\textbf{Valores simulados} (pendiente integración RS-485 real):
+\begin{itemize}[leftmargin=1.2cm]
+    \item Voltajes: \SI{118}{\volt}--\SI{124}{\volt} (variación aleatoria $\pm$\SI{3}{\volt})
+    \item Corrientes: \SI{3}{\ampere}--\SI{7}{\ampere}
+    \item Factor de potencia: 0,85--0,95
+    \item Frecuencia: \SI{59.9}{\hertz}--\SI{60.1}{\hertz}
+    \item Energía: acumulador incremental cada ciclo de \SI{30}{\second}
+\end{itemize}
+
+\subsection{Objeto 4: Connectivity Monitoring (Datos Reales Thread)}
+
+A diferencia de los valores simulados de potencia, el Objeto 4 se alimenta con \textbf{datos reales} de la red Thread mediante la API de OpenThread:
+
+\begin{table}[H]
+\centering
+\caption{Recursos del Objeto 4 con datos reales Thread}
+\label{tab:obj4}
+\begin{tabularx}{\textwidth}{r l X}
+\toprule
+\textbf{RID} & \textbf{Recurso} & \textbf{Fuente de datos real} \\
+\midrule
+0 & Network Bearer & Valor fijo 21 (IEEE 802.15.4) \\
+2 & Radio Signal Strength & RSSI del mejor vecino (\texttt{otThreadGetNeighborInfoByIndex}) \\
+3 & Link Quality & LQI mapeado: $\{0\rightarrow 0\%, 1\rightarrow 33\%, 2\rightarrow 67\%, 3\rightarrow 100\%\}$ \\
+4 & IP Addresses & Lista real IPv6 de \texttt{otIp6GetUnicastAddresses()} (multi-instancia) \\
+5 & Router IP & Leader ALOC construido: \texttt{mesh-prefix::ff:fe00:fc00} \\
+8 & Cell ID & Partition ID de OpenThread \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\noindent La función \texttt{compute\_best\_neighbor\_rssi()} escanea la tabla de vecinos Thread y retorna el RSSI más fuerte, proporcionando una métrica real de calidad del enlace radio.
+
+\subsection{Objetos Thread Custom (10483--10486, 33000)}
+
+Se diseñaron cinco objetos LwM2M custom para exponer diagnósticos detallados de la red Thread, definidos en archivos XML compatibles con Leshan:
+
+\begin{table}[H]
+\centering
+\caption{Objetos custom de diagnóstico Thread}
+\label{tab:thread-objects}
+\begin{tabularx}{\textwidth}{r l c X}
+\toprule
+\textbf{ID} & \textbf{Nombre} & \textbf{Recursos} & \textbf{Descripción} \\
+\midrule
+10483 & Thread Network & 12 & NetworkName, PAN ID, ExtPanId, Channel, RLOC16, EUI64, direcciones IPv6 (multi-instancia) \\
+\addlinespace
+10484 & Thread Commission & 6 & Joiner EUI64, PSKd, Start/Cancel execute, State, Pending IDs \\
+\addlinespace
+10485 & Thread Neighbor & 14/inst. & Tabla de vecinos (máx.\ 4): Role, RLOC16, Age, AvgRSSI, LastRSSI, RxOnIdle, FTD, ExtMAC, LQI, Frame/Msg errors \\
+\addlinespace
+10486 & Thread CLI & 4 & Version, Command (write), Execute, Result (read) --- interfaz CLI remota \\
+\addlinespace
+33000 & Thread MAC Diag & 10 & Role, Partition ID, 8 contadores MAC (TX/RX total/unicast/broadcast/errors) vía \texttt{otLinkGetCounters()} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\noindent Los modelos XML se encuentran en \texttt{models/\{10483,10484,10485,10486,33000\}.xml} y se cargan en Leshan para habilitar la decodificación correcta de recursos custom.
+
+% =============================================================================
+\section{Pasarela de Borde (Edge Gateway)}
+% =============================================================================
+
+\subsection{Hardware: Raspberry Pi 4}
+
+La pasarela de borde ejecuta sobre \textbf{Raspberry Pi 4 Model B} (\SI{4}{\giga\byte} RAM) con sistema operativo \textbf{OpenWrt 23.05.5} (aarch64). Funciona simultáneamente como:
+
+\begin{enumerate}[leftmargin=1.5cm]
+    \item \textbf{OpenThread Border Router (OTBR):} Puente entre la red Thread mesh y la red IPv6/IPv4 del gateway, utilizando un dongle nRF52840 como Radio Co-Processor (RCP) vía USB.
+    \item \textbf{Servidor LwM2M:} Eclipse Leshan ejecutando como contenedor Docker, exponiendo REST API en puerto 18080 y CoAP en puerto 5683.
+    \item \textbf{Motor de reglas y persistencia:} ThingsBoard Edge con PostgreSQL+TimescaleDB para almacenamiento time-series local.
+\end{enumerate}
+
+\subsection{Servidor Leshan LwM2M}
+
+\textbf{Eclipse Leshan} es la implementación Java de referencia del protocolo LwM2M de Eclipse Foundation. En la arquitectura del piloto:
+
+\begin{table}[H]
+\centering
+\caption{Configuración del servidor Leshan en el gateway}
+\label{tab:leshan}
+\begin{tabularx}{\textwidth}{l X}
+\toprule
+\textbf{Parámetro} & \textbf{Valor} \\
+\midrule
+Versión JAR & Leshan 1.x (Feb 2021) sobre Californium 2.x \\
+Contenedor Docker & \texttt{leshan-srv} en OTBR (\SI{192.168.1.111}{}) \\
+Puerto CoAP & 5683 (UDP, no seguro --- modo NoSec para piloto) \\
+Puerto Web UI & 18080 (REST API + interfaz web de gestión) \\
+Modelos XML custom & 10483, 10484, 10485, 10486, 33000 \\
+Framework CoAP & Eclipse Californium 2.x \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Configuración de Californium (CoAP Engine)}
+
+Un hallazgo crítico de esta investigación fue la importancia de la configuración del motor CoAP \textbf{Californium} que subyace a Leshan. Los parámetros de retransmisión impactan directamente en la tasa de éxito de lecturas LwM2M:
+
+\begin{table}[H]
+\centering
+\caption{Parámetros Californium en el gateway (\texttt{Californium.properties})}
+\label{tab:californium}
+\begin{tabular}{l r l}
+\toprule
+\textbf{Parámetro} & \textbf{Valor} & \textbf{Descripción} \\
+\midrule
+\texttt{ACK\_TIMEOUT} & \SI{2500}{\milli\second} & Timeout inicial de retransmisión \\
+\texttt{ACK\_RANDOM\_FACTOR} & 1,5 & Factor aleatorio ($T_{ret} \in [2500, 3750]$\,ms) \\
+\texttt{MAX\_RETRANSMIT} & 4 & Máximo reintentos (5 intentos total) \\
+\texttt{EXCHANGE\_LIFETIME} & \SI{120000}{\milli\second} & Tiempo máximo de vida de intercambio \\
+\texttt{NSTART} & 1 & Transmisiones concurrentes por peer \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent Con \texttt{ACK\_TIMEOUT=2500} y \texttt{MAX\_RETRANSMIT=4}, el timeline de retransmisiones de Californium es:
+
+\begin{equation}
+\text{Intento 1: } t=0 \quad|\quad \text{Intento 2: } t \approx 2{,}5\text{s} \quad|\quad \text{Intento 3: } t \approx 6{,}3\text{s} \quad|\quad \text{Intento 4: } t \approx 12{,}5\text{s} \quad|\quad \text{Intento 5: } t \approx 22{,}5\text{s}
+\end{equation}
+
+\noindent Este comportamiento de retransmisión rápida (primer retry a \SI{2.5}{\second}) resultó ser fundamental para la recuperación de paquetes perdidos en la red Thread mesh.
+
+% =============================================================================
+\section{Flujo de Datos Extremo a Extremo}
+% =============================================================================
+
+El flujo de datos completo desde la generación de telemetría hasta la lectura vía API sigue esta cadena:
+
+\begin{enumerate}[leftmargin=1.5cm]
+    \item \textbf{Nodo ESP32-C6} genera valores de telemetría (simulados o leídos del medidor vía RS-485/DLMS).
+    \item \textbf{Motor LwM2M de Zephyr} codifica valores en formato TLV/CoAP y los registra como recursos.
+    \item \textbf{Registro LwM2M:} El cliente envía \texttt{Register} al servidor Leshan con lista de objetos soportados.
+    \item \textbf{Leshan REST API} recibe solicitud de lectura HTTP (e.g., \texttt{GET /api/clients/ami-esp32c6-25c0/10242/0/0}).
+    \item \textbf{Californium} traduce la solicitud HTTP a un mensaje CoAP \texttt{GET} Confirmable (CON).
+    \item \textbf{CoAP sobre UDP/IPv6} viaja por la red Thread mesh (6LoWPAN) hasta el nodo.
+    \item \textbf{Nodo} procesa la solicitud y envía CoAP \texttt{ACK} con el valor del recurso.
+    \item \textbf{Leshan} devuelve el valor al cliente REST en formato JSON.
+\end{enumerate}
+
+\noindent\textbf{Latencia típica E2E} (lectura individual): \SI{33}{\milli\second} mediana, \SI{423}{\milli\second} promedio (incluye retransmisiones esporádicas).
+
+% =============================================================================
+\section{Pruebas de Rendimiento: Optimización V1 $\rightarrow$ V2 $\rightarrow$ V3}
+% =============================================================================
+
+Se realizaron tres campañas de pruebas sistemáticas para optimizar el rendimiento de lectura de recursos LwM2M a través de la API REST de Leshan. Cada campaña utilizó un script PowerShell automatizado (\texttt{tools/test\_suite\_latency.ps1}) que lee 22 recursos distintos en 10 rondas (\textbf{220 lecturas totales por prueba}).
+
+\subsection{Configuraciones de Prueba}
+
+\begin{table}[H]
+\centering
+\caption{Configuraciones de las tres versiones de prueba}
+\label{tab:versiones}
+\begin{tabularx}{\textwidth}{l c c X}
+\toprule
+\textbf{Versión} & \textbf{Calif. ACK\_TIMEOUT} & \textbf{API Timeout} & \textbf{Cambio clave} \\
+\midrule
+V1 & \SI{2500}{\milli\second} & Defecto Leshan & Línea base con Californium optimizado \\
+V2 & \SI{5000}{\milli\second} (defecto RFC) & Defecto Leshan & Calif.\ más lento, sin API timeout \\
+V3 & \SI{2500}{\milli\second} & \texttt{?timeout=10} & Calif.\ rápido + ventana API extendida \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Resultados Comparativos}
+
+\begin{table}[H]
+\centering
+\caption{Resultados de las tres campañas de prueba (220 lecturas cada una)}
+\label{tab:resultados}
+\begin{tabular}{l r r r}
+\toprule
+\textbf{Métrica} & \textbf{V1} & \textbf{V2} & \textbf{V3} \\
+\midrule
+Lecturas exitosas & 208/220 & 200/220 & 214/220 \\
+\textbf{Tasa de éxito} & \textbf{94,5\,\%} & \textbf{90,9\,\%} & \textbf{\color{success-green}97,3\,\%} \\
+Fallos & 12 & 20 & 6 \\
+\addlinespace
+Promedio (ms) & 423 & 32 & 1.113 \\
+Mediana (ms) & 27 & 31 & 33 \\
+P95 (ms) & 2.731 & 38 & 3.778 \\
+P99 (ms) & --- & --- & 9.479 \\
+Máx.\ exitoso (ms) & 3.020 & 56 & 9.916 \\
+\addlinespace
+Lecturas recuperadas 5--10s & 0 & 0 & \textbf{10} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Análisis de Hallazgos}
+
+\subsubsection{V1: Línea base con retransmisiones rápidas}
+
+Con \texttt{ACK\_TIMEOUT=2500ms} en Californium, las retransmisiones CoAP son agresivas: primer retry a \SI{2.5}{\second}, segundo a \SI{6.3}{\second}. Esto permite recuperar paquetes perdidos dentro de la ventana de timeout por defecto de la API de Leshan ($\sim$\SI{5}{\second}). La mediana de \SI{27}{\milli\second} indica que la mayoría de lecturas son rápidas, pero 12 lecturas agotaron el timeout.
+
+\subsubsection{V2: Regresión con RFC 7252 por defecto}
+
+Al restaurar \texttt{ACK\_TIMEOUT=5000ms} (valor por defecto RFC 7252), la primera retransmisión ocurre a \SI{5}{\second}, \textit{justo en el límite del timeout de la API}. Resultado: el servidor aborta la espera antes de que la retransmisión surta efecto. La tasa cayó a \textbf{90,9\,\%} --- una \textbf{regresión} que confirmó la importancia del Californium tuning.
+
+\subsubsection{V3: Retransmisiones rápidas + ventana API extendida}
+
+La configuración óptima combina:
+\begin{itemize}[leftmargin=1.2cm]
+    \item \textbf{Californium \texttt{ACK\_TIMEOUT=2500ms}:} Retransmisiones rápidas (1er retry a \SI{2.5}{\second}).
+    \item \textbf{Leshan API \texttt{?timeout=10}:} Ventana de espera de \SI{10}{\second} en la API REST.
+    \item \textbf{Corrección PowerShell 5.1:} Interpolación \texttt{\$\{rid\}?timeout=10} en lugar de \texttt{\$rid?timeout=10} (bug de parsing PS 5.1).
+\end{itemize}
+
+\noindent Esta sinergia permitió que \textbf{10 lecturas} que habrían fallado con la ventana por defecto se recuperasen en la banda de 5--10 segundos mediante retransmisiones Californium. La tasa alcanzó \textbf{97,3\,\%}; los 6 fallos restantes fueron timeouts de \SI{504}{} a $\sim$\SI{10}{\second}.
+
+\subsection{Distribución de Latencias V3}
+
+La distribución de latencias revela un comportamiento bimodal:
+
+\begin{table}[H]
+\centering
+\caption{Distribución de latencias en V3 por bandas}
+\label{tab:distribucion-v3}
+\begin{tabular}{l r l}
+\toprule
+\textbf{Banda de Latencia} & \textbf{Lecturas} & \textbf{Interpretación} \\
+\midrule
+0--100 ms & $\sim$180 & Respuesta directa, sin retransmisión \\
+100--1.000 ms & $\sim$10 & Retransmisión ocasional del nodo \\
+1.000--5.000 ms & $\sim$14 & 1ª retransmisión Californium exitosa \\
+5.000--10.000 ms & 10 & 2ª retransmisión Californium exitosa \\
+$>$10.000 ms & 6 & \textcolor{fail-red}{Timeout 504 --- fallo} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% =============================================================================
+\section{Lecciones Aprendidas}
+% =============================================================================
+
+\subsection{Hallazgo 1: La temporización CoAP domina la tasa de éxito}
+
+El factor más influyente en la fiabilidad de lecturas LwM2M no es la calidad del enlace radio ni la capacidad del nodo, sino la \textbf{interacción entre los timeouts del motor CoAP (Californium) y la ventana de espera de la API REST (Leshan)}. Un \texttt{ACK\_TIMEOUT} demasiado conservador (RFC~7252: \SI{5}{\second}) causa que la primera retransmisión llegue justo cuando la API ya ha abortado la espera.
+
+\begin{center}
+\fbox{
+\begin{minipage}{0.85\textwidth}
+\textbf{Recomendación:} Para redes 6LoWPAN/Thread con Leshan, configurar Californium con \texttt{ACK\_TIMEOUT=2500ms} y la API con \texttt{?timeout=10} o superior. Esto proporciona $\geq$3 oportunidades de retransmisión dentro de la ventana de la API.
+\end{minipage}
+}
+\end{center}
+
+\subsection{Hallazgo 2: La mediana vs.\ el promedio revela comportamiento bimodal}
+
+En las tres configuraciones, la \textbf{mediana} de latencia permanece estable entre \SI{27}{\milli\second} y \SI{33}{\milli\second}, indicando que $>$80\,\% de las lecturas se completan en la primera transmisión CoAP sin retransmisiones. Sin embargo, el \textbf{promedio} varía enormemente (32--1.113\,ms) debido a las colas pesadas (lecturas con 1--3 retransmisiones).
+
+\noindent\textit{Implicación:} Para aplicaciones AMI con tolerancia de \SI{1}{\second}, la arquitectura es adecuada con ajustes mínimos. Para requisitos de tiempo real estricto ($<$\SI{100}{\milli\second}), se requiere CoAP Observe (RFC 7641) en lugar de lecturas bajo demanda.
+
+\subsection{Hallazgo 3: Las retransmisiones Californium funcionan como mecanismo de recuperación}
+
+Las 10 lecturas recuperadas en la banda 5--10 segundos en V3 demuestran que Californium actúa como un \textbf{mecanismo de recuperación eficaz} ante pérdidas transitorias en la red Thread (interferencia, congestión, colisiones CSMA/CA). Sin la ventana API extendida, estas recuperaciones exitosas habrían sido clasificadas erróneamente como fallos.
+
+\subsection{Hallazgo 4: Interpolación PS 5.1 vs.\ PS 7+}
+
+Un bug sutil en PowerShell 5.1 causó que el parámetro \texttt{?timeout=10} no se enviara correctamente al servidor Leshan. La expresión:
+
+\begin{lstlisting}[language=bash]
+# BUG en PowerShell 5.1:
+$url = ".../clients/$ep/10242/0/$rid?timeout=10"
+# PS 5.1 interpreta "$rid?" como variable "$rid?" (inexistente) -> URL sin timeout
+
+# CORRECCIÓN:
+$url = ".../clients/$ep/10242/0/${rid}?timeout=10"
+# PS 5.1 delimita correctamente la variable "${rid}" del query string
+\end{lstlisting}
+
+\noindent Este hallazgo subraya la importancia de validar herramientas de prueba en la versión específica del runtime utilizado (Windows incluye PS 5.1 por defecto, no PS 7+).
+
+\subsection{Hallazgo 5: El modelo de objetos custom enriquece la gestibilidad}
+
+Los objetos Thread custom (10483--10486, 33000) demostraron su valor al permitir:
+\begin{itemize}[leftmargin=1.2cm]
+    \item \textbf{Diagnóstico remoto:} Lectura de tablas de vecinos Thread, RSSI por vecino, contadores MAC, sin acceso físico al nodo.
+    \item \textbf{Commissioning remoto:} Inicio/cancelación de proceso Joiner vía Object 10484.
+    \item \textbf{CLI remoto:} Ejecución de comandos OpenThread Shell vía Object 10486 (\texttt{Write} comando $\rightarrow$ \texttt{Execute} $\rightarrow$ \texttt{Read} resultado).
+    \item \textbf{Detección de degradación:} Monitoreo de \texttt{TxErrBusyChannel} y \texttt{RxErrNoFrame} (Object 33000) como indicadores tempranos de congestión radio.
+\end{itemize}
+
+% =============================================================================
+\section{Evolución del Firmware}
+% =============================================================================
+
+El desarrollo del firmware siguió un ciclo iterativo documentado mediante control de versiones Git:
+
+\begin{table}[H]
+\centering
+\caption{Historial de versiones del firmware}
+\label{tab:versiones-fw}
+\begin{tabularx}{\textwidth}{l l X}
+\toprule
+\textbf{Versión} & \textbf{Tag Git} & \textbf{Funcionalidad agregada} \\
+\midrule
+v0.8.0 & \texttt{v0.8.0} & Objeto 10242 (Power Meter trifásico) con simulación \\
+v0.9.0 & \texttt{v0.9.0} & Objeto 5 (Firmware Update --- FOTA simulado) \\
+v0.10.0 & \texttt{v0.10.0} & Objeto 4 (ConnMon real) + Object 33000 (Thread Diag) \\
+v0.11.0 & \texttt{v0.11.0} & Valores reales en Object 4 (RSSI, LQI, IPv6, Partition ID) \\
+v0.12.0 & \texttt{v0.12.0} & Objetos Thread 10483--10486 (Network, Commission, Neighbor, CLI) \\
+--- & \texttt{aa34561} & Optimización V3: Leshan \texttt{?timeout=10} + corrección PS 5.1 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% =============================================================================
+\section{Archivos de Código Fuente}
+% =============================================================================
+
+\begin{table}[H]
+\centering
+\caption{Estructura del repositorio ami-lwm2m-node}
+\label{tab:archivos}
+\begin{tabularx}{\textwidth}{l X}
+\toprule
+\textbf{Archivo} & \textbf{Descripción} \\
+\midrule
+\texttt{prj.conf} & Configuración Kconfig: Thread, LwM2M, CoAP, buffers (137 líneas) \\
+\texttt{CMakeLists.txt} & Build system: fuentes, includes, versión del proyecto \\
+\texttt{src/main.c} & Punto de entrada: endpoint naming, registro LwM2M, loop de actualización (391 líneas) \\
+\texttt{src/lwm2m\_obj\_power\_meter.\{c,h\}} & Object 10242: 31 recursos de medidor trifásico \\
+\texttt{src/firmware\_update.c} & Object 5: callbacks FOTA simulados \\
+\texttt{src/thread\_conn\_monitor.c} & Objects 4 + 33000: datos reales Thread (341 líneas) \\
+\texttt{src/lwm2m\_obj\_thread\_net.\{c,h\}} & Object 10483: 12 recursos Thread Network \\
+\texttt{src/lwm2m\_obj\_thread\_neighbor.\{c,h\}} & Object 10485: tabla de vecinos (14 recursos/inst.) \\
+\texttt{src/lwm2m\_obj\_thread\_commission.\{c,h\}} & Object 10484: comisionamiento Thread \\
+\texttt{src/lwm2m\_obj\_thread\_cli.\{c,h\}} & Object 10486: CLI remoto OpenThread \\
+\texttt{models/*.xml} & Definiciones XML de objetos custom para Leshan \\
+\texttt{tools/test\_suite\_latency.ps1} & Script de pruebas automatizadas (22 recursos $\times$ 10 rondas) \\
+\texttt{tools/graph\_v1\_v2\_v3\_comparison.py} & Generación de gráficas comparativas 3-way \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% =============================================================================
+\section{Análisis Cuantitativo de Carga de Red}
+% =============================================================================
+
+Con base en los datos del Capítulo 3 de la tesis, se presenta el análisis cuantitativo de carga generada por el nodo en la red Thread:
+
+\begin{table}[H]
+\centering
+\caption{Análisis de payload y carga de red para 100 medidores trifásicos}
+\label{tab:carga}
+\begin{tabularx}{\textwidth}{l r X}
+\toprule
+\textbf{Métrica} & \textbf{Valor} & \textbf{Observación} \\
+\midrule
+Payload JSON (17 registros OBIS) & \SI{385}{\byte} & Sin whitespace, keys abreviadas \\
+Overhead protocolos (CoAP+UDP+6LoWPAN+MAC) & \SI{42}{\byte} & Compresión 6LoWPAN aplicada \\
+Fragmentos IEEE 802.15.4 & 5 & $\lceil 385/85 \rceil$ (MTU $-$ overhead) \\
+Total bytes transmitidos & \SI{451}{\byte} & Por mensaje, incluyendo fragmentación \\
+Tiempo TX Thread @ \SI{250}{\kilo\bit\per\second} & \SI{14.4}{\milli\second} & Sin overhead CSMA/CA \\
+Tiempo total (incl.\ backoff + ACK) & \SI{26}{\milli\second} & Transmisión Thread completa \\
+\addlinespace
+Throughput promedio (100 medidores, 15 min) & \SI{401}{\bit\per\second} & 0,16\,\% utilización canal \\
+Throughput pico (burst simultáneo, 60 s) & \SI{6.013}{\bit\per\second} & 2,4\,\% utilización canal \\
+Latencia 3 hops mesh & \SI{90}{\milli\second} & Nodo $\rightarrow$ Border Router \\
+Buffer gateway 7 días & \SI{303}{\mega\byte} & 100 medidores $\times$ 96 msg/día \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\noindent\textbf{Conclusión de escalabilidad:} La carga de 100 medidores representa apenas 0,16\,\% de la capacidad del canal Thread, validando escalabilidad hasta 500+ medidores por Border Router.
+
+% =============================================================================
+\section{Comparación con Soluciones Comerciales}
+% =============================================================================
+
+El análisis de la tesis (Capítulo 2, §2.4.1) establece la ventaja económica de la arquitectura open-source:
+
+\begin{table}[H]
+\centering
+\caption{TCO 5 años para 100 gateways: arquitectura propuesta vs.\ comerciales}
+\label{tab:tco}
+\begin{tabular}{l r r r r}
+\toprule
+\textbf{Dimensión} & \textbf{Cisco IR829} & \textbf{Dell EG 3000} & \textbf{AWS Greengrass} & \textbf{Propuesta} \\
+\midrule
+TCO 5 años total & \$798.000 & \$480.000 & \$136.080 & \textbf{\$12.400} \\
+TCO por gateway & \$7.980 & \$4.800 & \$1.361 & \textbf{\$124} \\
+OPEX anual & \$55.600 & \$30.000 & \$6.096 & \textbf{\$0} \\
+DLMS/COSEM nativo & No & No & No & \textbf{Sí} \\
+LwM2M nativo & No & No & No & \textbf{Sí} \\
+Offline indefinido & Sí & Sí & No (7 días) & \textbf{Sí} \\
+Vendor lock-in & Alto & Medio & Alto & \textbf{Nulo} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent La arquitectura propuesta logra una \textbf{reducción del 91--98\,\%} del TCO respecto a alternativas comerciales, eliminando licencias propietarias y habilitando portabilidad multi-cloud.
+
+% =============================================================================
+\section{Conclusiones y Trabajo Futuro}
+% =============================================================================
+
+\subsection{Conclusiones Principales}
+
+\begin{enumerate}[leftmargin=1.5cm]
+    \item \textbf{Modelo de objetos LwM2M completo:} Se implementaron 11 objetos con $\sim$130 recursos que cubren telemetría trifásica, gestión de dispositivos, diagnóstico Thread y control remoto, demostrando la viabilidad de LwM2M como protocolo unificado de gestión AMI.
+
+    \item \textbf{Datos reales de la red Thread:} Los objetos 4, 33000 y 10483--10486 se alimentan directamente de la API de OpenThread, proporcionando visibilidad real de RSSI, LQI, tabla de vecinos, contadores MAC y direcciones IPv6 a través del estándar LwM2M.
+
+    \item \textbf{Optimización CoAP/Californium validada:} La configuración \texttt{ACK\_TIMEOUT=2500ms} (Californium) + \texttt{?timeout=10} (Leshan API) alcanzó 97,3\,\% de éxito vs.\ 90,9\,\% con parámetros RFC por defecto, una mejora de +6,4 puntos porcentuales.
+
+    \item \textbf{Escalabilidad demostrada:} 100 medidores trifásicos consumen apenas 0,16\,\% del canal Thread (\SI{250}{\kilo\bit\per\second}), con buffer de gateway de \SI{303}{\mega\byte}/semana.
+
+    \item \textbf{Costo-efectividad:} TCO de \$124/gateway en 5 años vs.\ \$1.361--\$7.980 en alternativas comerciales (reducción 91--98\,\%).
+\end{enumerate}
+
+\subsection{Trabajo Futuro Inmediato}
+
+\begin{itemize}[leftmargin=1.2cm]
+    \item \textbf{Integración RS-485 real:} Reemplazar valores simulados del Object 10242 con lecturas DLMS/COSEM del medidor Emsitech P2000-T vía UART2 del ESP32-C6.
+    \item \textbf{CoAP Observe:} Implementar notificaciones push (RFC 7641) para eliminar lectura bajo demanda y reducir latencia a $<$\SI{100}{\milli\second} para todos los recursos.
+    \item \textbf{DTLS:} Migrar de modo NoSec a DTLS 1.2 con certificados X.509 para seguridad de producción.
+    \item \textbf{Escalado piloto:} Desplegar 60 nodos en entorno urbano durante 90 días para validación de disponibilidad $>$99\,\%.
+    \item \textbf{Thread 1.4 TCP:} Evaluar transporte TCP nativo (RFC 9293) para transferencias bulk (perfiles de carga, firmware OTA).
+\end{itemize}
+
+% =============================================================================
+\section*{Apéndice: Datos de Pruebas}
+% =============================================================================
+\addcontentsline{toc}{section}{Apéndice: Datos de Pruebas}
+
+Los archivos CSV con datos completos de las tres campañas de prueba se encuentran en:
+
+\begin{lstlisting}[language=bash,caption={Archivos de resultados}]
+results/latency_20260223_154752_delay5000ms_10rounds.csv   # V1 (94.5%)
+results/latency_20260223_204618_delay5000ms_10rounds.csv   # V2 (90.9%)
+results/latency_20260223_215325_delay5000ms_10rounds.csv   # V3 (97.3%)
+results/latency_20260223_131058_delay3000ms_10rounds.csv   # Baseline (3s delay)
+\end{lstlisting}
+
+\noindent Las gráficas comparativas 3-way se encuentran en:
+
+\begin{lstlisting}[language=bash,caption={Gráficas generadas}]
+results/comparison/cmp_01_success_per_round.png
+results/comparison/cmp_02_failures_by_object.png
+results/comparison/cmp_03_latency_by_object.png
+results/comparison/cmp_04_summary_table.png
+results/comparison/cmp_05_cdf_comparison.png
+results/comparison/cmp_06_resource_success_rate.png
+\end{lstlisting}
+
+\noindent Repositorio completo: \texttt{ami-lwm2m-node/} (bajo control de versiones Git, HEAD: \texttt{aa34561}).
+
+\end{document}

@@ -17,6 +17,10 @@ target_sources(app PRIVATE
     src/lwm2m_obj_thread_neighbor.c
     src/lwm2m_obj_thread_commission.c
     src/lwm2m_obj_thread_cli.c
+    src/rs485_uart.c
+    src/dlms_hdlc.c
+    src/dlms_cosem.c
+    src/dlms_meter.c
 )
 
 # Include path for custom LwM2M object internal headers
