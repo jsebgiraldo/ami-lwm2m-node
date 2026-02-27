@@ -10,6 +10,7 @@ build/
 # Python
 __pycache__/
 *.pyc
+.venv/
 
 # OS
 Thumbs.db
@@ -17,10 +18,10 @@ Thumbs.db
 
 # ---- Debug / temp files (not part of firmware) ----
 
-# TB Edge deployment & debug scripts
+# TB Edge deployment & debug scripts (keep edge/docker-compose.yml via force-add if needed)
 edge/
 
-# Root-level debug/capture scripts
+# All root-level Python debug/capture/check/fix/test scripts
 _ssh_logs.py
 boot_capture.py
 capture_after_powercycle.py
@@ -41,7 +42,8 @@ prj_boottest.conf
 prj_full_debug.conf
 prj_orig.conf
 
-# Debug outputs & binary captures
+# Debug outputs, logs & binary captures
+*.bin
 boot_output.txt
 diag_output.txt
 last_capture.bin
@@ -49,5 +51,6 @@ last_capture.bin
 # Test / scratch source
 src/boot_test.c
 
-# Large binaries
+# Large binaries & PDFs (thesis PDF tracked separately if needed)
 tesis-rev22.pdf
+*.pdf

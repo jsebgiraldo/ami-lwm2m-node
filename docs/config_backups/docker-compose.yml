@@ -1,0 +1,80 @@
+# ThingsBoard Edge + PostgreSQL for AMI Gateway
+# Deploy on: 192.168.1.111 (OpenWrt RPi4 / MorseMicro HaLow)
+# Cloud server: 100.67.60.126 (ThingsBoard 4.2.1.1)
+#
+# USES HOST NETWORKING to avoid Docker bridge issues on OpenWrt
+# and to allow LwM2M access via Thread IPv6 addresses.
+#
+# Host ports used:
+#   5432  -> PostgreSQL (local only)
+#   8090  -> TB Edge HTTP (remapped from 8080 to avoid dppd conflict)
+#   1883  -> MQTT transport
+#   5683/udp -> CoAP/LwM2M transport (Leshan must be stopped first!)
+#   5684/udp -> CoAP/LwM2M DTLS transport
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: tb-edge-postgres
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      POSTGRES_DB: tb_edge
+      POSTGRES_USER: tb_edge
+      POSTGRES_PASSWORD: tb_edge_pwd
+    volumes:
+      - tb-edge-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tb_edge -h 127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  tb-edge:
+    image: thingsboard/tb-edge:4.2.1EDGE
+    container_name: tb-edge
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # --- Cloud connection ---
+      CLOUD_ROUTING_KEY: "1lg060jcvfp2tylc78mt"
+      CLOUD_ROUTING_SECRET: "o1bcx4arcldnkjirru8n"
+      CLOUD_RPC_HOST: "100.67.60.126"
+      CLOUD_RPC_PORT: "7070"
+      CLOUD_RPC_SSL_ENABLED: "false"
+
+      # --- Database (localhost since host networking) ---
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://127.0.0.1:5432/tb_edge"
+      SPRING_DATASOURCE_USERNAME: "tb_edge"
+      SPRING_DATASOURCE_PASSWORD: "tb_edge_pwd"
+
+      # --- HTTP port remapped (8080 taken by dppd) ---
+      HTTP_BIND_PORT: "8090"
+
+      # --- LwM2M transport (enabled to replace Leshan) ---
+      LWM2M_ENABLED: "true"
+      LWM2M_SERVER_PORT: "5683"
+      LWM2M_SERVER_SECURITY_PORT: "5684"
+
+      # --- CoAP transport ---
+      COAP_ENABLED: "true"
+      COAP_BIND_PORT: "5683"
+
+      # --- Performance tuning for RPi4 (3.8GB RAM) ---
+      JAVA_OPTS: >-
+        -Xms256m
+        -Xmx1024m
+        -XX:+UseG1GC
+        -XX:MaxGCPauseMillis=200
+
+    volumes:
+      - tb-edge-data:/data
+      - tb-edge-logs:/var/log/thingsboard-edge
+
+volumes:
+  tb-edge-postgres-data:
+  tb-edge-data:
+  tb-edge-logs:

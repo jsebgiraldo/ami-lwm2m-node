@@ -1,0 +1,2540 @@
+{
+  "title": "AMI Smart Energy Monitor",
+  "configuration": {
+    "widgets": {
+      "5a43e104-3cc2-425b-b8e4-13c37e1a009d": {
+        "isSystemType": true,
+        "bundleAlias": "cards",
+        "typeAlias": "html_card",
+        "type": "static",
+        "title": "Title",
+        "config": {
+          "datasources": [],
+          "settings": {
+            "cardHtml": "\n    <div style=\"display:flex;align-items:center;padding:10px 20px;\n         background:linear-gradient(135deg,#1a237e 0%,#0d47a1 50%,#01579b 100%);\n         border-radius:10px;color:#fff;height:100%;box-sizing:border-box;\">\n      <div style=\"flex:1;\">\n        <div style=\"font-size:24px;font-weight:700;letter-spacing:0.5px;\">\n          &#9889; AMI Smart Energy Monitor\n        </div>\n        <div style=\"font-size:13px;opacity:0.85;margin-top:4px;\">\n          3-Phase Power Meter &mdash; Object 10242 &bull; LwM2M / CoAP over Thread\n        </div>\n      </div>\n      <div style=\"text-align:right;font-size:11px;opacity:0.75;line-height:1.6;\">\n        <div><b>Endpoint:</b> ami-esp32c6-25c0</div>\n        <div><b>Protocol:</b> LwM2M 1.0 / CoAP / DTLS</div>\n        <div><b>Network:</b> IEEE 802.15.4 &mdash; Thread 1.3</div>\n        <div><b>Object:</b> OMA 10242 v1.0</div>\n      </div>\n    </div>"
+          },
+          "backgroundColor": "transparent",
+          "padding": "0",
+          "showTitle": false,
+          "title": "Title",
+          "dropShadow": false,
+          "enableFullscreen": false,
+          "widgetStyle": {},
+          "actions": {}
+        }
+      },
+      "a5c326f5-b21c-4be7-a4a9-e6078d5467b6": {
+        "isSystemType": true,
+        "bundleAlias": "analogue_gauges",
+        "typeAlias": "radial_gauge_canvas_gauges",
+        "type": "latest",
+        "title": "Voltage L1 (R)",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "TensionR",
+                  "type": "timeseries",
+                  "label": "Voltage L1 (R)",
+                  "color": "#1976d2",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "V",
+                  "decimals": 1,
+                  "_hash": 0.5719
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "0",
+          "settings": {
+            "minValue": 0,
+            "maxValue": 300,
+            "unitTitle": "V",
+            "showUnitTitle": true,
+            "majorTicksInt": 60.0,
+            "minorTicks": 5,
+            "valueInt": 3,
+            "valueDec": 1,
+            "highlights": [
+              {
+                "from": 0,
+                "to": 100,
+                "color": "rgba(244,67,54,0.3)"
+              },
+              {
+                "from": 100,
+                "to": 207,
+                "color": "rgba(255,152,0,0.3)"
+              },
+              {
+                "from": 207,
+                "to": 253,
+                "color": "rgba(76,175,80,0.3)"
+              },
+              {
+                "from": 253,
+                "to": 300,
+                "color": "rgba(244,67,54,0.3)"
+              }
+            ],
+            "highlightsWidth": 15,
+            "animation": true,
+            "animationDuration": 500,
+            "animationRule": "linear",
+            "colorPlate": "#fff",
+            "colorMajorTicks": "#444",
+            "colorMinorTicks": "#666",
+            "colorTitle": "#888",
+            "colorUnits": "#888",
+            "colorNumbers": "#444",
+            "colorNeedle": "#1976d2",
+            "colorNeedleEnd": "#1565c0",
+            "colorValueText": "#444",
+            "colorValueTextShadow": "rgba(0,0,0,0)",
+            "colorBorderShadow": "rgba(0,0,0,0.1)",
+            "colorBorderOuter": "#ddd",
+            "colorBorderOuterEnd": "#ccc",
+            "colorBorderMiddle": "#eee",
+            "colorBorderMiddleEnd": "#f0f0f0",
+            "colorBorderInner": "#fafafa",
+            "colorBorderInnerEnd": "#eee",
+            "needleType": "arrow",
+            "needleWidth": 3,
+            "borderOuterWidth": 3,
+            "borderMiddleWidth": 3,
+            "borderInnerWidth": 3,
+            "borderShadowWidth": 3,
+            "fontTitleSize": 24,
+            "fontValueSize": 30,
+            "fontUnitsSize": 20
+          },
+          "title": "Voltage L1 (R)",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": false,
+          "actions": {}
+        }
+      },
+      "ca53de22-d9c3-4e3c-901d-a40bd5539cd4": {
+        "isSystemType": true,
+        "bundleAlias": "analogue_gauges",
+        "typeAlias": "radial_gauge_canvas_gauges",
+        "type": "latest",
+        "title": "Current L1 (R)",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "CurrentR",
+                  "type": "timeseries",
+                  "label": "Current L1 (R)",
+                  "color": "#1976d2",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "A",
+                  "decimals": 1,
+                  "_hash": 0.6206
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "0",
+          "settings": {
+            "minValue": 0,
+            "maxValue": 50,
+            "unitTitle": "A",
+            "showUnitTitle": true,
+            "majorTicksInt": 10.0,
+            "minorTicks": 5,
+            "valueInt": 3,
+            "valueDec": 1,
+            "highlights": [
+              {
+                "from": 0,
+                "to": 10,
+                "color": "rgba(76,175,80,0.3)"
+              },
+              {
+                "from": 10,
+                "to": 20,
+                "color": "rgba(255,193,7,0.3)"
+              },
+              {
+                "from": 20,
+                "to": 25,
+                "color": "rgba(255,152,0,0.3)"
+              },
+              {
+                "from": 25,
+                "to": 50,
+                "color": "rgba(244,67,54,0.3)"
+              }
+            ],
+            "highlightsWidth": 15,
+            "animation": true,
+            "animationDuration": 500,
+            "animationRule": "linear",
+            "colorPlate": "#fff",
+            "colorMajorTicks": "#444",
+            "colorMinorTicks": "#666",
+            "colorTitle": "#888",
+            "colorUnits": "#888",
+            "colorNumbers": "#444",
+            "colorNeedle": "#1976d2",
+            "colorNeedleEnd": "#1565c0",
+            "colorValueText": "#444",
+            "colorValueTextShadow": "rgba(0,0,0,0)",
+            "colorBorderShadow": "rgba(0,0,0,0.1)",
+            "colorBorderOuter": "#ddd",
+            "colorBorderOuterEnd": "#ccc",
+            "colorBorderMiddle": "#eee",
+            "colorBorderMiddleEnd": "#f0f0f0",
+            "colorBorderInner": "#fafafa",
+            "colorBorderInnerEnd": "#eee",
+            "needleType": "arrow",
+            "needleWidth": 3,
+            "borderOuterWidth": 3,
+            "borderMiddleWidth": 3,
+            "borderInnerWidth": 3,
+            "borderShadowWidth": 3,
+            "fontTitleSize": 24,
+            "fontValueSize": 30,
+            "fontUnitsSize": 20
+          },
+          "title": "Current L1 (R)",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": false,
+          "actions": {}
+        }
+      },
+      "a2316758-5d78-49d0-8cd0-d375e7cb0973": {
+        "isSystemType": true,
+        "bundleAlias": "analogue_gauges",
+        "typeAlias": "radial_gauge_canvas_gauges",
+        "type": "latest",
+        "title": "Frequency",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "Frequency",
+                  "type": "timeseries",
+                  "label": "Frequency",
+                  "color": "#1976d2",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "Hz",
+                  "decimals": 2,
+                  "_hash": 0.6522
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "0",
+          "settings": {
+            "minValue": 55,
+            "maxValue": 65,
+            "unitTitle": "Hz",
+            "showUnitTitle": true,
+            "majorTicksInt": 2.0,
+            "minorTicks": 5,
+            "valueInt": 3,
+            "valueDec": 2,
+            "highlights": [
+              {
+                "from": 55,
+                "to": 59.5,
+                "color": "rgba(255,152,0,0.3)"
+              },
+              {
+                "from": 59.5,
+                "to": 60.5,
+                "color": "rgba(76,175,80,0.3)"
+              },
+              {
+                "from": 60.5,
+                "to": 65,
+                "color": "rgba(255,152,0,0.3)"
+              }
+            ],
+            "highlightsWidth": 15,
+            "animation": true,
+            "animationDuration": 500,
+            "animationRule": "linear",
+            "colorPlate": "#fff",
+            "colorMajorTicks": "#444",
+            "colorMinorTicks": "#666",
+            "colorTitle": "#888",
+            "colorUnits": "#888",
+            "colorNumbers": "#444",
+            "colorNeedle": "#1976d2",
+            "colorNeedleEnd": "#1565c0",
+            "colorValueText": "#444",
+            "colorValueTextShadow": "rgba(0,0,0,0)",
+            "colorBorderShadow": "rgba(0,0,0,0.1)",
+            "colorBorderOuter": "#ddd",
+            "colorBorderOuterEnd": "#ccc",
+            "colorBorderMiddle": "#eee",
+            "colorBorderMiddleEnd": "#f0f0f0",
+            "colorBorderInner": "#fafafa",
+            "colorBorderInnerEnd": "#eee",
+            "needleType": "arrow",
+            "needleWidth": 3,
+            "borderOuterWidth": 3,
+            "borderMiddleWidth": 3,
+            "borderInnerWidth": 3,
+            "borderShadowWidth": 3,
+            "fontTitleSize": 24,
+            "fontValueSize": 30,
+            "fontUnitsSize": 20
+          },
+          "title": "Frequency",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": false,
+          "actions": {}
+        }
+      },
+      "6b9ed6f9-857e-41bc-a017-eb0ae0538f8b": {
+        "isSystemType": true,
+        "bundleAlias": "analogue_gauges",
+        "typeAlias": "radial_gauge_canvas_gauges",
+        "type": "latest",
+        "title": "Power Factor",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "3PhasePowerFactor",
+                  "type": "timeseries",
+                  "label": "Power Factor",
+                  "color": "#1976d2",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "PF",
+                  "decimals": 3,
+                  "_hash": 0.391
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "0",
+          "settings": {
+            "minValue": 0,
+            "maxValue": 1,
+            "unitTitle": "PF",
+            "showUnitTitle": true,
+            "majorTicksInt": 0.2,
+            "minorTicks": 5,
+            "valueInt": 3,
+            "valueDec": 3,
+            "highlights": [
+              {
+                "from": 0,
+                "to": 0.5,
+                "color": "rgba(244,67,54,0.3)"
+              },
+              {
+                "from": 0.5,
+                "to": 0.8,
+                "color": "rgba(255,152,0,0.3)"
+              },
+              {
+                "from": 0.8,
+                "to": 0.95,
+                "color": "rgba(76,175,80,0.3)"
+              },
+              {
+                "from": 0.95,
+                "to": 1.0,
+                "color": "rgba(33,150,243,0.3)"
+              }
+            ],
+            "highlightsWidth": 15,
+            "animation": true,
+            "animationDuration": 500,
+            "animationRule": "linear",
+            "colorPlate": "#fff",
+            "colorMajorTicks": "#444",
+            "colorMinorTicks": "#666",
+            "colorTitle": "#888",
+            "colorUnits": "#888",
+            "colorNumbers": "#444",
+            "colorNeedle": "#1976d2",
+            "colorNeedleEnd": "#1565c0",
+            "colorValueText": "#444",
+            "colorValueTextShadow": "rgba(0,0,0,0)",
+            "colorBorderShadow": "rgba(0,0,0,0.1)",
+            "colorBorderOuter": "#ddd",
+            "colorBorderOuterEnd": "#ccc",
+            "colorBorderMiddle": "#eee",
+            "colorBorderMiddleEnd": "#f0f0f0",
+            "colorBorderInner": "#fafafa",
+            "colorBorderInnerEnd": "#eee",
+            "needleType": "arrow",
+            "needleWidth": 3,
+            "borderOuterWidth": 3,
+            "borderMiddleWidth": 3,
+            "borderInnerWidth": 3,
+            "borderShadowWidth": 3,
+            "fontTitleSize": 24,
+            "fontValueSize": 30,
+            "fontUnitsSize": 20
+          },
+          "title": "Power Factor",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": false,
+          "actions": {}
+        }
+      },
+      "756b6a26-e411-4833-b4ab-7325b5a3f9c9": {
+        "isSystemType": true,
+        "bundleAlias": "cards",
+        "typeAlias": "simple_card",
+        "type": "latest",
+        "title": "Voltage R (L1)",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "TensionR",
+                  "type": "timeseries",
+                  "label": "Voltage R (L1)",
+                  "color": "#f44336",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "V",
+                  "decimals": 1,
+                  "_hash": 0.5719
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "#f44336",
+          "padding": "16px",
+          "settings": {
+            "labelPosition": "top"
+          },
+          "title": "Voltage R (L1)",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "13px",
+            "fontWeight": 500
+          },
+          "units": "V",
+          "decimals": 1,
+          "dropShadow": true,
+          "enableFullscreen": false,
+          "widgetStyle": {
+            "borderRadius": "8px",
+            "borderLeft": "4px solid #f44336"
+          },
+          "useDashboardTimewindow": false,
+          "actions": {}
+        }
+      },
+      "32a41727-0fd7-48c7-b47b-6007c8969ce5": {
+        "isSystemType": true,
+        "bundleAlias": "cards",
+        "typeAlias": "simple_card",
+        "type": "latest",
+        "title": "Voltage S (L2)",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "TensionS",
+                  "type": "timeseries",
+                  "label": "Voltage S (L2)",
+                  "color": "#4caf50",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "V",
+                  "decimals": 1,
+                  "_hash": 0.7939
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "#4caf50",
+          "padding": "16px",
+          "settings": {
+            "labelPosition": "top"
+          },
+          "title": "Voltage S (L2)",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "13px",
+            "fontWeight": 500
+          },
+          "units": "V",
+          "decimals": 1,
+          "dropShadow": true,
+          "enableFullscreen": false,
+          "widgetStyle": {
+            "borderRadius": "8px",
+            "borderLeft": "4px solid #4caf50"
+          },
+          "useDashboardTimewindow": false,
+          "actions": {}
+        }
+      },
+      "c27b0415-9a5a-4160-b0c9-3c5fe8f88078": {
+        "isSystemType": true,
+        "bundleAlias": "cards",
+        "typeAlias": "simple_card",
+        "type": "latest",
+        "title": "Voltage T (L3)",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "TensionT",
+                  "type": "timeseries",
+                  "label": "Voltage T (L3)",
+                  "color": "#2196f3",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "V",
+                  "decimals": 1,
+                  "_hash": 0.1293
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "#2196f3",
+          "padding": "16px",
+          "settings": {
+            "labelPosition": "top"
+          },
+          "title": "Voltage T (L3)",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "13px",
+            "fontWeight": 500
+          },
+          "units": "V",
+          "decimals": 1,
+          "dropShadow": true,
+          "enableFullscreen": false,
+          "widgetStyle": {
+            "borderRadius": "8px",
+            "borderLeft": "4px solid #2196f3"
+          },
+          "useDashboardTimewindow": false,
+          "actions": {}
+        }
+      },
+      "f23d7f90-9940-46cd-b5e1-9e5fc782335a": {
+        "isSystemType": true,
+        "bundleAlias": "cards",
+        "typeAlias": "simple_card",
+        "type": "latest",
+        "title": "Active Power",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "3PhaseActivePower",
+                  "type": "timeseries",
+                  "label": "Active Power",
+                  "color": "#ff9800",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kW",
+                  "decimals": 3,
+                  "_hash": 0.0796
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "#ff9800",
+          "padding": "16px",
+          "settings": {
+            "labelPosition": "top"
+          },
+          "title": "Active Power",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "13px",
+            "fontWeight": 500
+          },
+          "units": "kW",
+          "decimals": 3,
+          "dropShadow": true,
+          "enableFullscreen": false,
+          "widgetStyle": {
+            "borderRadius": "8px",
+            "borderLeft": "4px solid #ff9800"
+          },
+          "useDashboardTimewindow": false,
+          "actions": {}
+        }
+      },
+      "316df0f8-bd32-4089-b1f1-14df70393dbc": {
+        "isSystemType": true,
+        "bundleAlias": "cards",
+        "typeAlias": "simple_card",
+        "type": "latest",
+        "title": "Energy (kWh)",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "ActiveEnergy",
+                  "type": "timeseries",
+                  "label": "Energy (kWh)",
+                  "color": "#9c27b0",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kWh",
+                  "decimals": 3,
+                  "_hash": 0.2591
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "#9c27b0",
+          "padding": "16px",
+          "settings": {
+            "labelPosition": "top"
+          },
+          "title": "Energy (kWh)",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "13px",
+            "fontWeight": 500
+          },
+          "units": "kWh",
+          "decimals": 3,
+          "dropShadow": true,
+          "enableFullscreen": false,
+          "widgetStyle": {
+            "borderRadius": "8px",
+            "borderLeft": "4px solid #9c27b0"
+          },
+          "useDashboardTimewindow": false,
+          "actions": {}
+        }
+      },
+      "b6ae0bfd-d0ee-4bb3-ad9a-082a015bcb84": {
+        "isSystemType": true,
+        "bundleAlias": "cards",
+        "typeAlias": "simple_card",
+        "type": "latest",
+        "title": "Frequency",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "Frequency",
+                  "type": "timeseries",
+                  "label": "Frequency",
+                  "color": "#00bcd4",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "Hz",
+                  "decimals": 2,
+                  "_hash": 0.6522
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "#00bcd4",
+          "padding": "16px",
+          "settings": {
+            "labelPosition": "top"
+          },
+          "title": "Frequency",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "13px",
+            "fontWeight": 500
+          },
+          "units": "Hz",
+          "decimals": 2,
+          "dropShadow": true,
+          "enableFullscreen": false,
+          "widgetStyle": {
+            "borderRadius": "8px",
+            "borderLeft": "4px solid #00bcd4"
+          },
+          "useDashboardTimewindow": false,
+          "actions": {}
+        }
+      },
+      "593ce8a4-e094-4a03-8806-d2f63343aeac": {
+        "isSystemType": true,
+        "bundleAlias": "charts",
+        "typeAlias": "basic_timeseries",
+        "type": "timeseries",
+        "title": "3-Phase Voltage",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "TensionR",
+                  "type": "timeseries",
+                  "label": "Voltage L1 (R)",
+                  "color": "#f44336",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "V",
+                  "decimals": 1,
+                  "_hash": 0.5719
+                },
+                {
+                  "name": "TensionS",
+                  "type": "timeseries",
+                  "label": "Voltage L2 (S)",
+                  "color": "#4caf50",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "V",
+                  "decimals": 1,
+                  "_hash": 0.7939
+                },
+                {
+                  "name": "TensionT",
+                  "type": "timeseries",
+                  "label": "Voltage L3 (T)",
+                  "color": "#2196f3",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "V",
+                  "decimals": 1,
+                  "_hash": 0.1293
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "8px",
+          "settings": {
+            "shadowSize": 4,
+            "fontColor": "#545454",
+            "fontSize": 10,
+            "tooltipIndividual": true,
+            "tooltipCumulative": false,
+            "hideZeros": false,
+            "yaxis": {
+              "label": "Voltage (V)",
+              "ticksFormatter": ""
+            },
+            "xaxis": {
+              "showLabels": true
+            },
+            "grid": {
+              "color": "#545454",
+              "tickColor": "#DDDDDD",
+              "outlineWidth": 1,
+              "verticalLines": true,
+              "horizontalLines": true
+            },
+            "stack": false,
+            "smoothLines": false,
+            "showLegend": true,
+            "legendConfig": {
+              "direction": "column",
+              "position": "bottom",
+              "sortDataKeys": false,
+              "showMin": false,
+              "showMax": true,
+              "showAvg": true,
+              "showTotal": false,
+              "showLatest": true
+            },
+            "comparisonEnabled": false
+          },
+          "title": "3-Phase Voltage",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": true,
+          "displayTimewindow": true,
+          "timewindow": {
+            "realtime": {
+              "realtimeType": 0,
+              "timewindowMs": 3600000
+            }
+          },
+          "actions": {}
+        }
+      },
+      "70c9e98d-2d72-46f6-be12-1cd7fd9989c7": {
+        "isSystemType": true,
+        "bundleAlias": "charts",
+        "typeAlias": "basic_timeseries",
+        "type": "timeseries",
+        "title": "3-Phase Current",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "CurrentR",
+                  "type": "timeseries",
+                  "label": "Current L1 (R)",
+                  "color": "#f44336",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "A",
+                  "decimals": 2,
+                  "_hash": 0.6206
+                },
+                {
+                  "name": "CurrentS",
+                  "type": "timeseries",
+                  "label": "Current L2 (S)",
+                  "color": "#4caf50",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "A",
+                  "decimals": 2,
+                  "_hash": 0.5657
+                },
+                {
+                  "name": "CurrentT",
+                  "type": "timeseries",
+                  "label": "Current L3 (T)",
+                  "color": "#2196f3",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "A",
+                  "decimals": 2,
+                  "_hash": 0.3394
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "8px",
+          "settings": {
+            "shadowSize": 4,
+            "fontColor": "#545454",
+            "fontSize": 10,
+            "tooltipIndividual": true,
+            "tooltipCumulative": false,
+            "hideZeros": false,
+            "yaxis": {
+              "label": "Current (A)",
+              "ticksFormatter": ""
+            },
+            "xaxis": {
+              "showLabels": true
+            },
+            "grid": {
+              "color": "#545454",
+              "tickColor": "#DDDDDD",
+              "outlineWidth": 1,
+              "verticalLines": true,
+              "horizontalLines": true
+            },
+            "stack": false,
+            "smoothLines": false,
+            "showLegend": true,
+            "legendConfig": {
+              "direction": "column",
+              "position": "bottom",
+              "sortDataKeys": false,
+              "showMin": false,
+              "showMax": true,
+              "showAvg": true,
+              "showTotal": false,
+              "showLatest": true
+            },
+            "comparisonEnabled": false
+          },
+          "title": "3-Phase Current",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": true,
+          "displayTimewindow": true,
+          "timewindow": {
+            "realtime": {
+              "realtimeType": 0,
+              "timewindowMs": 3600000
+            }
+          },
+          "actions": {}
+        }
+      },
+      "385cb464-5596-48b0-bac8-d20573d165b2": {
+        "isSystemType": true,
+        "bundleAlias": "charts",
+        "typeAlias": "basic_timeseries",
+        "type": "timeseries",
+        "title": "Active / Reactive / Apparent Power",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "3PhaseActivePower",
+                  "type": "timeseries",
+                  "label": "Active (kW)",
+                  "color": "#ff9800",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kW",
+                  "decimals": 3,
+                  "_hash": 0.0796
+                },
+                {
+                  "name": "3PhaseReactivePower",
+                  "type": "timeseries",
+                  "label": "Reactive (kvar)",
+                  "color": "#e91e63",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kvar",
+                  "decimals": 3,
+                  "_hash": 0.9784
+                },
+                {
+                  "name": "3PhaseApparentPower",
+                  "type": "timeseries",
+                  "label": "Apparent (kVA)",
+                  "color": "#795548",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kVA",
+                  "decimals": 3,
+                  "_hash": 0.4378
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "8px",
+          "settings": {
+            "shadowSize": 4,
+            "fontColor": "#545454",
+            "fontSize": 10,
+            "tooltipIndividual": true,
+            "tooltipCumulative": false,
+            "hideZeros": false,
+            "yaxis": {
+              "label": "Power",
+              "ticksFormatter": ""
+            },
+            "xaxis": {
+              "showLabels": true
+            },
+            "grid": {
+              "color": "#545454",
+              "tickColor": "#DDDDDD",
+              "outlineWidth": 1,
+              "verticalLines": true,
+              "horizontalLines": true
+            },
+            "stack": false,
+            "smoothLines": false,
+            "showLegend": true,
+            "legendConfig": {
+              "direction": "column",
+              "position": "bottom",
+              "sortDataKeys": false,
+              "showMin": false,
+              "showMax": true,
+              "showAvg": true,
+              "showTotal": false,
+              "showLatest": true
+            },
+            "comparisonEnabled": false
+          },
+          "title": "Active / Reactive / Apparent Power",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": true,
+          "displayTimewindow": true,
+          "timewindow": {
+            "realtime": {
+              "realtimeType": 0,
+              "timewindowMs": 3600000
+            }
+          },
+          "actions": {}
+        }
+      },
+      "2830c9b9-b115-4445-84e8-404c35688a2a": {
+        "isSystemType": true,
+        "bundleAlias": "charts",
+        "typeAlias": "basic_timeseries",
+        "type": "timeseries",
+        "title": "Frequency",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "Frequency",
+                  "type": "timeseries",
+                  "label": "Frequency",
+                  "color": "#00bcd4",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "Hz",
+                  "decimals": 2,
+                  "_hash": 0.6522
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "8px",
+          "settings": {
+            "shadowSize": 4,
+            "fontColor": "#545454",
+            "fontSize": 10,
+            "tooltipIndividual": true,
+            "tooltipCumulative": false,
+            "hideZeros": false,
+            "yaxis": {
+              "label": "Hz",
+              "ticksFormatter": ""
+            },
+            "xaxis": {
+              "showLabels": true
+            },
+            "grid": {
+              "color": "#545454",
+              "tickColor": "#DDDDDD",
+              "outlineWidth": 1,
+              "verticalLines": true,
+              "horizontalLines": true
+            },
+            "stack": false,
+            "smoothLines": false,
+            "showLegend": true,
+            "legendConfig": {
+              "direction": "column",
+              "position": "bottom",
+              "sortDataKeys": false,
+              "showMin": false,
+              "showMax": true,
+              "showAvg": true,
+              "showTotal": false,
+              "showLatest": true
+            },
+            "comparisonEnabled": false
+          },
+          "title": "Frequency",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": true,
+          "displayTimewindow": true,
+          "timewindow": {
+            "realtime": {
+              "realtimeType": 0,
+              "timewindowMs": 3600000
+            }
+          },
+          "actions": {}
+        }
+      },
+      "aa2fc8b8-db93-4a04-bee8-f3b995652f3d": {
+        "isSystemType": true,
+        "bundleAlias": "charts",
+        "typeAlias": "basic_timeseries",
+        "type": "timeseries",
+        "title": "Power Factor (all phases)",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "PowerFactorR",
+                  "type": "timeseries",
+                  "label": "PF L1 (R)",
+                  "color": "#f44336",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "",
+                  "decimals": 3,
+                  "_hash": 0.6887
+                },
+                {
+                  "name": "PowerFactorS",
+                  "type": "timeseries",
+                  "label": "PF L2 (S)",
+                  "color": "#4caf50",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "",
+                  "decimals": 3,
+                  "_hash": 0.461
+                },
+                {
+                  "name": "PowerFactorT",
+                  "type": "timeseries",
+                  "label": "PF L3 (T)",
+                  "color": "#2196f3",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "",
+                  "decimals": 3,
+                  "_hash": 0.4631
+                },
+                {
+                  "name": "3PhasePowerFactor",
+                  "type": "timeseries",
+                  "label": "PF Total",
+                  "color": "#ff9800",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "",
+                  "decimals": 3,
+                  "_hash": 0.391
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "8px",
+          "settings": {
+            "shadowSize": 4,
+            "fontColor": "#545454",
+            "fontSize": 10,
+            "tooltipIndividual": true,
+            "tooltipCumulative": false,
+            "hideZeros": false,
+            "yaxis": {
+              "label": "PF",
+              "ticksFormatter": ""
+            },
+            "xaxis": {
+              "showLabels": true
+            },
+            "grid": {
+              "color": "#545454",
+              "tickColor": "#DDDDDD",
+              "outlineWidth": 1,
+              "verticalLines": true,
+              "horizontalLines": true
+            },
+            "stack": false,
+            "smoothLines": false,
+            "showLegend": true,
+            "legendConfig": {
+              "direction": "column",
+              "position": "bottom",
+              "sortDataKeys": false,
+              "showMin": false,
+              "showMax": true,
+              "showAvg": true,
+              "showTotal": false,
+              "showLatest": true
+            },
+            "comparisonEnabled": false
+          },
+          "title": "Power Factor (all phases)",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": true,
+          "displayTimewindow": true,
+          "timewindow": {
+            "realtime": {
+              "realtimeType": 0,
+              "timewindowMs": 3600000
+            }
+          },
+          "actions": {}
+        }
+      },
+      "42040dcb-87fc-4e2a-bd39-965f287d9e79": {
+        "isSystemType": true,
+        "bundleAlias": "charts",
+        "typeAlias": "basic_timeseries",
+        "type": "timeseries",
+        "title": "Energy Consumption",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "ActiveEnergy",
+                  "type": "timeseries",
+                  "label": "Active (kWh)",
+                  "color": "#ff9800",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kWh",
+                  "decimals": 3,
+                  "_hash": 0.2591
+                },
+                {
+                  "name": "ReactiveEnergy",
+                  "type": "timeseries",
+                  "label": "Reactive (kvarh)",
+                  "color": "#e91e63",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kvarh",
+                  "decimals": 3,
+                  "_hash": 0.7611
+                },
+                {
+                  "name": "ApparentEnergy",
+                  "type": "timeseries",
+                  "label": "Apparent (kVAh)",
+                  "color": "#795548",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kVAh",
+                  "decimals": 3,
+                  "_hash": 0.8878
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "8px",
+          "settings": {
+            "shadowSize": 4,
+            "fontColor": "#545454",
+            "fontSize": 10,
+            "tooltipIndividual": true,
+            "tooltipCumulative": false,
+            "hideZeros": false,
+            "yaxis": {
+              "label": "Energy",
+              "ticksFormatter": ""
+            },
+            "xaxis": {
+              "showLabels": true
+            },
+            "grid": {
+              "color": "#545454",
+              "tickColor": "#DDDDDD",
+              "outlineWidth": 1,
+              "verticalLines": true,
+              "horizontalLines": true
+            },
+            "stack": false,
+            "smoothLines": false,
+            "showLegend": true,
+            "legendConfig": {
+              "direction": "column",
+              "position": "bottom",
+              "sortDataKeys": false,
+              "showMin": false,
+              "showMax": true,
+              "showAvg": true,
+              "showTotal": false,
+              "showLatest": true
+            },
+            "comparisonEnabled": false
+          },
+          "title": "Energy Consumption",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": true,
+          "displayTimewindow": true,
+          "timewindow": {
+            "realtime": {
+              "realtimeType": 0,
+              "timewindowMs": 3600000
+            }
+          },
+          "actions": {}
+        }
+      },
+      "66f39704-7408-4075-82e2-b66cfc61416c": {
+        "isSystemType": true,
+        "bundleAlias": "alarm_widgets",
+        "typeAlias": "alarms_table",
+        "type": "alarm",
+        "title": "Alarms",
+        "config": {
+          "alarmSource": {
+            "type": "entity",
+            "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+            "dataKeys": [
+              {
+                "name": "createdTime",
+                "type": "alarm",
+                "label": "Created",
+                "color": "#000",
+                "settings": {
+                  "showLines": true,
+                  "fillLines": false,
+                  "showPoints": false,
+                  "showPointShape": "circle",
+                  "pointShapeFormatter": "",
+                  "showPointsLineWidth": 5,
+                  "showPointsRadius": 3,
+                  "tooltipValueFormatter": ""
+                },
+                "units": "",
+                "decimals": 2,
+                "_hash": 0.1175
+              },
+              {
+                "name": "type",
+                "type": "alarm",
+                "label": "Type",
+                "color": "#000",
+                "settings": {
+                  "showLines": true,
+                  "fillLines": false,
+                  "showPoints": false,
+                  "showPointShape": "circle",
+                  "pointShapeFormatter": "",
+                  "showPointsLineWidth": 5,
+                  "showPointsRadius": 3,
+                  "tooltipValueFormatter": ""
+                },
+                "units": "",
+                "decimals": 2,
+                "_hash": 0.0046
+              },
+              {
+                "name": "severity",
+                "type": "alarm",
+                "label": "Severity",
+                "color": "#000",
+                "settings": {
+                  "showLines": true,
+                  "fillLines": false,
+                  "showPoints": false,
+                  "showPointShape": "circle",
+                  "pointShapeFormatter": "",
+                  "showPointsLineWidth": 5,
+                  "showPointsRadius": 3,
+                  "tooltipValueFormatter": ""
+                },
+                "units": "",
+                "decimals": 2,
+                "_hash": 0.0304
+              },
+              {
+                "name": "status",
+                "type": "alarm",
+                "label": "Status",
+                "color": "#000",
+                "settings": {
+                  "showLines": true,
+                  "fillLines": false,
+                  "showPoints": false,
+                  "showPointShape": "circle",
+                  "pointShapeFormatter": "",
+                  "showPointsLineWidth": 5,
+                  "showPointsRadius": 3,
+                  "tooltipValueFormatter": ""
+                },
+                "units": "",
+                "decimals": 2,
+                "_hash": 0.119
+              }
+            ]
+          },
+          "alarmFilterConfig": {
+            "statusList": [
+              "ACTIVE_UNACK",
+              "ACTIVE_ACK",
+              "CLEARED_UNACK"
+            ],
+            "severityList": [
+              "CRITICAL",
+              "MAJOR",
+              "MINOR",
+              "WARNING"
+            ],
+            "typeList": []
+          },
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "4px",
+          "settings": {
+            "enableFilter": true,
+            "enableSelection": true,
+            "displayDetails": true,
+            "allowAcknowledgment": true,
+            "allowClear": true,
+            "displayPagination": true,
+            "defaultPageSize": 10,
+            "defaultSortOrder": "-createdTime",
+            "displayActivity": true,
+            "alarmsTitle": "Active Alarms"
+          },
+          "title": "Active Alarms",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": true,
+          "actions": {}
+        }
+      },
+      "08fcfdd4-2710-4b60-908a-57d664ddbf66": {
+        "isSystemType": true,
+        "bundleAlias": "cards",
+        "typeAlias": "html_card",
+        "type": "static",
+        "title": "Phase Header",
+        "config": {
+          "datasources": [],
+          "settings": {
+            "cardHtml": "\n    <div style=\"display:flex;align-items:center;padding:6px 16px;\n         background:linear-gradient(90deg,#263238,#37474f);\n         border-radius:8px;color:#fff;height:100%;\">\n      <div style=\"font-size:16px;font-weight:600;\">\n        &#128268; Per-Phase Power Breakdown\n      </div>\n      <div style=\"flex:1;text-align:right;font-size:11px;opacity:0.7;\">\n        <span style=\"color:#f44336;\">&#9632; Phase R (L1)</span> &nbsp;\n        <span style=\"color:#4caf50;\">&#9632; Phase S (L2)</span> &nbsp;\n        <span style=\"color:#2196f3;\">&#9632; Phase T (L3)</span>\n      </div>\n    </div>"
+          },
+          "backgroundColor": "transparent",
+          "padding": "0",
+          "showTitle": false,
+          "title": "Phase Header",
+          "dropShadow": false,
+          "enableFullscreen": false,
+          "widgetStyle": {},
+          "actions": {}
+        }
+      },
+      "1f565e62-4bbc-4c53-a928-2551d62e72ab": {
+        "isSystemType": true,
+        "bundleAlias": "charts",
+        "typeAlias": "basic_timeseries",
+        "type": "timeseries",
+        "title": "Active Power / Phase",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "ActivePowerR",
+                  "type": "timeseries",
+                  "label": "P L1 (R)",
+                  "color": "#f44336",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kW",
+                  "decimals": 3,
+                  "_hash": 0.0533
+                },
+                {
+                  "name": "ActivePowerS",
+                  "type": "timeseries",
+                  "label": "P L2 (S)",
+                  "color": "#4caf50",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kW",
+                  "decimals": 3,
+                  "_hash": 0.5769
+                },
+                {
+                  "name": "ActivePowerT",
+                  "type": "timeseries",
+                  "label": "P L3 (T)",
+                  "color": "#2196f3",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kW",
+                  "decimals": 3,
+                  "_hash": 0.51
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "8px",
+          "settings": {
+            "shadowSize": 4,
+            "fontColor": "#545454",
+            "fontSize": 10,
+            "tooltipIndividual": true,
+            "tooltipCumulative": false,
+            "hideZeros": false,
+            "yaxis": {
+              "label": "Active Power (kW)",
+              "ticksFormatter": ""
+            },
+            "xaxis": {
+              "showLabels": true
+            },
+            "grid": {
+              "color": "#545454",
+              "tickColor": "#DDDDDD",
+              "outlineWidth": 1,
+              "verticalLines": true,
+              "horizontalLines": true
+            },
+            "stack": false,
+            "smoothLines": false,
+            "showLegend": true,
+            "legendConfig": {
+              "direction": "column",
+              "position": "bottom",
+              "sortDataKeys": false,
+              "showMin": false,
+              "showMax": true,
+              "showAvg": true,
+              "showTotal": false,
+              "showLatest": true
+            },
+            "comparisonEnabled": false
+          },
+          "title": "Active Power / Phase",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": true,
+          "displayTimewindow": true,
+          "timewindow": {
+            "realtime": {
+              "realtimeType": 0,
+              "timewindowMs": 3600000
+            }
+          },
+          "actions": {}
+        }
+      },
+      "80c4944b-f107-4d76-9504-607422b95353": {
+        "isSystemType": true,
+        "bundleAlias": "charts",
+        "typeAlias": "basic_timeseries",
+        "type": "timeseries",
+        "title": "Reactive Power / Phase",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "ReactivePowerR",
+                  "type": "timeseries",
+                  "label": "Q L1 (R)",
+                  "color": "#f44336",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kvar",
+                  "decimals": 3,
+                  "_hash": 0.5787
+                },
+                {
+                  "name": "ReactivePowerS",
+                  "type": "timeseries",
+                  "label": "Q L2 (S)",
+                  "color": "#4caf50",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kvar",
+                  "decimals": 3,
+                  "_hash": 0.5478
+                },
+                {
+                  "name": "ReactivePowerT",
+                  "type": "timeseries",
+                  "label": "Q L3 (T)",
+                  "color": "#2196f3",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kvar",
+                  "decimals": 3,
+                  "_hash": 0.2095
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "8px",
+          "settings": {
+            "shadowSize": 4,
+            "fontColor": "#545454",
+            "fontSize": 10,
+            "tooltipIndividual": true,
+            "tooltipCumulative": false,
+            "hideZeros": false,
+            "yaxis": {
+              "label": "Reactive Power (kvar)",
+              "ticksFormatter": ""
+            },
+            "xaxis": {
+              "showLabels": true
+            },
+            "grid": {
+              "color": "#545454",
+              "tickColor": "#DDDDDD",
+              "outlineWidth": 1,
+              "verticalLines": true,
+              "horizontalLines": true
+            },
+            "stack": false,
+            "smoothLines": false,
+            "showLegend": true,
+            "legendConfig": {
+              "direction": "column",
+              "position": "bottom",
+              "sortDataKeys": false,
+              "showMin": false,
+              "showMax": true,
+              "showAvg": true,
+              "showTotal": false,
+              "showLatest": true
+            },
+            "comparisonEnabled": false
+          },
+          "title": "Reactive Power / Phase",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": true,
+          "displayTimewindow": true,
+          "timewindow": {
+            "realtime": {
+              "realtimeType": 0,
+              "timewindowMs": 3600000
+            }
+          },
+          "actions": {}
+        }
+      },
+      "4c81581f-237b-49f5-9f13-00cbaf3d017d": {
+        "isSystemType": true,
+        "bundleAlias": "charts",
+        "typeAlias": "basic_timeseries",
+        "type": "timeseries",
+        "title": "Apparent Power / Phase",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "ApparentPowerR",
+                  "type": "timeseries",
+                  "label": "S L1 (R)",
+                  "color": "#f44336",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kVA",
+                  "decimals": 3,
+                  "_hash": 0.9805
+                },
+                {
+                  "name": "ApparentPowerS",
+                  "type": "timeseries",
+                  "label": "S L2 (S)",
+                  "color": "#4caf50",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kVA",
+                  "decimals": 3,
+                  "_hash": 0.8336
+                },
+                {
+                  "name": "ApparentPowerT",
+                  "type": "timeseries",
+                  "label": "S L3 (T)",
+                  "color": "#2196f3",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "kVA",
+                  "decimals": 3,
+                  "_hash": 0.4499
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "8px",
+          "settings": {
+            "shadowSize": 4,
+            "fontColor": "#545454",
+            "fontSize": 10,
+            "tooltipIndividual": true,
+            "tooltipCumulative": false,
+            "hideZeros": false,
+            "yaxis": {
+              "label": "Apparent Power (kVA)",
+              "ticksFormatter": ""
+            },
+            "xaxis": {
+              "showLabels": true
+            },
+            "grid": {
+              "color": "#545454",
+              "tickColor": "#DDDDDD",
+              "outlineWidth": 1,
+              "verticalLines": true,
+              "horizontalLines": true
+            },
+            "stack": false,
+            "smoothLines": false,
+            "showLegend": true,
+            "legendConfig": {
+              "direction": "column",
+              "position": "bottom",
+              "sortDataKeys": false,
+              "showMin": false,
+              "showMax": true,
+              "showAvg": true,
+              "showTotal": false,
+              "showLatest": true
+            },
+            "comparisonEnabled": false
+          },
+          "title": "Apparent Power / Phase",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": true,
+          "displayTimewindow": true,
+          "timewindow": {
+            "realtime": {
+              "realtimeType": 0,
+              "timewindowMs": 3600000
+            }
+          },
+          "actions": {}
+        }
+      },
+      "74eb6a9e-777d-4df8-9ae6-a25e91324c1a": {
+        "isSystemType": true,
+        "bundleAlias": "charts",
+        "typeAlias": "basic_timeseries",
+        "type": "timeseries",
+        "title": "Neutral Current",
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "742df94b-9526-41c4-9277-652300e6e846",
+              "dataKeys": [
+                {
+                  "name": "NeutralCurrent",
+                  "type": "timeseries",
+                  "label": "I Neutral",
+                  "color": "#ff5722",
+                  "settings": {
+                    "showLines": true,
+                    "fillLines": false,
+                    "showPoints": false,
+                    "showPointShape": "circle",
+                    "pointShapeFormatter": "",
+                    "showPointsLineWidth": 5,
+                    "showPointsRadius": 3,
+                    "tooltipValueFormatter": ""
+                  },
+                  "units": "A",
+                  "decimals": 2,
+                  "_hash": 0.3623
+                }
+              ]
+            }
+          ],
+          "showTitle": true,
+          "backgroundColor": "#fff",
+          "color": "rgba(0,0,0,0.87)",
+          "padding": "8px",
+          "settings": {
+            "shadowSize": 4,
+            "fontColor": "#545454",
+            "fontSize": 10,
+            "tooltipIndividual": true,
+            "tooltipCumulative": false,
+            "hideZeros": false,
+            "yaxis": {
+              "label": "Current (A)",
+              "ticksFormatter": ""
+            },
+            "xaxis": {
+              "showLabels": true
+            },
+            "grid": {
+              "color": "#545454",
+              "tickColor": "#DDDDDD",
+              "outlineWidth": 1,
+              "verticalLines": true,
+              "horizontalLines": true
+            },
+            "stack": false,
+            "smoothLines": false,
+            "showLegend": true,
+            "legendConfig": {
+              "direction": "column",
+              "position": "bottom",
+              "sortDataKeys": false,
+              "showMin": false,
+              "showMax": true,
+              "showAvg": true,
+              "showTotal": false,
+              "showLatest": true
+            },
+            "comparisonEnabled": false
+          },
+          "title": "Neutral Current",
+          "showTitleIcon": false,
+          "titleStyle": {
+            "fontSize": "16px",
+            "fontWeight": 500
+          },
+          "dropShadow": true,
+          "enableFullscreen": true,
+          "widgetStyle": {
+            "borderRadius": "8px"
+          },
+          "useDashboardTimewindow": true,
+          "displayTimewindow": true,
+          "timewindow": {
+            "realtime": {
+              "realtimeType": 0,
+              "timewindowMs": 3600000
+            }
+          },
+          "actions": {}
+        }
+      },
+      "9b6ba763-5aba-4cdf-8a9a-e45453e87ea8": {
+        "isSystemType": true,
+        "bundleAlias": "cards",
+        "typeAlias": "html_card",
+        "type": "static",
+        "title": "OBIS Reference",
+        "config": {
+          "datasources": [],
+          "settings": {
+            "cardHtml": "\n    <div style=\"padding:14px 18px;font-family:'Segoe UI',system-ui,sans-serif;\n         font-size:12px;background:#fff;border-radius:8px;\n         height:100%;overflow-y:auto;box-sizing:border-box;\n         box-shadow:0 1px 3px rgba(0,0,0,0.08);\">\n      <div style=\"font-size:15px;font-weight:600;color:#1a237e;margin-bottom:10px;\">\n        &#128203; OBIS Code Reference (IEC 62056)\n      </div>\n      <table style=\"width:100%;border-collapse:collapse;font-size:11px;\">\n        <thead>\n          <tr style=\"background:#e3f2fd;\">\n            <th style=\"padding:5px 6px;text-align:left;border-bottom:2px solid #90caf9;\">OBIS</th>\n            <th style=\"padding:5px 6px;text-align:left;border-bottom:2px solid #90caf9;\">Parameter</th>\n            <th style=\"padding:5px 6px;text-align:center;border-bottom:2px solid #90caf9;\">Unit</th>\n            <th style=\"padding:5px 6px;text-align:center;border-bottom:2px solid #90caf9;\">RID</th>\n          </tr>\n        </thead>\n        <tbody>\n          <tr><td style=\"padding:3px 6px;\">1-0:32.7.0</td><td>Voltage L1 (R)</td>\n              <td style=\"text-align:center;\">V</td><td style=\"text-align:center;\">4</td></tr>\n          <tr style=\"background:#fafafa;\"><td style=\"padding:3px 6px;\">1-0:52.7.0</td><td>Voltage L2 (S)</td>\n              <td style=\"text-align:center;\">V</td><td style=\"text-align:center;\">14</td></tr>\n          <tr><td style=\"padding:3px 6px;\">1-0:72.7.0</td><td>Voltage L3 (T)</td>\n              <td style=\"text-align:center;\">V</td><td style=\"text-align:center;\">24</td></tr>\n          <tr style=\"background:#fafafa;\"><td style=\"padding:3px 6px;\">1-0:31.7.0</td><td>Current L1 (R)</td>\n              <td style=\"text-align:center;\">A</td><td style=\"text-align:center;\">5</td></tr>\n          <tr><td style=\"padding:3px 6px;\">1-0:51.7.0</td><td>Current L2 (S)</td>\n              <td style=\"text-align:center;\">A</td><td style=\"text-align:center;\">15</td></tr>\n          <tr style=\"background:#fafafa;\"><td style=\"padding:3px 6px;\">1-0:71.7.0</td><td>Current L3 (T)</td>\n              <td style=\"text-align:center;\">A</td><td style=\"text-align:center;\">25</td></tr>\n          <tr><td style=\"padding:3px 6px;\">1-0:14.7.0</td><td>Frequency</td>\n              <td style=\"text-align:center;\">Hz</td><td style=\"text-align:center;\">49</td></tr>\n          <tr style=\"background:#fafafa;\"><td style=\"padding:3px 6px;\">1-0:13.7.0</td><td>Power Factor</td>\n              <td style=\"text-align:center;\">&mdash;</td><td style=\"text-align:center;\">39</td></tr>\n          <tr><td style=\"padding:3px 6px;\">1-0:1.8.0</td><td>Active Energy (+)</td>\n              <td style=\"text-align:center;\">kWh</td><td style=\"text-align:center;\">41</td></tr>\n          <tr style=\"background:#fafafa;\"><td style=\"padding:3px 6px;\">1-0:3.8.0</td><td>Reactive Energy (+)</td>\n              <td style=\"text-align:center;\">kvarh</td><td style=\"text-align:center;\">42</td></tr>\n          <tr><td style=\"padding:3px 6px;\">0-0:96.1.0</td><td>Meter Serial Number</td>\n              <td style=\"text-align:center;\">&mdash;</td><td style=\"text-align:center;\">2</td></tr>\n        </tbody>\n      </table>\n      <div style=\"margin-top:10px;padding-top:8px;border-top:1px solid #e0e0e0;font-size:10px;color:#666;\">\n        <b>Alarm Thresholds (Table 3-6):</b><br/>\n        &#x26A0; Voltage Sag: &lt; 207 V &nbsp;|&nbsp;\n        &#x26A0; Voltage Swell: &gt; 253 V &nbsp;|&nbsp;\n        &#x26A0; Over-current: &gt; 25 A<br/>\n        <b>Observe Tiers:</b>\n        Tier 1 (alarm) pmin=30 s, pmax=300 s &nbsp;|&nbsp;\n        Tier 2 (billing) pmin=60 s, pmax=900 s\n      </div>\n    </div>"
+          },
+          "backgroundColor": "transparent",
+          "padding": "0",
+          "showTitle": false,
+          "title": "OBIS Reference",
+          "dropShadow": false,
+          "enableFullscreen": false,
+          "widgetStyle": {},
+          "actions": {}
+        }
+      }
+    },
+    "states": {
+      "default": {
+        "name": "AMI Smart Energy Monitor",
+        "root": true,
+        "layouts": {
+          "main": {
+            "widgets": {
+              "5a43e104-3cc2-425b-b8e4-13c37e1a009d": {
+                "sizeX": 24,
+                "sizeY": 3,
+                "row": 0,
+                "col": 0,
+                "mobileHide": false,
+                "mobileOrder": 0
+              },
+              "a5c326f5-b21c-4be7-a4a9-e6078d5467b6": {
+                "sizeX": 6,
+                "sizeY": 6,
+                "row": 3,
+                "col": 0,
+                "mobileHide": false,
+                "mobileOrder": 1
+              },
+              "ca53de22-d9c3-4e3c-901d-a40bd5539cd4": {
+                "sizeX": 6,
+                "sizeY": 6,
+                "row": 3,
+                "col": 6,
+                "mobileHide": false,
+                "mobileOrder": 2
+              },
+              "a2316758-5d78-49d0-8cd0-d375e7cb0973": {
+                "sizeX": 6,
+                "sizeY": 6,
+                "row": 3,
+                "col": 12,
+                "mobileHide": false,
+                "mobileOrder": 3
+              },
+              "6b9ed6f9-857e-41bc-a017-eb0ae0538f8b": {
+                "sizeX": 6,
+                "sizeY": 6,
+                "row": 3,
+                "col": 18,
+                "mobileHide": false,
+                "mobileOrder": 4
+              },
+              "756b6a26-e411-4833-b4ab-7325b5a3f9c9": {
+                "sizeX": 4,
+                "sizeY": 3,
+                "row": 9,
+                "col": 0,
+                "mobileHide": false,
+                "mobileOrder": 5
+              },
+              "32a41727-0fd7-48c7-b47b-6007c8969ce5": {
+                "sizeX": 4,
+                "sizeY": 3,
+                "row": 9,
+                "col": 4,
+                "mobileHide": false,
+                "mobileOrder": 6
+              },
+              "c27b0415-9a5a-4160-b0c9-3c5fe8f88078": {
+                "sizeX": 4,
+                "sizeY": 3,
+                "row": 9,
+                "col": 8,
+                "mobileHide": false,
+                "mobileOrder": 7
+              },
+              "f23d7f90-9940-46cd-b5e1-9e5fc782335a": {
+                "sizeX": 4,
+                "sizeY": 3,
+                "row": 9,
+                "col": 12,
+                "mobileHide": false,
+                "mobileOrder": 8
+              },
+              "316df0f8-bd32-4089-b1f1-14df70393dbc": {
+                "sizeX": 4,
+                "sizeY": 3,
+                "row": 9,
+                "col": 16,
+                "mobileHide": false,
+                "mobileOrder": 9
+              },
+              "b6ae0bfd-d0ee-4bb3-ad9a-082a015bcb84": {
+                "sizeX": 4,
+                "sizeY": 3,
+                "row": 9,
+                "col": 20,
+                "mobileHide": false,
+                "mobileOrder": 10
+              },
+              "593ce8a4-e094-4a03-8806-d2f63343aeac": {
+                "sizeX": 12,
+                "sizeY": 7,
+                "row": 12,
+                "col": 0,
+                "mobileHide": false,
+                "mobileOrder": 11
+              },
+              "70c9e98d-2d72-46f6-be12-1cd7fd9989c7": {
+                "sizeX": 12,
+                "sizeY": 7,
+                "row": 12,
+                "col": 12,
+                "mobileHide": false,
+                "mobileOrder": 12
+              },
+              "385cb464-5596-48b0-bac8-d20573d165b2": {
+                "sizeX": 12,
+                "sizeY": 7,
+                "row": 19,
+                "col": 0,
+                "mobileHide": false,
+                "mobileOrder": 13
+              },
+              "2830c9b9-b115-4445-84e8-404c35688a2a": {
+                "sizeX": 6,
+                "sizeY": 7,
+                "row": 19,
+                "col": 12,
+                "mobileHide": false,
+                "mobileOrder": 14
+              },
+              "aa2fc8b8-db93-4a04-bee8-f3b995652f3d": {
+                "sizeX": 6,
+                "sizeY": 7,
+                "row": 19,
+                "col": 18,
+                "mobileHide": false,
+                "mobileOrder": 15
+              },
+              "42040dcb-87fc-4e2a-bd39-965f287d9e79": {
+                "sizeX": 12,
+                "sizeY": 7,
+                "row": 26,
+                "col": 0,
+                "mobileHide": false,
+                "mobileOrder": 16
+              },
+              "66f39704-7408-4075-82e2-b66cfc61416c": {
+                "sizeX": 12,
+                "sizeY": 7,
+                "row": 26,
+                "col": 12,
+                "mobileHide": false,
+                "mobileOrder": 17
+              },
+              "08fcfdd4-2710-4b60-908a-57d664ddbf66": {
+                "sizeX": 24,
+                "sizeY": 2,
+                "row": 33,
+                "col": 0,
+                "mobileHide": false,
+                "mobileOrder": 18
+              },
+              "1f565e62-4bbc-4c53-a928-2551d62e72ab": {
+                "sizeX": 8,
+                "sizeY": 7,
+                "row": 35,
+                "col": 0,
+                "mobileHide": false,
+                "mobileOrder": 19
+              },
+              "80c4944b-f107-4d76-9504-607422b95353": {
+                "sizeX": 8,
+                "sizeY": 7,
+                "row": 35,
+                "col": 8,
+                "mobileHide": false,
+                "mobileOrder": 20
+              },
+              "4c81581f-237b-49f5-9f13-00cbaf3d017d": {
+                "sizeX": 8,
+                "sizeY": 7,
+                "row": 35,
+                "col": 16,
+                "mobileHide": false,
+                "mobileOrder": 21
+              },
+              "74eb6a9e-777d-4df8-9ae6-a25e91324c1a": {
+                "sizeX": 12,
+                "sizeY": 6,
+                "row": 42,
+                "col": 0,
+                "mobileHide": false,
+                "mobileOrder": 22
+              },
+              "9b6ba763-5aba-4cdf-8a9a-e45453e87ea8": {
+                "sizeX": 12,
+                "sizeY": 6,
+                "row": 42,
+                "col": 12,
+                "mobileHide": false,
+                "mobileOrder": 23
+              }
+            },
+            "gridSettings": {
+              "backgroundColor": "#eff1f5",
+              "columns": 24,
+              "margin": 10,
+              "outerMargin": true,
+              "backgroundSizeMode": "100%"
+            }
+          }
+        }
+      }
+    },
+    "entityAliases": {
+      "742df94b-9526-41c4-9277-652300e6e846": {
+        "id": "742df94b-9526-41c4-9277-652300e6e846",
+        "alias": "AMI Power Meter",
+        "filter": {
+          "type": "singleEntity",
+          "singleEntity": {
+            "entityType": "DEVICE",
+            "id": "2dbc4a50-11ea-11f1-95aa-ff38b4767a68"
+          },
+          "resolveMultiple": false
+        }
+      }
+    },
+    "filters": {},
+    "settings": {
+      "stateControllerId": "entity",
+      "showTitle": false,
+      "showDashboardsSelect": false,
+      "showEntitiesSelect": false,
+      "showDashboardTimewindow": true,
+      "showDashboardExport": true,
+      "toolbarAlwaysOpen": true
+    },
+    "timewindow": {
+      "displayValue": "",
+      "selectedTab": 0,
+      "realtime": {
+        "realtimeType": 0,
+        "interval": 1000,
+        "timewindowMs": 3600000
+      }
+    }
+  }
+}

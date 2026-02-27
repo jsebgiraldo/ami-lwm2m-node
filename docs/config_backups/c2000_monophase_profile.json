@@ -1,0 +1,107 @@
+{
+  "name": "C2000_Monophase_LwM2M",
+  "description": "Device Profile for Microstar C2000 single-phase meter. Only Phase R (L1), Totals, Energy, and Frequency from Object 10242.",
+  "type": "DEFAULT",
+  "transportType": "LWM2M",
+  "provisionType": "DISABLED",
+  "profileData": {
+    "configuration": {
+      "type": "DEFAULT"
+    },
+    "transportConfiguration": {
+      "type": "LWM2M",
+      "observeAttr": {
+        "keyName": {
+          "/3_1.2/0/0": "manufacturer",
+          "/3_1.2/0/1": "modelNumber",
+          "/3_1.2/0/2": "serialNumber",
+          "/4_1.3/0/2": "radioSignalStrength",
+          "/4_1.3/0/3": "linkQuality",
+          "/5_1.1/0/3": "state",
+          "/5_1.1/0/5": "updateResult",
+          "/10242_1.0/0/4": "voltage",
+          "/10242_1.0/0/5": "current",
+          "/10242_1.0/0/6": "activePower",
+          "/10242_1.0/0/7": "reactivePower",
+          "/10242_1.0/0/10": "apparentPower",
+          "/10242_1.0/0/11": "powerFactor",
+          "/10242_1.0/0/34": "totalActivePower",
+          "/10242_1.0/0/35": "totalReactivePower",
+          "/10242_1.0/0/38": "totalApparentPower",
+          "/10242_1.0/0/39": "totalPowerFactor",
+          "/10242_1.0/0/41": "activeEnergy",
+          "/10242_1.0/0/42": "reactiveEnergy",
+          "/10242_1.0/0/45": "apparentEnergy",
+          "/10242_1.0/0/49": "frequency"
+        },
+        "observe": [
+          "/4_1.3/0/2",
+          "/4_1.3/0/3",
+          "/5_1.1/0/3",
+          "/5_1.1/0/5",
+          "/10242_1.0/0/4",
+          "/10242_1.0/0/5",
+          "/10242_1.0/0/6",
+          "/10242_1.0/0/7",
+          "/10242_1.0/0/10",
+          "/10242_1.0/0/11",
+          "/10242_1.0/0/34",
+          "/10242_1.0/0/35",
+          "/10242_1.0/0/38",
+          "/10242_1.0/0/39",
+          "/10242_1.0/0/41",
+          "/10242_1.0/0/42",
+          "/10242_1.0/0/45",
+          "/10242_1.0/0/49"
+        ],
+        "attribute": [
+          "/3_1.2/0/0",
+          "/3_1.2/0/1",
+          "/3_1.2/0/2"
+        ],
+        "telemetry": [
+          "/4_1.3/0/2",
+          "/4_1.3/0/3",
+          "/5_1.1/0/3",
+          "/5_1.1/0/5",
+          "/10242_1.0/0/4",
+          "/10242_1.0/0/5",
+          "/10242_1.0/0/6",
+          "/10242_1.0/0/7",
+          "/10242_1.0/0/10",
+          "/10242_1.0/0/11",
+          "/10242_1.0/0/34",
+          "/10242_1.0/0/35",
+          "/10242_1.0/0/38",
+          "/10242_1.0/0/39",
+          "/10242_1.0/0/41",
+          "/10242_1.0/0/42",
+          "/10242_1.0/0/45",
+          "/10242_1.0/0/49"
+        ],
+        "attributeLwm2m": {},
+        "observeStrategy": "COMPOSITE_BY_OBJECT"
+      },
+      "bootstrapServerUpdateEnable": false,
+      "bootstrap": [],
+      "clientLwM2mSettings": {
+        "useObject19ForOtaInfo": true,
+        "fwUpdateStrategy": 1,
+        "swUpdateStrategy": 1,
+        "clientOnlyObserveAfterConnect": 1,
+        "powerMode": "DRX",
+        "psmActivityTimer": 10000,
+        "edrxCycle": 81000,
+        "pagingTransmissionWindow": 10000,
+        "fwUpdateResource": null,
+        "swUpdateResource": null,
+        "defaultObjectIDVer": "{}"
+      }
+    },
+    "provisionConfiguration": {
+      "type": "DISABLED",
+      "provisionDeviceSecret": null
+    },
+    "alarms": null
+  }
+}
