@@ -132,17 +132,62 @@ El perfil LwM2M debe usar formato **"V"** (`"1.2"`, `"1.0"`, etc.)
 - DLMS/COSEM (IEC 62056) sobre HDLC
 - Slave address: 1 (medidor), Client: 0x10
 
-### Registros OBIS Leídos
-| OBIS Code | Magnitud | Unidad |
-|-----------|----------|--------|
-| 1.0.32.7.0 | Tensión fase R | V |
-| 1.0.31.7.0 | Corriente fase R | A |
-| 1.0.21.7.0 | Potencia activa R | W |
-| 1.0.23.7.0 | Potencia reactiva R | var |
-| 1.0.29.7.0 | Potencia aparente R | VA |
-| 1.0.33.7.0 | Factor de potencia R | - |
-| 1.0.1.8.0 | Energía activa total | Wh |
-| 1.0.14.7.0 | Frecuencia | Hz |
+### Tabla de Referencia Completa: OBIS → LwM2M → Telemetría
+
+El nodo lee el medidor cada **30 segundos** vía RS485/DLMS. Los valores se
+almacenan en el objeto LwM2M **10242** (PowerMeter, custom IPSO) y el servidor
+TB Edge los observa con dos grupos de frecuencia.
+
+#### Grupo 1 — Telemetría Operacional (pmin=15s, pmax=30s)
+
+| OBIS Code | Magnitud | Unidad | LwM2M Path | RID | Telemetry Key | Tipo |
+|-----------|----------|--------|------------|-----|---------------|------|
+| 1-1:32.7.0 | Tensión fase R | V | /10242/0/4 | 4 | `voltage` | Float |
+| 1-1:31.7.0 | Corriente fase R | A | /10242/0/5 | 5 | `current` | Float |
+| 1-1:21.7.0 | Potencia activa R | kW | /10242/0/6 | 6 | `activePower` | Float |
+| 1-1:1.8.0 | Energía activa total | kWh | /10242/0/41 | 41 | `activeEnergy` | Float |
+
+#### Grupo 2 — Caracterización de Carga (pmin=60s, pmax=300s)
+
+| OBIS Code | Magnitud | Unidad | LwM2M Path | RID | Telemetry Key | Tipo |
+|-----------|----------|--------|------------|-----|---------------|------|
+| 1-1:23.7.0 | Potencia reactiva R | kvar | /10242/0/7 | 7 | `reactivePower` | Float |
+| 1-1:29.7.0 | Potencia aparente R | kVA | /10242/0/10 | 10 | `apparentPower` | Float |
+| 1-1:33.7.0 | Factor de potencia R | — | /10242/0/11 | 11 | `powerFactor` | Float |
+| 1-1:1.7.0 | Potencia activa total | kW | /10242/0/34 | 34 | `totalActivePower` | Float |
+| 1-1:3.7.0 | Potencia reactiva total | kvar | /10242/0/35 | 35 | `totalReactivePower` | Float |
+| 1-1:9.7.0 | Potencia aparente total | kVA | /10242/0/38 | 38 | `totalApparentPower` | Float |
+| 1-1:13.7.0 | Factor de potencia total | — | /10242/0/39 | 39 | `totalPowerFactor` | Float |
+| 1-1:1.8.0 | Energía reactiva | kvarh | /10242/0/42 | 42 | `reactiveEnergy` | Float |
+| 1-1:9.8.0 | Energía aparente | kVAh | /10242/0/45 | 45 | `apparentEnergy` | Float |
+| 1-1:14.7.0 | Frecuencia | Hz | /10242/0/49 | 49 | `frequency` | Float |
+
+#### Recursos adicionales observados (Grupo 2 — pmin=60s, pmax=300s)
+
+| Objeto | LwM2M Path | RID | Telemetry Key | Descripción |
+|--------|------------|-----|---------------|-------------|
+| ConnMon (4) | /4/0/2 | 2 | `radioSignalStrength` | RSSI de la radio 802.15.4 |
+| ConnMon (4) | /4/0/3 | 3 | `linkQuality` | Calidad del enlace Thread |
+| Firmware (5) | /5/0/3 | 3 | `fwState` | Estado de actualización OTA |
+| Firmware (5) | /5/0/5 | 5 | `fwUpdateResult` | Resultado de la última OTA |
+
+#### Atributos (lectura única al registrar, sin observe)
+
+| Objeto | LwM2M Path | RID | Attribute Key | Descripción |
+|--------|------------|-----|---------------|-------------|
+| Device (3) | /3/0/0 | 0 | `manufacturer` | Tesis-AMI |
+| Device (3) | /3/0/1 | 1 | `modelNumber` | XIAO-ESP32-C6 |
+| Device (3) | /3/0/2 | 2 | `serialNumber` | AMI-001 |
+
+#### Resumen de Temporización
+
+| Etapa | Intervalo | Notas |
+|-------|-----------|-------|
+| Lectura DLMS (RS485) | 30s | Polling del medidor vía HDLC/COSEM |
+| Observe Grupo 1 | pmin=15s, pmax=30s | Voltaje, corriente, potencia activa, energía |
+| Observe Grupo 2 | pmin=60s, pmax=300s | Calidad, totales, frecuencia, radio, firmware |
+| LwM2M Registration Update | ~270s | Lifetime=300s, renueva 30s antes de expirar |
+| LwM2M Lifetime | 300s | Si no renueva, servidor marca INACTIVE |
 
 ## Deployment — Docker Compose (Edge)
 

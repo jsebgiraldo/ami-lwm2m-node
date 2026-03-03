@@ -1,0 +1,81 @@
+{
+  "timestamp": "2026-03-03T03:25:32.638119+00:00",
+  "overall": "OK",
+  "recovery_needed": false,
+  "recovery_actions": [],
+  "checks": [
+    {
+      "name": "edge_api",
+      "status": "OK",
+      "message": "TB Edge API reachable and auth working",
+      "details": {}
+    },
+    {
+      "name": "docker",
+      "status": "OK",
+      "message": "All containers healthy: tb-edge=Up 5 hours, tb-edge-postgres=Up 5 hours (healthy)",
+      "details": {
+        "tb-edge": "Up 5 hours",
+        "tb-edge-postgres": "Up 5 hours (healthy)"
+      }
+    },
+    {
+      "name": "device_connectivity",
+      "status": "OK",
+      "message": "Device online \u2014 active 0min ago",
+      "details": {
+        "active": true,
+        "last_connect": "22:17:25",
+        "last_activity": "22:25:22",
+        "last_disconnect": "22:17:25",
+        "inactive_minutes": 0.2
+      }
+    },
+    {
+      "name": "telemetry",
+      "status": "OK",
+      "message": "Telemetry fresh \u2014 voltage=122.97V (0.3min ago)",
+      "details": {
+        "values": {
+          "voltage": {
+            "value": 122.97,
+            "age_min": 0.3
+          },
+          "current": {
+            "value": 0.3,
+            "age_min": 0.3
+          },
+          "activePower": {
+            "value": 35.5,
+            "age_min": 0.2
+          },
+          "frequency": {
+            "value": 59.989999999999995,
+            "age_min": 0.2
+          },
+          "activeEnergy": {
+            "value": 57036.0,
+            "age_min": 0.8
+          },
+          "powerFactor": {
+            "value": 0.976,
+            "age_min": 0.3
+          }
+        },
+        "stale_keys": [],
+        "anomalies": []
+      }
+    },
+    {
+      "name": "lwm2m",
+      "status": "OK",
+      "message": "LwM2M registered \u2014 Tesis-AMI / XIAO-ESP32-C6",
+      "details": {
+        "ModelNumber": "XIAO-ESP32-C6",
+        "Manufacturer": "Tesis-AMI",
+        "Description": "3-Phase Power Meter",
+        "SerialNumber": "AMI-001"
+      }
+    }
+  ]
+}

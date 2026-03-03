@@ -21,6 +21,7 @@
 #include <zephyr/net/lwm2m.h>
 #include <zephyr/net/net_if.h>
 #include <zephyr/random/random.h>
+#include <zephyr/shell/shell.h>
 #include <openthread.h>
 #include <openthread/thread.h>
 #include <openthread/instance.h>
@@ -48,7 +49,7 @@ LOG_MODULE_REGISTER(ami_lwm2m, LOG_LEVEL_INF);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "XIAO-ESP32-C6"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.12.0"
+#define CLIENT_FIRMWARE_VER     "0.13.0"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -57,10 +58,19 @@ static char endpoint_name[32];
 /* LwM2M Server URI — Leshan on OTBR mesh-local address */
 #define LWM2M_SERVER_URI        "coap://[" CONFIG_NET_CONFIG_PEER_IPV6_ADDR "]:5683"
 
-/* Sensor update interval */
-#define SENSOR_UPDATE_INTERVAL  K_SECONDS(30)
+/* Sensor update intervals */
+#define DLMS_POLL_INTERVAL     K_SECONDS(30)   /* Full DLMS meter poll */
+#define LOOP_TICK              K_MSEC(500)     /* Main loop tick */
 
-/* LED */
+/* Configurable observer re-notify interval (milliseconds).
+ * 0 = disabled (rely on DLMS poll notifications only → ~30s rate).
+ * Set via shell: "notify_interval <ms>" e.g. 1000 for 1 second.
+ */
+static int notify_interval_ms;
+static int64_t last_notify_ms;
+
+/* Track last DLMS poll time */
+static int64_t last_dlms_poll_ms;
 static const struct gpio_dt_spec led0 =
 	GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios, {0});
 
@@ -203,6 +213,52 @@ static int lwm2m_setup(void)
 	LOG_INF("  Server: %s", LWM2M_SERVER_URI);
 	LOG_INF("  Endpoint: %s", endpoint_name);
 	return 0;
+}
+
+/* ---- Shell command: set observer re-notify interval ---- */
+static int cmd_notify_interval(const struct shell *sh, size_t argc, char **argv)
+{
+	int ms = atoi(argv[1]);
+
+	if (ms < 0) {
+		shell_error(sh, "interval must be >= 0");
+		return -EINVAL;
+	}
+	notify_interval_ms = ms;
+	shell_print(sh, "notify_interval set to %d ms%s",
+		    ms, ms == 0 ? " (disabled)" : "");
+	LOG_INF("notify_interval changed to %d ms", ms);
+	return 0;
+}
+SHELL_CMD_ARG_REGISTER(notify_interval, NULL,
+		       "Set observer re-notify interval in ms (0=disabled)",
+		       cmd_notify_interval, 2, 0);
+
+/* ---- Re-notify all observers with cached values ---- */
+static void notify_all_observers(void)
+{
+	/* Mark all observed power meter resources as dirty.
+	 * Triggers a CoAP notification for each resource that has
+	 * an active observe subscription.
+	 */
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_TENSION_R_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_CURRENT_R_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_TENSION_S_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_CURRENT_S_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_TENSION_T_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_CURRENT_T_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_R_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_S_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_T_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_3P_ACTIVE_POWER_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_3P_REACTIVE_POWER_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_3P_APPARENT_POWER_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_3P_POWER_FACTOR_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_ENERGY_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_ENERGY_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_APPARENT_ENERGY_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_FREQUENCY_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_NEUTRAL_CURRENT_RID);
 }
 
 /* ---- Read real meter data via RS485/DLMS ---- */
@@ -353,20 +409,39 @@ int main(void)
 	lwm2m_rd_client_start(&client_ctx, endpoint_name, 0,
 			      rd_client_event, observe_cb);
 
-	/* Main loop — update sensors periodically */
-	LOG_INF("Entering sensor loop (every 30 seconds)");
+	/* Main loop — DLMS poll every 30s, optional fast notifications */
+	LOG_INF("Entering sensor loop (DLMS=30s, notify=%dms)",
+		notify_interval_ms);
 
 	/* Initial update so resources have real values before first sleep */
 	update_connectivity_metrics();
 	update_thread_network();
 	update_thread_neighbors();
+	last_dlms_poll_ms = k_uptime_get();
+	last_notify_ms = last_dlms_poll_ms;
 
 	while (1) {
-		k_sleep(SENSOR_UPDATE_INTERVAL);
-		update_sensors();
-		update_connectivity_metrics();
-		update_thread_network();
-		update_thread_neighbors();
+		k_sleep(LOOP_TICK);
+
+		int64_t now = k_uptime_get();
+
+		/* Full DLMS poll every 30 seconds */
+		if ((now - last_dlms_poll_ms) >= 30000) {
+			update_sensors();
+			update_connectivity_metrics();
+			update_thread_network();
+			update_thread_neighbors();
+			last_dlms_poll_ms = now;
+		} else if (lwm2m_connected && notify_interval_ms > 0 &&
+			   (now - last_notify_ms) >= notify_interval_ms) {
+			/* Re-trigger observer notifications at the
+			 * configured interval (set via shell).
+			 * DLMS data is cached; this only marks resources
+			 * dirty so the LwM2M engine sends CoAP Notify.
+			 */
+			notify_all_observers();
+			last_notify_ms = now;
+		}
 	}
 
 	return 0;

@@ -1,8 +1,8 @@
 # Estado actual del sistema — Actualizar con cada sesión
 
-## Última actualización: 2026-02-27 (sesión 7)
+## Última actualización: 2026-03-02 (sesión 9)
 
-## 🟢 ESTADO: SISTEMA COMPLETAMENTE OPERATIVO — Telemetría ESP32→Edge→Cloud verificada
+## 🟢 ESTADO: SISTEMA OPERATIVO — Medidor leyendo 22/22 OBIS • 98 unit tests PASSED
 
 ## Estado de contenedores (192.168.1.111)
 - `tb-edge`: UP — thingsboard/tb-edge:4.2.1EDGE (host networking, LwM2M en puerto 5683)
@@ -102,11 +102,47 @@
 - docker-compose.yml actualizado en RPi4 (`/root/tb-edge/docker-compose.yml`)
 
 ## Próximos pasos (orden de prioridad)
-1. **Monitorear observaciones diferenciadas** — verificar que Grupo1 (15-30s) vs Grupo2 (60-300s) se respetan
-2. **Investigar error WriteAttributes /10242_1.0/0/14** — menor pero podría afectar observaciones
-3. **Considerar cambiar FTD→MTD** — no urgente ya que Router funciona bien
-4. **Monitoreo continuo** — verificar estabilidad de LwM2M registration a largo plazo
-5. **Dashboard en Cloud** — crear visualización de telemetría del medidor C2000
+1. **Dashboard ThingsBoard** — crear visualización de telemetría del medidor C2000 en Cloud
+2. **FOTA (OTA)** — probar actualización de firmware Object 5
+3. **Monitorear estabilidad a largo plazo** — verificar Thread/LwM2M registration permanece
+4. **Considerar FTD→MTD** — no urgente ya que Router funciona bien
+5. **Expandir tests** — agregar tests de integración con mocks de RS485
+6. **CI pipeline** — automatizar compilación y ejecución de unit tests en GitHub Actions
+
+## Lecturas del Medidor — Verificadas (sesión 9, 2026-03-02)
+Capturadas via MCP Serial en COM12 (115200 baud):
+```
+HDLC connected (UA received) ~140ms
+COSEM association ACCEPTED ~340ms
+22/22 OBIS reads successful (5 skipped as unsupported on single-phase)
+Cycle time: ~4.5s per poll
+
+Readings:
+  Voltage_R     = 131.9-132.2 V
+  Current_R     = 0.27 A
+  ActivePower_R = 34.50-34.60 kW
+  ActiveEnergy  = 56,893.0 kWh
+  Frequency     = 60.0 Hz
+  Thread RSSI   = -77 dBm
+  Thread LQI    = 100%
+  Thread Role   = Router
+```
+
+## Unit Tests — 98/98 PASSED (sesión 9, 2026-03-02)
+Compilados con GCC nativo vía WSL Ubuntu-24.04, sin dependencias de Zephyr.
+```
+Suite HDLC:       29/29 PASSED  (CRC-16, SNRM/DISC/I-frame build/parse/find, macros)
+Suite COSEM:      43/43 PASSED  (AARQ/AARE, GET req/resp, 15+ data types, RLRQ)
+Suite DLMS Logic: 26/26 PASSED  (OBIS table, value_to_double, config, state, LLC)
+```
+Compile command:
+```bash
+cd tests/
+gcc -o run_tests test_main.c test_hdlc.c test_cosem.c \
+    ../src/dlms_hdlc.c ../src/dlms_cosem.c \
+    -I../src -Istubs -DUNIT_TEST -lm -Wall
+./run_tests
+```
 
 ## docker-compose.yml corregido (sesión 7) — `/root/tb-edge/docker-compose.yml`
 ```yaml
@@ -228,4 +264,24 @@ CLOUD_RPC_HOST: "192.168.1.159"      # ← LAN directo (NO Tailscale)
     - `POST /api/deviceProfile` con `defaultObjectIDVer="1.0"` y `observeStrategy="SINGLE"`
   - **RESULTADO**: Nodo ACTIVE, 14 observaciones individuales establecidas, telemetría verificada en Cloud
   - Telemetría Cloud verificada: voltage=122.9-123.1V, frequency=~60Hz, current=0.0A
-  - **LECCIÓN CRÍTICA**: Nunca fijar solo en Edge DB — Cloud sync REVIERTE cambios. Fijar en Cloud API.
+  - **LECCIÓN CRÍTICA**: Nunca fijar solo en Edge DB — Cloud sync REVIERTE cambios. Fijar en Cloud API.- 2026-02-28 Sesión 8:
+  - Limpieza del workspace: .gitignore actualizado, archivos temporales eliminados
+  - Documentación de arquitectura creada en `.context/`
+  - Commit `619a57c` pusheado a `origin/master`
+- 2026-03-02 Sesión 9:
+  - **MCP Serial** instalado (`serial-mcp-server` en `.vscode/mcp.json`) para monitoreo COM12
+  - Medidor reconectado físicamente — lectura verificada:
+    - 22/22 OBIS leídos exitosamente (5 skipped: no aplican a monofásico)
+    - V=131.9-132.2V, I=0.27A, P=34.5-34.6kW, E=56,893.0kWh, f=60.0Hz
+    - Thread RSSI=-77dBm, LQI=100%, Role=Router
+    - Ciclo completo: HDLC connect(~140ms) → COSEM associate(~340ms) → 22 reads(~4.5s)
+  - **Unit test suite completo** — 98 tests en 3 suites:
+    - HDLC (29): CRC-16, SNRM/DISC/I-frame build/parse/find, address/control macros
+    - COSEM (43): AARQ/AARE, GET request/response, 15+ data types, RLRQ, OBIS helper
+    - DLMS Logic (26): OBIS table integrity, value_to_double, config, state, LLC header
+  - Compilación nativa via WSL Ubuntu GCC (`-DUNIT_TEST -lm`), sin dependencias Zephyr
+  - Stubs: zephyr_stubs.h, lwm2m.h (LWM2M_OBJ macro), RS485 inline stubs
+  - Archivos: `tests/test_main.c`, `test_hdlc.c`, `test_cosem.c`, `test_dlms_logic.c`, `test_framework.h`
+  - **LECCIÓN**: `#include "rs485_uart.h"` en dlms_meter.c resuelve primero a `../src/rs485_uart.h` (relativo), NO a `stubs/`. Definir stubs antes del `#include "../src/dlms_meter.c"` en el archivo de test.
+  - **LECCIÓN**: Counters `static int` en cada TU dan subtotales independientes. Usar `extern int` con `#ifdef TEST_MAIN_FILE` guard para compartir entre TUs.
+  - `.context/README.md` y `.context/ESTADO.md` actualizados con detalles de sesión 9

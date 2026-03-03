@@ -116,16 +116,43 @@ ami-lwm2m-node/
 ├── .context/           ← ESTE FOLDER (contexto para IA)
 ├── src/
 │   ├── main.c          ← Entry point, Thread join + LwM2M register
-│   ├── lwm2m_obj_power_meter.c/h  ← Objeto 10242 (medidor trifásico)
+│   ├── dlms_hdlc.c/h   ← HDLC framing layer (IEC 62056-46): CRC-16, SNRM/UA/DISC, I-frames
+│   ├── dlms_cosem.c/h  ← COSEM application layer: AARQ/AARE, GET/response, data decode (15+ types)
+│   ├── dlms_meter.c/h  ← DLMS meter orchestrator: 27 OBIS codes, scaler cache, value_to_double
+│   ├── lwm2m_obj_power_meter.c/h  ← Objeto 10242 (medidor trifásico, 27 RIDs)
 │   ├── lwm2m_obj_thread_*.c/h     ← Objetos Thread (diagnóstico)
-│   ├── dlms_*.c/h      ← Parser DLMS/COSEM para medidor Microstar
-│   ├── rs485_uart.c/h  ← Driver RS485 half-duplex
+│   ├── rs485_uart.c/h  ← Driver RS485 half-duplex (UART1 + DE/RE GPIO)
 │   └── firmware_update.c ← OTA (Object 5)
+├── tests/              ← Unit tests (98 tests, host-native GCC)
+│   ├── test_main.c     ← Test runner entry point
+│   ├── test_hdlc.c     ← 29 tests: CRC-16, SNRM/DISC/I-frame build, parse, find
+│   ├── test_cosem.c    ← 43 tests: AARQ/AARE, GET, decode (all types), RLRQ
+│   ├── test_dlms_logic.c ← 26 tests: OBIS table, value_to_double, config, state
+│   ├── test_framework.h  ← Mini test framework (assertions, suites, ANSI colors)
+│   └── stubs/          ← Zephyr/LwM2M/RS485 stubs for native compilation
+│       ├── zephyr_stubs.h         ← errno, kernel, logging no-ops
+│       ├── rs485_uart.h           ← RS485 stub (inline no-ops)
+│       ├── lwm2m_observation.h    ← lwm2m_notify_observer stub
+│       ├── zephyr/kernel.h        ← Redirect to zephyr_stubs.h
+│       ├── zephyr/logging/log.h   ← Redirect to zephyr_stubs.h
+│       └── zephyr/net/lwm2m.h     ← LWM2M_OBJ, lwm2m_set_f64 stubs
 ├── docs/               ← Documentación técnica
 │   └── config_backups/  ← Perfiles, dashboard, docker-compose de Edge
+├── tools/              ← Scripts auxiliares (serial MCP server, etc.)
 ├── prj.conf            ← Configuración Zephyr/Kconfig
-├── CMakeLists.txt      ← Build system
+├── CMakeLists.txt      ← Build system (12 source files)
 └── boards/             ← Device tree overlays
+```
+
+### Compilar y ejecutar unit tests
+```bash
+# Desde WSL Ubuntu (GCC no disponible nativo en Windows)
+cd /mnt/c/Users/jsgir/Documents/ESP32/zephyrproject/ami-lwm2m-node/tests
+gcc -o run_tests test_main.c test_hdlc.c test_cosem.c \
+    ../src/dlms_hdlc.c ../src/dlms_cosem.c \
+    -I../src -Istubs -DUNIT_TEST -lm -Wall
+./run_tests
+# Output: ALL 98 TESTS PASSED (29 HDLC + 43 COSEM + 26 DLMS Logic)
 ```
 
 ## Device Profile LwM2M (ThingsBoard Edge)

@@ -1,0 +1,10 @@
+timestamp,overall,edge_api,docker,device,telemetry,lwm2m,recovery_needed
+00:00:33,OK,OK,OK,OK,OK,OK,False
+00:05:33,OK,OK,OK,OK,OK,OK,False
+00:10:33,OK,OK,OK,OK,OK,OK,False
+00:15:33,OK,OK,OK,OK,OK,OK,False
+00:20:33,OK,OK,OK,OK,OK,OK,False
+00:25:33,OK,OK,OK,OK,OK,OK,False
+00:30:33,OK,OK,OK,OK,OK,OK,False
+00:35:33,OK,OK,OK,OK,OK,OK,False
+00:40:33,OK,OK,OK,OK,OK,OK,False

@@ -1,0 +1,81 @@
+{
+  "timestamp": "2026-03-03T05:15:32.618563+00:00",
+  "overall": "OK",
+  "recovery_needed": false,
+  "recovery_actions": [],
+  "checks": [
+    {
+      "name": "edge_api",
+      "status": "OK",
+      "message": "TB Edge API reachable and auth working",
+      "details": {}
+    },
+    {
+      "name": "docker",
+      "status": "OK",
+      "message": "All containers healthy: tb-edge=Up 7 hours, tb-edge-postgres=Up 7 hours (healthy)",
+      "details": {
+        "tb-edge": "Up 7 hours",
+        "tb-edge-postgres": "Up 7 hours (healthy)"
+      }
+    },
+    {
+      "name": "device_connectivity",
+      "status": "OK",
+      "message": "Device online \u2014 active 0min ago",
+      "details": {
+        "active": true,
+        "last_connect": "00:05:29",
+        "last_activity": "00:15:20",
+        "last_disconnect": "00:05:29",
+        "inactive_minutes": 0.2
+      }
+    },
+    {
+      "name": "telemetry",
+      "status": "OK",
+      "message": "Telemetry fresh \u2014 voltage=125.55999999999999V (0.5min ago)",
+      "details": {
+        "values": {
+          "voltage": {
+            "value": 125.55999999999999,
+            "age_min": 0.5
+          },
+          "current": {
+            "value": 0.303,
+            "age_min": 0.5
+          },
+          "activePower": {
+            "value": 36.7,
+            "age_min": 0.5
+          },
+          "frequency": {
+            "value": 59.97,
+            "age_min": 0.5
+          },
+          "activeEnergy": {
+            "value": 57102.0,
+            "age_min": 0.2
+          },
+          "powerFactor": {
+            "value": 0.977,
+            "age_min": 1.1
+          }
+        },
+        "stale_keys": [],
+        "anomalies": []
+      }
+    },
+    {
+      "name": "lwm2m",
+      "status": "OK",
+      "message": "LwM2M registered \u2014 Tesis-AMI / XIAO-ESP32-C6",
+      "details": {
+        "ModelNumber": "XIAO-ESP32-C6",
+        "Manufacturer": "Tesis-AMI",
+        "Description": "3-Phase Power Meter",
+        "SerialNumber": "AMI-001"
+      }
+    }
+  ]
+}
