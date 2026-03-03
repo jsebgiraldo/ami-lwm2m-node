@@ -1,0 +1,20 @@
+% Tabla comparativa de 4 escenarios LwM2M Observe
+% Fuente: benchmark_lwm2m.py — 3 de marzo 2026
+% Duración por escenario: 300s colección + 90s warmup
+% Dispositivo: ami-esp32c6-2434 vía Thread 802.15.4
+
+\begin{table}[htbp]
+\centering
+\caption{Rendimiento de transporte LwM2M bajo diferentes intervalos de observación}
+\label{tab:lwm2m-benchmark}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Escenario} & \textbf{Msgs} & \textbf{Compl.\%} & \textbf{Msgs/s} & \textbf{IAT avg (s)} & \textbf{CoAP (KB)} \\
+\midrule
+Baseline (Producción) & 32 & 61.5 & 0.107 & 38.79 & 1.9 \\
+Agresivo (1s) & 264 & 5.5 & 0.880 & 3.63 & 16.0 \\
+Medio (5s) & 1482 & 154.4 & 4.940 & 2.50 & 89.7 \\
+Relajado (10s) & 121 & 25.2 & 0.403 & 11.45 & 7.3 \\
+\bottomrule
+\end{tabular}
+\end{table}

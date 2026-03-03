@@ -1,0 +1,24 @@
+% Tabla de recursos del sistema Edge (RPi4) durante escenario 10s
+% Fuente: system_stats.csv — SSH (paramiko) a root@192.168.1.111
+% Muestras cada 30s durante 600s de colección
+
+\begin{table}[htbp]
+\centering
+\caption{Recursos del sistema Edge (Raspberry Pi 4) durante escenario 10s}
+\label{tab:edge-resources-10s}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Métrica} & \textbf{Mín} & \textbf{Promedio} & \textbf{Máx} \\
+\midrule
+CPU load (1 min avg) & 0.01 & 0.15 & 0.42 \\
+Memoria usada (\%) & 39.2 & 39.4 & 39.6 \\
+Memoria usada (GB) & 1.4 & 1.4 & 1.4 \\
+Memoria disponible (GB) & 2.1 & 2.1 & 2.1 \\
+Temperatura CPU (°C) & 52.6 & 53.5 & 55.0 \\
+wpan0 RX delta (KB/600s) & \multicolumn{3}{c}{$\sim$54} \\
+wpan0 TX delta (KB/600s) & \multicolumn{3}{c}{$\sim$32} \\
+eth0 RX delta (KB/600s) & \multicolumn{3}{c}{$\sim$938} \\
+eth0 TX delta (KB/600s) & \multicolumn{3}{c}{$\sim$1272} \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -1,0 +1,34 @@
+% Tabla IAT por recurso — Escenario 10s
+% Fuente: per_key_10s.csv — benchmark_10s_deep.py
+% 13 de 16 llaves activas, reactivePower = 0 muestras
+
+\begin{table}[htbp]
+\centering
+\caption{Inter-Arrival Time por recurso — Escenario LwM2M Observe 10s (600s)}
+\label{tab:iat-per-key-10s}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Recurso} & \textbf{N} & \textbf{IAT avg (s)} & \textbf{IAT p95 (s)} & \textbf{Compl. \%} \\
+\midrule
+\multicolumn{5}{l}{\textit{Grupo DLMS (limitado por polling 30s)}} \\
+voltage & 22 & 30.16 & 35.80 & 36.7 \\
+current & 22 & 30.16 & 30.38 & 36.7 \\
+activePower & 22 & 30.15 & 37.27 & 36.7 \\
+\midrule
+\multicolumn{5}{l}{\textit{Grupo LwM2M (responde a pmin=10s)}} \\
+activeEnergy & 65 & 10.16 & 16.97 & 108.3 \\
+apparentPower & 66 & 10.00 & 10.00 & 110.0 \\
+powerFactor & 66 & 10.00 & 16.33 & 110.0 \\
+totalActivePower & 64 & 10.34 & 17.17 & 106.7 \\
+totalReactivePower & 65 & 10.13 & 15.87 & 108.3 \\
+totalApparentPower & 66 & 9.90 & 16.38 & 110.0 \\
+totalPowerFactor & 66 & 10.00 & 15.67 & 110.0 \\
+reactiveEnergy & 67 & 10.00 & 10.00 & 111.7 \\
+apparentEnergy & 66 & 10.00 & 10.00 & 110.0 \\
+frequency & 67 & 10.00 & 10.00 & 111.7 \\
+\midrule
+\multicolumn{5}{l}{\textit{Inactivo (valor constante)}} \\
+reactivePower & 0 & --- & --- & 0.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
