@@ -37,18 +37,17 @@ except ImportError:
 
 
 # Scenario display order and colors
-SCENARIO_ORDER = ["baseline", "1s", "5s", "10s"]
+# NOTE: Relaxed (10s) scenario removed — pmax=10 < DLMS_poll=15s causes 0 msgs
+SCENARIO_ORDER = ["baseline", "1s", "5s"]
 SCENARIO_LABELS = {
     "baseline": "Baseline\n(15/30s, 60/300s)",
     "1s": "Agresivo\n(1s)",
     "5s": "Medio\n(5s)",
-    "10s": "Relajado\n(10s)",
 }
 SCENARIO_COLORS = {
     "baseline": "#2196F3",
     "1s": "#F44336",
     "5s": "#FF9800",
-    "10s": "#4CAF50",
 }
 
 # Telemetry keys in display order

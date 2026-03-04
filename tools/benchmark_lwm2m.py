@@ -11,7 +11,9 @@ Test Scenarios:
   - Baseline  : Grupo1 pmin=15/pmax=30, Grupo2 pmin=60/pmax=300
   - Aggressive: ALL resources pmin=1  / pmax=1
   - Medium    : ALL resources pmin=5  / pmax=5
-  - Relaxed   : ALL resources pmin=10 / pmax=10
+
+Note: Relaxed (10s) scenario removed — pmax=10 < DLMS_poll=15s causes
+observation expiry before the first threshold notification.
 
 For each scenario the script:
   1. Reconfigures the TB Edge device profile via REST API
@@ -172,18 +174,13 @@ SCENARIOS = {
         "uniform": True,
         "notify_interval_ms": 5000,
     },
-    "10s": {
-        "label": "Relajado (10s)",
-        "description": "Todos los recursos pmin=10, pmax=10",
-        "uniform_pmin": 10,
-        "uniform_pmax": 10,
-        "uniform": True,
-        "notify_interval_ms": 10000,
-    },
+    # NOTE: Relaxed (10s) scenario removed — pmax=10 < DLMS_poll_interval=15s
+    # causes LwM2M observations to expire before the first threshold notification.
+    # See thesis section on layer bottleneck analysis.
 }
 
 # Default scenario execution order
-SCENARIO_ORDER = ["baseline", "1s", "5s", "10s"]
+SCENARIO_ORDER = ["baseline", "1s", "5s"]
 
 # ═══════════════════════════════════════════════════════════════════
 # TB Edge REST API Helpers

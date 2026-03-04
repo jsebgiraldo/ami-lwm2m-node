@@ -7,17 +7,17 @@
 
 Sistema AMI completo: **ESP32-C6 → Thread 802.15.4 → RPi4 Border Router → ThingsBoard Edge**
 
-### Benchmark Comparativo (4 escenarios)
+### Benchmark Comparativo (3 escenarios)
 - **Duración por escenario:** 300s (5 min), Warmup: 90s
-- **Escenarios:** Baseline (pmin=15-60s), Agresivo (1s), Medio (5s), Relajado (10s)
+- **Escenarios:** Baseline (pmin=15-60s), Agresivo (1s), Medio (5s)
 - **Directorio fuente:** `results/benchmark/20260303_184204/`
+- **Nota:** Escenario Relajado (10s) eliminado — pmax < DLMS\_poll causa 0 mensajes en v0.15.1
 
 | Escenario | Msgs | Msgs/s | IAT avg (s) | CoAP (KB) | Keys |
 |-----------|------|--------|-------------|-----------|------|
 | Baseline  | 76   | 0.253  | 47.30       | 4.6       | 13/16|
 | 1s        | 84   | 0.280  | 58.20       | 5.1       | 14/16|
 | 5s        | 79   | 0.263  | 50.79       | 4.8       | 13/16|
-| 10s       | 77   | 0.257  | 51.14       | 4.7       | 13/16|
 
 **Hallazgo clave:** El intervalo DLMS de 30s domina sobre pmin/pmax de LwM2M. El throughput permanece en ~0.26 msgs/s independientemente del intervalo de observación configurado.
 

@@ -1,7 +1,9 @@
-% Tabla comparativa de 4 escenarios LwM2M Observe — Firmware v0.15.1
+% Tabla comparativa de 3 escenarios LwM2M Observe — Firmware v0.15.1
 % Notificación inteligente basada en umbrales (THRESH_CHECK)
 % Fecha: 2026-03-04
 % Duración por escenario: 180s, Warmup: 45s
+% Nota: escenario Relajado (10s) eliminado — pmax=10 < DLMS\_poll=15s
+%       causa expiración de observaciones antes de la primera notificación.
 
 \begin{table}[htbp]
 \centering
@@ -14,7 +16,6 @@
 Baseline (Producción) & 47 & 130.6 & 0.261 & 32.33 & 2.8 & $-$88.67 & 55.00 \\
 Agresivo (1s) & 119 & 4.1 & 0.661 & 11.46 & 7.2 & $-$92.85 & 33.39 \\
 Medio (5s) & 29 & 5.0 & 0.161 & 53.07 & 1.8 & $-$93.25 & 33.67 \\
-Relajado (10s) & 0 & 0.0 & 0.000 & --- & 0.0 & --- & --- \\
 \bottomrule
 \end{tabular}
 \end{table}

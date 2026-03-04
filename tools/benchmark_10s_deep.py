@@ -4,6 +4,11 @@ benchmark_10s_deep.py — Deep analysis of 10s LwM2M observe interval
 ====================================================================
 Thesis: Tesis_jsgiraldod_2026_rev_final
 
+NOTA HISTÓRICA: Este script analiza datos del escenario Relajado (10s)
+de firmware v0.13.0 (DLMS poll 30s). A partir de v0.15.1 (DLMS poll 15s
++ notificación por umbral), pmax=10 < DLMS_poll=15s produce 0 mensajes.
+El escenario fue descontinuado; se conserva como referencia.
+
 Performs a comprehensive single-scenario analysis at pmin=10/pmax=10:
   - 10 min collection (600s) for statistical significance
   - Per-second message rate timeline

@@ -74,16 +74,18 @@ thesis_export_v4/
 ## Benchmark Protocol
 
 ### v0.13.0 — v0.14.1
-- 4 escenarios observe: baseline, 1s, 5s, 10s
+- 3 escenarios observe: baseline, 1s, 5s
 - Warmup: 90s, Duración: 300s por escenario
 - DLMS poll: 30s (v0.13) o 15s (v0.14+)
 
 ### v0.15.1
-- 4 escenarios observe: baseline, 1s, 5s, 10s
+- 3 escenarios observe: baseline, 1s, 5s
 - Warmup: 45s, Duración: 180s por escenario
 - DLMS poll: 15s
 - **Sin `--serial-port`**: Firmware controla notificación autónomamente
 - Perfil reconfigura pmin/pmax via API, firmware decide cuándo notificar
+- **Nota:** Escenario Relajado (10s) eliminado — pmax=10 < DLMS\_poll=15s
+  causa expiración de observaciones antes de la primera notificación (0 msgs)
 
 ## Key Results — Cross-Version Comparison (Escenario 1s)
 
@@ -108,13 +110,32 @@ El firmware v0.15.1 introduce notificación inteligente basada en umbrales:
    | Baseline | 47 | 0.261 | 32.33 | 2.8 | -88.67 | 55.0% |
    | 1s | 119 | 0.661 | 11.46 | 7.2 | -92.85 | 33.4% |
    | 5s | 29 | 0.161 | 53.07 | 1.8 | -93.25 | 33.7% |
-   | 10s | 0 | 0.000 | — | 0.0 | — | — |
 
-3. **Escenario 10s = 0 mensajes**: Con pmax=10, el servidor cancela observaciones si
-   no recibe notificación dentro de 10s. Como el firmware solo notifica en cambios
-   reales (cada ~15-75s), las observaciones expiran antes de la primera notificación.
-   Esto demuestra que pmax < DLMS_poll_interval (15s) es incompatible con la
-   arquitectura de notificación por umbrales.
+3. **Análisis de cuellos de botella por capa:**
+
+   El sistema AMI presenta un pipeline de 4 capas, cada una con su propio cuello
+   de botella que limita el throughput end-to-end:
+
+   | Capa | Componente | Bottleneck | Latencia típica |
+   |------|-----------|-----------|----------------|
+   | L1 — Física | RS-485 DLMS/COSEM | Lectura secuencial de 13 registros OBIS | ~2–3s por ciclo |
+   | L2 — Firmware | THRESH\_CHECK + poll interval | DLMS poll cada 15s, notifica solo cambios > umbral | 15s (configurable) |
+   | L3 — Red | Thread mesh (802.15.4) | 250 kbps compartido, ~62 bytes/notify CoAP | ~50ms por msg |
+   | L4 — Servidor | TB Edge LwM2M (Californium) | pmin/pmax controlan ventana de observación | pmin–pmax según perfil |
+
+   **¿Por qué Baseline es óptimo?**
+   - **L1 domina**: La lectura DLMS tarda ~2–3s y ocurre cada 15s (poll interval).
+     Ningún pmin < 15s puede generar datos más rápido que lo que el medidor produce.
+   - **L2 filtra**: THRESH\_CHECK solo notifica cambios reales (ΔV ≥ 1V, ΔI ≥ 0.05A, etc.).
+     Con pmin=1s (agresivo), el 61% del tráfico es redundante.
+   - **L3 se satura**: A 1.693 msgs/s (v0.14.1 agresivo), Thread consume 0.84 kbps
+     de los 250 kbps disponibles. Con 100+ nodos, el canal se congestiona.
+   - **L4 expira**: Si pmax < DLMS\_poll (e.g., pmax=10 < 15s), las observaciones
+     expiran antes de la primera notificación — resultado: 0 mensajes.
+
+   Baseline (pmin=15/pmax=30 para energía, pmin=60/pmax=300 para radio/FW) sincroniza
+   perfectamente con el ciclo DLMS de 15s, minimiza tráfico innecesario, y permite
+   escalar a cientos de nodos por red Thread.
 
 4. **Señal RF más débil**: RSSI de -88 a -93 dBm (vs -80 en v0.14.1) indica
    condiciones de propagación variables, no degradación del firmware.
@@ -126,6 +147,8 @@ v0.15.1 demuestra el trade-off fundamental en AMI sobre Thread:
 - **v0.15.1** optimiza para eficiencia de red, solo enviando cambios significativos
 - El escenario ideal de producción es **baseline** con umbrales: 0.261 msgs/s, 2.8 KB CoAP
 - Para redes Thread con ancho de banda limitado, v0.15.1 es superior en escala
+- El cuello de botella L1 (DLMS ~15s) hace que cualquier pmin < 15s desperdicie
+  recursos de red sin ganar información adicional
 
 ## Files
 

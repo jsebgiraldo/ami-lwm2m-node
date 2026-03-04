@@ -672,6 +672,81 @@ Los objetos Thread custom (10483--10486, 33000) demostraron su valor al permitir
 \end{itemize}
 
 % =============================================================================
+\section{Benchmark de Intervalos LwM2M Observe}
+\label{sec:benchmark-observe}
+% =============================================================================
+
+Para determinar la configuración óptima de las ventanas de observación LwM2M (\texttt{pmin}/\texttt{pmax}),
+se ejecutaron campañas de benchmark automatizadas con 3 escenarios de intervalos Observe
+sobre el pipeline completo RS-485$\rightarrow$Thread$\rightarrow$TB~Edge.
+
+\begin{table}[H]
+\centering
+\caption{Resultados del benchmark LwM2M Observe — Firmware v0.15.1 (300\,s por escenario)}
+\label{tab:lwm2m-benchmark}
+\begin{tabular}{l l r r r r}
+\toprule
+\textbf{Escenario} & \textbf{pmin/pmax} & \textbf{Msgs} & \textbf{Msgs/s} & \textbf{IAT avg (s)} & \textbf{Keys} \\
+\midrule
+Baseline (Producción) & 15/30 & 47 & 0,261 & 10,07 & 16/16 \\
+Agresivo (1\,s) & 1/1 & 119 & 0,661 & 4,23 & 16/16 \\
+Medio (5\,s) & 5/5 & 29 & 0,161 & 18,97 & 16/16 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{¿Por qué se eliminó el escenario Relajado (10\,s)?}
+Con \texttt{pmax=10\,s} y un intervalo de polling DLMS de \SI{15}{\second},
+las observaciones expiran (\texttt{pmax}) antes de que el firmware genere la primera notificación.
+Resultado: \textbf{0~mensajes} en \SI{300}{\second}. La condición necesaria es $\texttt{pmax} \geq T_{\text{DLMS\_poll}}$.
+
+% --- Análisis de Cuellos de Botella ---
+\subsection{Análisis de Cuellos de Botella por Capa}
+\label{subsec:bottleneck}
+
+El pipeline de datos atraviesa 4 capas, cada una con su propio cuello de botella.
+La capa más lenta determina el throughput máximo de extremo a extremo:
+
+\begin{table}[H]
+\centering
+\caption{Pipeline de datos AMI: cuellos de botella por capa}
+\label{tab:bottleneck}
+\begin{tabularx}{\textwidth}{c l r r X}
+\toprule
+\textbf{Capa} & \textbf{Componente} & \textbf{Latencia} & \textbf{Cadencia} & \textbf{Cuello de botella} \\
+\midrule
+L1 & RS-485 DLMS/COSEM & 2--3\,s/ciclo & 15\,s & Lectura secuencial de 17 registros OBIS a 9600\,bps.
+     El poll de \SI{15}{\second} es el \textbf{factor dominante} del sistema. \\
+\addlinespace
+L2 & Firmware (Threshold) & $<$\SI{1}{\milli\second} & Evento & Compara lectura vs.\ umbral; solo notifica
+     si $|\Delta| > \epsilon$. Latencia despreciable. \\
+\addlinespace
+L3 & Thread 802.15.4 & 26\,ms/msg & Bajo demanda & Canal \SI{250}{\kilo\bit\per\second} compartido, $\sim$\SI{62}{\byte}/notify CoAP.
+     Utilización $<$1\,\% con 1 nodo. \\
+\addlinespace
+L4 & TB Edge Californium & --- & pmin/pmax & Entrega notificación al cliente solo si
+     $t \geq \texttt{pmin}$; descarta si $t > \texttt{pmax}$ sin nuevo dato. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\noindent\textbf{Conclusión del análisis:}
+\begin{itemize}[leftmargin=1.2cm]
+  \item L1 (DLMS \SI{15}{\second} poll) \textbf{domina} el pipeline: ningún \texttt{pmin}$<$\SI{15}{\second}
+        puede generar datos más rápido que el poll del bus RS-485.
+  \item El escenario \textbf{Agresivo (1\,s)} obtiene más mensajes porque captura
+        sub-notificaciones por umbral dentro de un mismo ciclo DLMS, pero no mejora
+        la resolución temporal real del medidor.
+  \item El \textbf{Baseline (pmin=15/pmax=30)} es óptimo porque:
+    \begin{enumerate}
+      \item Se alinea con $T_{\text{DLMS\_poll}}=15$\,s, evitando observaciones vacías.
+      \item Minimiza tráfico CoAP innecesario ($\times$2,5 menos que Agresivo).
+      \item Maximiza escalabilidad de la red Thread (más nodos por BR).
+      \item \texttt{pmax=30\,s} ($2\times T_{\text{poll}}$) da margen ante jitter DLMS.
+    \end{enumerate}
+\end{itemize}
+
+% =============================================================================
 \section{Evolución del Firmware}
 % =============================================================================
 

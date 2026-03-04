@@ -36,15 +36,11 @@ SCENARIOS = {
         "uniform_pmin": 5, "uniform_pmax": 5,
         "uniform": True, "notify_interval_ms": 5000,
     },
-    "10s": {
-        "label": "Relajado (10s)",
-        "description": "Todos los recursos pmin=10, pmax=10",
-        "uniform_pmin": 10, "uniform_pmax": 10,
-        "uniform": True, "notify_interval_ms": 10000,
-    },
+    # NOTE: Relaxed (10s) removed — pmax < DLMS_poll_interval causes
+    # observation expiry before first threshold notification.
 }
 
-SCENARIO_ORDER = ["baseline", "1s", "5s", "10s"]
+SCENARIO_ORDER = ["baseline", "1s", "5s"]
 
 TELEMETRY_KEYS = [
     "voltage", "current", "activePower", "reactivePower",

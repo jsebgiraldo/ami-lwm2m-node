@@ -56,11 +56,12 @@ thesis_export_v2/
 
 ## Benchmark Protocol
 
-Each benchmark consists of 4 "observe interval" scenarios:
+Each benchmark consists of 3 "observe interval" scenarios:
 1. **Baseline** — Production config: pmin=15/pmax=30 (Grupo1), pmin=60/pmax=300 (Grupo2)
 2. **Agresivo (1s)** — pmin=1/pmax=1 for all keys
-3. **Medio (5s)** — pmin=5/pmax=5 for all keys  
-4. **Relajado (10s)** — pmin=10/pmax=10 for all keys
+3. **Medio (5s)** — pmin=5/pmax=5 for all keys
+
+> **Nota:** Escenario Relajado (10s) eliminado — pmax=10 < DLMS\_poll=15s produce 0 mensajes en v0.15.1+.
 
 Each scenario: 90s warmup + 300s data collection. Profile is restored to production after each.
 
