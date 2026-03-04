@@ -1,0 +1,16 @@
+# AMI LwM2M Node — Application Kconfig
+
+menu "AMI Configuration"
+
+config AMI_SINGLE_PHASE
+	bool "Single-phase meter mode"
+	default y
+	help
+	  Enable for single-phase meters (e.g. Microstar residential).
+	  Pre-skips Phase S and Phase T OBIS codes at startup to
+	  avoid wasting ~5 seconds polling unsupported registers.
+	  When disabled (3-phase mode), all 28 OBIS codes are polled.
+
+endmenu
+
+source "Kconfig.zephyr"

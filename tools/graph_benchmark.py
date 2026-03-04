@@ -208,7 +208,7 @@ def fig_iat_boxplot(summary, scenarios, output_dir, fmt, result_dir):
         plt.close(fig)
         return None
 
-    bp = ax.boxplot(box_data, labels=labels, patch_artist=True, showfliers=False,
+    bp = ax.boxplot(box_data, tick_labels=labels, patch_artist=True, showfliers=False,
                     medianprops=dict(color="black", linewidth=2))
 
     for patch, color in zip(bp["boxes"], colors):

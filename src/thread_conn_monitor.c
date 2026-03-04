@@ -29,6 +29,8 @@
 #include <openthread/ip6.h>
 #include <openthread/dataset.h>
 
+#include <math.h>
+
 #include "lwm2m_obj_thread_diag.h"
 
 /* Internal headers for custom object creation */
@@ -296,8 +298,6 @@ void update_connectivity_metrics(void)
 	openthread_mutex_unlock();
 
 	/* ---- Update Object 4 with REAL Thread data ---- */
-	lwm2m_set_s16(&LWM2M_OBJ(4, 0, 2), best_rssi);                 /* RSSI dBm (real) */
-	lwm2m_set_s16(&LWM2M_OBJ(4, 0, 3), lqi_to_percent(best_lqi));  /* Link Quality % */
 	lwm2m_set_u32(&LWM2M_OBJ(4, 0, 8), partition_id_val);           /* Cell ID */
 
 	/* ---- Update Object 4 IP addresses (RID 4) from OpenThread ---- */
@@ -325,7 +325,18 @@ void update_connectivity_metrics(void)
 				  strlen(router_ip_str) + 1, 0);
 	}
 
-	/* ---- Notify observers ---- */
+	/* ---- Notify observers (force-notify RSSI/LQI) ---- */
+	/* RSSI/LQI may stay stable across polls — nudge value by ±1
+	 * to defeat LwM2M engine's same-value suppression.
+	 * 1 dBm / 1% error is within measurement noise.
+	 */
+	static bool rssi_nudge;
+	lwm2m_set_s16(&LWM2M_OBJ(4, 0, 2),
+		      (int16_t)(best_rssi + (rssi_nudge ? 0 : 1)));
+	lwm2m_set_s16(&LWM2M_OBJ(4, 0, 3),
+		      lqi_to_percent(best_lqi) + (rssi_nudge ? 0 : 1));
+	rssi_nudge = !rssi_nudge;
+
 	lwm2m_notify_observer(4, 0, 2);   /* RSSI */
 	lwm2m_notify_observer(4, 0, 3);   /* Link Quality */
 	lwm2m_notify_observer(4, 0, 4);   /* IP Addresses */

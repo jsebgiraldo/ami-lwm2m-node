@@ -164,6 +164,9 @@ static bool   scaler_cached[ARRAY_SIZE(obis_table)];
  * Runtime skip bitmap: OBIS codes that return "data access error" (e.g.,
  * Phase S/T voltage/current on a single-phase meter) are auto-skipped in
  * subsequent poll cycles to avoid wasting ~430 ms per unsupported register.
+ *
+ * When CONFIG_AMI_SINGLE_PHASE=y, Phase S (indices 6-11) and Phase T
+ * (indices 12-17) are pre-skipped at init to save ~5s on first poll.
  */
 static bool obis_skip[ARRAY_SIZE(obis_table)];
 
@@ -303,6 +306,17 @@ int meter_init(void)
 
 	memset(scaler_cached, 0, sizeof(scaler_cached));
 	memset(obis_skip, 0, sizeof(obis_skip));
+
+#if IS_ENABLED(CONFIG_AMI_SINGLE_PHASE)
+	/* Pre-skip Phase S (indices 6-11) and Phase T (indices 12-17)
+	 * for single-phase meters — saves ~5 seconds on first poll cycle.
+	 */
+	for (int i = 6; i <= 17; i++) {
+		obis_skip[i] = true;
+	}
+	LOG_INF("Single-phase mode: Phase S/T OBIS codes pre-skipped (12 entries)");
+#endif
+
 	state = METER_DISCONNECTED;
 
 	LOG_INF("DLMS Meter Reader initialized");
@@ -809,20 +823,33 @@ void meter_push_to_lwm2m(const struct meter_readings *readings)
 	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_NEUTRAL_CURRENT_RID),
 		       readings->neutral_current);
 
-	/* ---- Notify observers on key resources ---- */
+	/* ---- Notify observers on ALL resources ---- */
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_TENSION_R_RID);
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_CURRENT_R_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_R_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_POWER_R_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_APPARENT_POWER_R_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_POWER_FACTOR_R_RID);
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_TENSION_S_RID);
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_CURRENT_S_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_S_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_POWER_S_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_APPARENT_POWER_S_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_POWER_FACTOR_S_RID);
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_TENSION_T_RID);
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_CURRENT_T_RID);
-	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_R_RID);
-	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_S_RID);
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_T_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_POWER_T_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_APPARENT_POWER_T_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_POWER_FACTOR_T_RID);
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_3P_ACTIVE_POWER_RID);
-	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_ENERGY_RID);
-	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_FREQUENCY_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_3P_REACTIVE_POWER_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_3P_APPARENT_POWER_RID);
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_3P_POWER_FACTOR_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_ENERGY_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_ENERGY_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_APPARENT_ENERGY_RID);
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_FREQUENCY_RID);
 	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_NEUTRAL_CURRENT_RID);
 
 	LOG_INF("LwM2M updated: V=%.1f/%.1f/%.1f  I=%.2f/%.2f/%.2f  "
