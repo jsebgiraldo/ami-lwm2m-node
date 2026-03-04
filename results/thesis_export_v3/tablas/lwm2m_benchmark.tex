@@ -1,0 +1,20 @@
+% Tabla comparativa de 4 escenarios LwM2M Observe
+% Generada automáticamente por benchmark_lwm2m.py + _combine_results.py
+% Fecha: 2026-03-03
+% Duración por escenario: 300s, Warmup: 90s
+
+\begin{table}[htbp]
+\centering
+\caption{Rendimiento de transporte LwM2M bajo diferentes intervalos de observación}
+\label{tab:lwm2m-benchmark}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Escenario} & \textbf{Msgs} & \textbf{Msgs/s} & \textbf{IAT avg (s)} & \textbf{CoAP (KB)} & \textbf{Keys activas} \\
+\midrule
+Baseline (Producción) & 76 & 0.253 & 47.30 & 4.6 & 13/16 \\
+Agresivo (1s) & 84 & 0.280 & 58.20 & 5.1 & 14/16 \\
+Medio (5s) & 79 & 0.263 & 50.79 & 4.8 & 13/16 \\
+Relajado (10s) & 77 & 0.257 & 51.14 & 4.7 & 13/16 \\
+\bottomrule
+\end{tabular}
+\end{table}

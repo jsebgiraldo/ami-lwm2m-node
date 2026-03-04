@@ -1,0 +1,78 @@
+======================================================================
+ANALISIS PROFUNDO — ESCENARIO LwM2M OBSERVE 10s
+Tesis: Tesis_jsgiraldod_2026_rev_final
+Generado: 2026-03-04T00:30:38.054417+00:00
+======================================================================
+
+Configuracion:
+  pmin/pmax: 10/10s
+  DLMS poll: 30s
+  Duracion:  600s
+  Keys:      16
+
+Metricas Agregadas:
+  Total mensajes:      160
+  Llaves activas:      14/16
+  Throughput:          0.2667 msgs/s
+  IAT promedio:        52.47s
+  IAT mediana:         46.70s
+  IAT p95:             97.50s
+
+Volumen de Datos:
+  CoAP total:          9.69 KB
+  Radio (802.15.4):    19.84 KB
+  Data rate CoAP:      0.132 kbit/s
+  Data rate radio:     0.271 kbit/s
+  Eficiencia payload:  23.6%
+
+Proyeccion Horaria:
+  Mensajes/hora:       960
+  Radio KB/hora:       119.1
+
+Utilizacion de Red:
+  Canal 802.15.4:      0.2167%
+  Nodos max estimados: 461
+
+Per-Key IAT:
+  Key                        N  IAT avg  IAT p95   Jitter   Compl%
+  ------------------------------------------------------------
+  voltage                   21   31.389   70.295   21.442    35.0%
+  current                   21   31.689   87.492   21.811    35.0%
+  activePower               19   35.993  128.252   26.169    31.7%
+  activeEnergy              22    30.18   70.033   22.278    36.7%
+  reactivePower              1        -        -        -     1.7%
+  apparentPower              9   80.245  217.752   70.245    15.0%
+  powerFactor               10   66.067   95.499   56.067    16.7%
+  totalActivePower          11   63.554   78.743   53.554    18.3%
+  totalReactivePower         3  187.343  300.001  177.343     5.0%
+  totalApparentPower        11   64.088   88.809   54.088    18.3%
+  totalPowerFactor          11   63.554   80.765   53.554    18.3%
+  reactiveEnergy             3  188.409  299.999  178.409     5.0%
+  apparentEnergy             7   95.855  143.417   85.855    11.7%
+  frequency                 11   64.282     97.5   54.282    18.3%
+
+======================================================================
+TABLA LATEX
+======================================================================
+
+\begin{table}[htbp]
+\centering
+\caption{Metricas de rendimiento — Escenario LwM2M Observe 10s}
+\label{tab:lwm2m-10s-deep}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Metrica} & \textbf{Valor} & \textbf{Unidad} \\
+\midrule
+Total mensajes & 160 & msgs \\
+Throughput & 0.2667 & msgs/s \\
+IAT promedio & 52.47 & s \\
+IAT p95 & 97.50 & s \\
+Vol. CoAP & 9.69 & KB \\
+Vol. radio & 19.84 & KB \\
+Data rate radio & 0.271 & kbit/s \\
+Eficiencia payload & 23.6 & \% \\
+Utilizacion canal & 0.2167 & \% \\
+Nodos max est. & 461 & nodos \\
+\bottomrule
+\end{tabular}
+\end{table}
