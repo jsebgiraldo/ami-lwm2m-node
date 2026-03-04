@@ -209,7 +209,7 @@ def main():
         "device": "ami-esp32c6-2434",
         "device_id": "cc9da070-135b-11f1-80f9-cdb955f2c365",
         "profile": "b6d55c90-12db-11f1-b535-433a231637c4",
-        "dlms_poll_interval_s": 30,
+        "dlms_poll_interval_s": 15,
         "generated_at": datetime.now(tz=timezone.utc).isoformat(),
         "scenarios": {},
     }
