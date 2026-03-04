@@ -161,6 +161,14 @@ static double scaler_cache[ARRAY_SIZE(obis_table)];
 static bool   scaler_cached[ARRAY_SIZE(obis_table)];
 
 /*
+ * Last-good-readings cache: when a DLMS read fails (timeout, error),
+ * the failed field retains the last known good value instead of 0.
+ * This prevents spurious zero spikes in telemetry graphs.
+ */
+static struct meter_readings last_good;
+static bool last_good_valid;
+
+/*
  * Runtime skip bitmap: OBIS codes that return "data access error" (e.g.,
  * Phase S/T voltage/current on a single-phase meter) are auto-skipped in
  * subsequent poll cycles to avoid wasting ~430 ms per unsupported register.
@@ -636,8 +644,19 @@ int meter_read_all(struct meter_readings *readings)
 		return -ENOTCONN;
 	}
 
-	memset(readings, 0, sizeof(*readings));
+	/* Initialize with last-good values (not zeros!) so that any
+	 * field that fails to read retains the previous good value
+	 * rather than sending 0 to LwM2M / ThingsBoard.
+	 */
+	if (last_good_valid) {
+		memcpy(readings, &last_good, sizeof(*readings));
+	} else {
+		memset(readings, 0, sizeof(*readings));
+	}
 	readings->timestamp_ms = k_uptime_get();
+	readings->read_count = 0;
+	readings->error_count = 0;
+	readings->valid = false;
 
 	/*
 	 * Phase 1: Read scaler_unit for entries that haven't been cached yet.
@@ -711,8 +730,25 @@ int meter_read_all(struct meter_readings *readings)
 
 	readings->valid = (readings->read_count > 0);
 
-	LOG_INF("Meter read complete: %d/%d successful (%d skipped)",
-		readings->read_count, read_target, skip_count);
+	/* Update last-good cache with successfully-read values.
+	 * Fields that failed to read kept their last_good value
+	 * (from the memcpy above), so we can safely cache the whole struct.
+	 */
+	if (readings->valid) {
+		memcpy(&last_good, readings, sizeof(last_good));
+		last_good_valid = true;
+	}
+
+	int fill_count = 0;
+	if (readings->error_count > 0 && last_good_valid) {
+		/* Log that we filled gaps with last-good values */
+		fill_count = readings->error_count;
+		LOG_WRN("Filled %d failed reads with last-good values (zero prevention)",
+			fill_count);
+	}
+
+	LOG_INF("Meter read complete: %d/%d successful (%d skipped, %d filled)",
+		readings->read_count, read_target, skip_count, fill_count);
 
 	return readings->valid ? 0 : -EIO;
 }
@@ -804,9 +840,30 @@ static int   polls_without_notify;
 	}                                                                     \
 } while (0)
 
+/*
+ * Sanity check: reject readings that are obviously invalid.
+ * Voltage should never be exactly 0.0 if the meter is connected.
+ * This is a safety net in case the last-good cache wasn't populated.
+ */
+static bool readings_sanity_check(const struct meter_readings *r)
+{
+	/* On a connected meter, Phase-R voltage is always > 0 */
+	if (r->voltage_r == 0.0 && r->frequency == 0.0) {
+		LOG_WRN("Sanity check FAILED: voltage=0, freq=0 — suppressing");
+		return false;
+	}
+	return true;
+}
+
 void meter_push_to_lwm2m(const struct meter_readings *readings)
 {
 	if (!readings || !readings->valid) {
+		return;
+	}
+
+	/* Safety net: don't push obviously-bad readings */
+	if (!readings_sanity_check(readings)) {
+		LOG_WRN("Readings failed sanity check — skipping LwM2M push");
 		return;
 	}
 

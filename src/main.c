@@ -1,15 +1,15 @@
 /*
  * AMI LwM2M Node — Thread + LwM2M on XIAO ESP32-C6
  *
- * LwM2M client that registers with a Leshan server via
- * Thread mesh network (OpenThread). Reports simulated
- * sensor data (voltage, current, temperature, energy).
+ * LwM2M client that registers with ThingsBoard Edge via
+ * Thread mesh network (OpenThread). Reports DLMS meter
+ * data (voltage, current, power, energy, frequency).
  *
  * Flow:
  * 1. OpenThread joins the Thread network (credentials in prj.conf)
  * 2. Wait for L4 connectivity (IPv6 up via Thread)
- * 3. Register LwM2M client with Leshan server
- * 4. Periodically update IPSO sensor objects
+ * 3. Register LwM2M client with ThingsBoard Edge (built-in LwM2M transport)
+ * 4. Periodically poll DLMS meter and push via LwM2M objects
  *
  * Aligned with working Windows build — single file, no MCUboot,
  * no dataset injection, no FOTA.
@@ -49,13 +49,13 @@ LOG_MODULE_REGISTER(ami_lwm2m, LOG_LEVEL_INF);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "XIAO-ESP32-C6"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.15.1"
+#define CLIENT_FIRMWARE_VER     "0.16.0"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
 static char endpoint_name[32];
 
-/* LwM2M Server URI — Leshan on OTBR mesh-local address */
+/* LwM2M Server URI — ThingsBoard Edge on OTBR mesh-local address */
 #define LWM2M_SERVER_URI        "coap://[" CONFIG_NET_CONFIG_PEER_IPV6_ADDR "]:5683"
 
 /* Sensor update intervals */

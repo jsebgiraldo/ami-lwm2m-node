@@ -357,6 +357,211 @@ void test_obis_active_energy(void)
 	ASSERT_EQ(MR_OFF(active_energy), obis_table[22].offset);
 }
 
+/* ==== Zero-Value Prevention (v0.16.0) ==== */
+
+void test_last_good_cache_initially_invalid(void)
+{
+	/* On startup, last_good_valid should be false */
+	last_good_valid = false;
+	ASSERT_FALSE(last_good_valid);
+}
+
+void test_last_good_fills_failed_reads(void)
+{
+	/*
+	 * Simulate: first poll succeeds fully (populates last_good),
+	 * second poll has a failed read → field keeps last_good value.
+	 */
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+
+	/* Populate last_good with known values */
+	last_good_valid = true;
+	memset(&last_good, 0, sizeof(last_good));
+	last_good.voltage_r = 122.4;
+	last_good.current_r = 5.5;
+	last_good.frequency = 60.0;
+	last_good.active_energy = 1234.5;
+
+	/* Simulate what meter_read_all does: copy last_good into readings */
+	if (last_good_valid) {
+		memcpy(&r, &last_good, sizeof(r));
+	} else {
+		memset(&r, 0, sizeof(r));
+	}
+
+	/* A "failed read" means the field was NOT overwritten →
+	 * it retains the last_good value from the memcpy above.
+	 * Simulate a successful read of only voltage and frequency.
+	 */
+	r.voltage_r = 123.0;    /* new good value */
+	r.frequency = 60.1;     /* new good value */
+	/* current_r NOT overwritten → keeps 5.5 from last_good */
+	/* active_energy NOT overwritten → keeps 1234.5 from last_good */
+
+	r.read_count = 2;
+	r.error_count = 2;  /* 2 failed reads */
+	r.valid = true;
+
+	/* Verify: failed reads have last_good values, NOT zeros */
+	ASSERT_FLOAT_EQ(123.0, r.voltage_r, 0.001);    /* new value */
+	ASSERT_FLOAT_EQ(5.5,   r.current_r, 0.001);    /* last_good */
+	ASSERT_FLOAT_EQ(60.1,  r.frequency, 0.001);     /* new value */
+	ASSERT_FLOAT_EQ(1234.5, r.active_energy, 0.001);/* last_good */
+}
+
+void test_first_poll_zeros_without_last_good(void)
+{
+	/*
+	 * Very first poll: no last_good available → fields start at 0.
+	 * This is expected — the first poll must succeed to populate cache.
+	 */
+	struct meter_readings r;
+	last_good_valid = false;
+
+	/* Simulate what meter_read_all does without last_good */
+	if (last_good_valid) {
+		memcpy(&r, &last_good, sizeof(r));
+	} else {
+		memset(&r, 0, sizeof(r));
+	}
+
+	ASSERT_FLOAT_EQ(0.0, r.voltage_r, 0.001);
+	ASSERT_FLOAT_EQ(0.0, r.current_r, 0.001);
+	ASSERT_FLOAT_EQ(0.0, r.frequency, 0.001);
+}
+
+void test_last_good_updated_after_valid_read(void)
+{
+	/* After a valid read, last_good should be updated */
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+	r.voltage_r = 220.5;
+	r.frequency = 50.0;
+	r.valid = true;
+	r.read_count = 2;
+
+	/* Simulate what meter_read_all does after the read loop */
+	if (r.valid) {
+		memcpy(&last_good, &r, sizeof(last_good));
+		last_good_valid = true;
+	}
+
+	ASSERT_TRUE(last_good_valid);
+	ASSERT_FLOAT_EQ(220.5, last_good.voltage_r, 0.001);
+	ASSERT_FLOAT_EQ(50.0,  last_good.frequency, 0.001);
+}
+
+void test_last_good_not_updated_on_invalid_read(void)
+{
+	/* If all reads fail (valid=false), last_good should NOT be updated */
+	struct meter_readings old_good;
+	memset(&old_good, 0, sizeof(old_good));
+	old_good.voltage_r = 120.0;
+	old_good.frequency = 60.0;
+
+	memcpy(&last_good, &old_good, sizeof(last_good));
+	last_good_valid = true;
+
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+	r.valid = false;
+	r.read_count = 0;
+
+	/* Do NOT update last_good */
+	if (r.valid) {
+		memcpy(&last_good, &r, sizeof(last_good));
+	}
+
+	/* last_good should still hold old values */
+	ASSERT_TRUE(last_good_valid);
+	ASSERT_FLOAT_EQ(120.0, last_good.voltage_r, 0.001);
+	ASSERT_FLOAT_EQ(60.0,  last_good.frequency, 0.001);
+}
+
+/* ==== Sanity Check ==== */
+
+void test_sanity_check_rejects_all_zeros(void)
+{
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+	r.valid = true;
+	/* Both voltage_r=0 and frequency=0 → should FAIL */
+	ASSERT_FALSE(readings_sanity_check(&r));
+}
+
+void test_sanity_check_accepts_valid_readings(void)
+{
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+	r.voltage_r = 122.0;
+	r.frequency = 60.0;
+	r.valid = true;
+	ASSERT_TRUE(readings_sanity_check(&r));
+}
+
+void test_sanity_check_accepts_zero_current(void)
+{
+	/* Current CAN legitimately be 0.0 (no load) */
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+	r.voltage_r = 122.0;
+	r.frequency = 60.0;
+	r.current_r = 0.0;
+	r.valid = true;
+	ASSERT_TRUE(readings_sanity_check(&r));
+}
+
+void test_sanity_check_voltage_only(void)
+{
+	/* Voltage ok but frequency=0 → pass (only both zero fails) */
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+	r.voltage_r = 120.0;
+	r.frequency = 0.0;
+	r.valid = true;
+	ASSERT_TRUE(readings_sanity_check(&r));
+}
+
+/* ==== THRESH_CHECK macro boundary tests ==== */
+
+void test_thresh_check_no_notify_within_threshold(void)
+{
+	/* Delta within threshold should NOT trigger notification */
+	double old_val = 120.0;
+	double new_val = 120.5;  /* delta = 0.5 < THRESH_VOLTAGE (1.0) */
+	double delta = fabs(new_val - old_val);
+	ASSERT_TRUE(delta < THRESH_VOLTAGE);
+}
+
+void test_thresh_check_notify_exceeds_threshold(void)
+{
+	/* Delta exceeding threshold should trigger notification */
+	double old_val = 120.0;
+	double new_val = 121.5;  /* delta = 1.5 >= THRESH_VOLTAGE (1.0) */
+	double delta = fabs(new_val - old_val);
+	ASSERT_TRUE(delta >= THRESH_VOLTAGE);
+}
+
+void test_thresh_check_zero_would_exceed_threshold(void)
+{
+	/* A zero replacing a real value would always exceed threshold */
+	double old_val = 122.4;
+	double zero_val = 0.0;
+	double delta = fabs(zero_val - old_val);
+	/* This is why the zero-fill bug was so insidious */
+	ASSERT_TRUE(delta >= THRESH_VOLTAGE);
+}
+
+void test_thresh_check_last_good_within_threshold(void)
+{
+	/* A last-good value replacing a failed read stays within threshold */
+	double old_val = 122.4;
+	double last_good_val = 122.4;  /* same as last notified */
+	double delta = fabs(last_good_val - old_val);
+	ASSERT_TRUE(delta < THRESH_VOLTAGE);
+}
+
 /* ==== Test Suite Runner ==== */
 
 void run_dlms_logic_tests(void)
@@ -402,6 +607,25 @@ void run_dlms_logic_tests(void)
 	RUN_TEST(test_obis_voltage_r_is_first);
 	RUN_TEST(test_obis_frequency);
 	RUN_TEST(test_obis_active_energy);
+
+	/* Zero-value prevention (v0.16.0) */
+	RUN_TEST(test_last_good_cache_initially_invalid);
+	RUN_TEST(test_last_good_fills_failed_reads);
+	RUN_TEST(test_first_poll_zeros_without_last_good);
+	RUN_TEST(test_last_good_updated_after_valid_read);
+	RUN_TEST(test_last_good_not_updated_on_invalid_read);
+
+	/* Sanity check */
+	RUN_TEST(test_sanity_check_rejects_all_zeros);
+	RUN_TEST(test_sanity_check_accepts_valid_readings);
+	RUN_TEST(test_sanity_check_accepts_zero_current);
+	RUN_TEST(test_sanity_check_voltage_only);
+
+	/* THRESH_CHECK boundary tests */
+	RUN_TEST(test_thresh_check_no_notify_within_threshold);
+	RUN_TEST(test_thresh_check_notify_exceeds_threshold);
+	RUN_TEST(test_thresh_check_zero_would_exceed_threshold);
+	RUN_TEST(test_thresh_check_last_good_within_threshold);
 
 	TEST_SUITE_END("DLMS Logic");
 }

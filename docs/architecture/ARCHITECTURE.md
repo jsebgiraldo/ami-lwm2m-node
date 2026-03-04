@@ -21,7 +21,7 @@ inalámbrica Thread 802.15.4 y el protocolo LwM2M.
 │   RPi4 (OpenWrt)      │   - Procesamiento local (rule engine)
 │   192.168.1.111:8090  │   - Persistencia PostgreSQL local
 │   LwM2M: 5683/udp    │   - Sync bidireccional con Cloud
-│   Docker containers   │   - Eclipse Leshan integrado (LwM2M server)
+│   Docker containers   │   - LwM2M transport integrado (puerto 5683/udp)
 └──────────┬───────────┘
            │ IPv6 mesh-local
            │ CoAP/LwM2M (NoSec)
@@ -83,7 +83,7 @@ inalámbrica Thread 802.15.4 y el protocolo LwM2M.
 
 ### Capa 3: ThingsBoard Edge
 - **Imagen**: `thingsboard/tb-edge:4.2.1EDGE` (Docker, host networking)
-- **LwM2M Server**: Eclipse Leshan integrado en puerto 5683/udp
+- **LwM2M Server**: Transporte LwM2M integrado en TB Edge, puerto 5683/udp
 - **API HTTP**: puerto 8090 (8080 ocupado por dppd OpenWrt)
 - **Base de datos**: PostgreSQL 15 (contenedor `tb-edge-postgres`)
 - **Función**: 

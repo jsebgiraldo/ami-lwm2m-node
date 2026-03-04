@@ -178,7 +178,7 @@ void init_thread_neighbor_object(void)
 	thread_neighbor_obj.delete_cb = neighbor_delete_cb;
 	lwm2m_register_obj(&thread_neighbor_obj);
 
-	/* Create instance 0 at init so Leshan always sees at least one */
+	/* Create instance 0 at init so the LwM2M server always sees at least one */
 	int ret = lwm2m_create_obj_inst(THREAD_NEIGHBOR_OBJECT_ID, 0, &obj_inst);
 	if (ret < 0) {
 		LOG_ERR("Failed to create initial neighbor instance: %d", ret);

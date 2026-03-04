@@ -53,11 +53,11 @@ medidores eléctricos a una plataforma IoT usando Thread mesh + LwM2M.
 - **Extended PAN ID**: 12:34:56:78:90:ab:cd:ef
 - **Mesh-local prefix**: fdc6:63fd:328d:66df::/64
 
-### 3. ThingsBoard Edge (¡NO Leshan standalone!)
+### 3. ThingsBoard Edge (servidor LwM2M integrado)
 - **Imagen Docker**: `thingsboard/tb-edge:4.2.1EDGE`
 - **Contenedor**: `tb-edge` (host networking)
 - **Puerto HTTP/API**: 8090 (no 8080, conflicto con dppd en OpenWrt)
-- **Puerto LwM2M**: 5683/udp (transporte LwM2M integrado basado en Eclipse Leshan)
+- **Puerto LwM2M**: 5683/udp (transporte LwM2M integrado en TB Edge)
 - **Puerto LwM2M DTLS**: 5684/udp
 - **DB**: PostgreSQL 15 (contenedor `tb-edge-postgres`)
 - **Credenciales**: tenant@thingsboard.org / tenant

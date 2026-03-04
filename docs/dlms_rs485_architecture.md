@@ -10,7 +10,7 @@ metering data from a **Microstar DLMS/COSEM** smart meter, transported over
 ┌─────────────┐   RS485    ┌──────────────┐  Thread/6LoWPAN  ┌──────────┐
 │  Microstar  │──(A/B/GND)─│  XIAO ESP32  │────802.15.4────▶│   OTBR   │
 │  DLMS Meter │  9600 8N1  │  C6 + RS485  │                 │  (RPi4)  │
-│  3-Phase    │            │  Expansion   │                 │  Leshan  │
+│  3-Phase    │            │  Expansion   │                 │  TB Edge │
 └─────────────┘            └──────────────┘                 └────┬─────┘
                                                                  │ CoAP
                                                             ┌────▼─────┐

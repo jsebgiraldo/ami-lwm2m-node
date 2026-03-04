@@ -116,12 +116,12 @@ Este documento sintetiza los hallazgos técnicos obtenidos durante el diseño, i
 \begin{enumerate}[leftmargin=1.5cm]
     \item La arquitectura completa del firmware Zephyr RTOS sobre ESP32-C6 con pila OpenThread 1.4 + LwM2M.
     \item El modelo de objetos LwM2M implementado: 11 objetos con $\sim$130 recursos.
-    \item La pasarela de borde basada en Raspberry Pi 4 con OTBR + Leshan LwM2M Server.
+    \item La pasarela de borde basada en Raspberry Pi 4 con OTBR + ThingsBoard Edge (transporte LwM2M integrado).
     \item Las pruebas de rendimiento CoAP/LwM2M con tres configuraciones de optimización (V1, V2, V3).
     \item Los hallazgos clave sobre retransmisiones CoAP, temporización Californium y latencias extremo a extremo.
 \end{enumerate}
 
-\noindent\textbf{Resultado principal:} La configuración V3 alcanzó una tasa de éxito del \textbf{97,3\,\%} (214/220 lecturas exitosas) en la lectura de recursos LwM2M a través de la cadena completa Leshan REST API $\rightarrow$ CoAP $\rightarrow$ Thread mesh $\rightarrow$ ESP32-C6, con latencia mediana de \SI{33}{\milli\second} y recuperación de lecturas lentas en la banda de 5--10 segundos gracias a la sinergia entre retransmisiones rápidas Californium y ventana extendida de la API Leshan.
+\noindent\textbf{Resultado principal:} La configuración V3 alcanzó una tasa de éxito del \textbf{97,3\,\%} (214/220 lecturas exitosas) en la lectura de recursos LwM2M a través de la cadena completa TB Edge REST API $\rightarrow$ CoAP $\rightarrow$ Thread mesh $\rightarrow$ ESP32-C6, con latencia mediana de \SI{33}{\milli\second} y recuperación de lecturas lentas en la banda de 5--10 segundos gracias a la sinergia entre retransmisiones rápidas del motor CoAP y ventana extendida de la API ThingsBoard Edge.
 
 % =============================================================================
 \section{Arquitectura del Sistema}
@@ -141,7 +141,7 @@ La arquitectura implementada sigue un modelo jerárquico de tres niveles alinead
 \midrule
 \textbf{1} & Nodos IoT Thread & 60 nodos XIAO ESP32-C6 con Thread mesh (IEEE 802.15.4 / 6LoWPAN / CoAP / LwM2M), conectados a medidores Emsitech P2000-T vía RS-485 DLMS/COSEM \\
 \addlinespace
-\textbf{2} & Pasarela de Borde & Raspberry Pi 4 ejecutando OpenThread Border Router (OTBR) con Leshan LwM2M Server, PostgreSQL+TimescaleDB, Grafana; enlace HaLow STA (IEEE 802.11ah) hacia Nivel 3 \\
+\textbf{2} & Pasarela de Borde & Raspberry Pi 4 ejecutando OpenThread Border Router (OTBR) con ThingsBoard Edge (transporte LwM2M integrado), PostgreSQL, Grafana; enlace HaLow STA (IEEE 802.11ah) hacia Nivel 3 \\
 \addlinespace
 \textbf{3} & Backhaul / Cloud & Wi-Fi HaLow (\SI{4}{\mega\bit\per\second}, \SI{1}{\kilo\meter}) vía Morse Micro AP hacia servidor ThingsBoard on-premise o Cloud \\
 \bottomrule
@@ -253,13 +253,13 @@ Versión Thread & 1.4 & Con soporte TCP nativo (RFC 9293) \\
 
 \subsection{Endpoint LwM2M}
 
-Cada nodo se registra en el servidor Leshan con un nombre de endpoint único derivado de los últimos 2 bytes de la dirección MAC del SoC:
+Cada nodo se registra en el servidor LwM2M de ThingsBoard Edge con un nombre de endpoint único derivado de los últimos 2 bytes de la dirección MAC del SoC:
 
 \begin{center}
 \texttt{ami-esp32c6-\textit{XXXX}}
 \end{center}
 
-\noindent Ejemplo: \texttt{ami-esp32c6-25c0}. La comunicación LwM2M se realiza sobre CoAP/UDP hacia la dirección mesh-local del OTBR donde ejecuta Leshan:
+\noindent Ejemplo: \texttt{ami-esp32c6-25c0}. La comunicación LwM2M se realiza sobre CoAP/UDP hacia la dirección mesh-local del OTBR donde ejecuta ThingsBoard Edge:
 
 \begin{lstlisting}[language=bash,caption={URI del servidor LwM2M}]
 coap://[fdc6:63fd:328d:66df:6a54:12ef:8c67:bd1c]:5683
@@ -409,7 +409,7 @@ A diferencia de los valores simulados de potencia, el Objeto 4 se alimenta con \
 
 \subsection{Objetos Thread Custom (10483--10486, 33000)}
 
-Se diseñaron cinco objetos LwM2M custom para exponer diagnósticos detallados de la red Thread, definidos en archivos XML compatibles con Leshan:
+Se diseñaron cinco objetos LwM2M custom para exponer diagnósticos detallados de la red Thread, definidos en archivos XML estándar OMA:
 
 \begin{table}[H]
 \centering
@@ -432,7 +432,7 @@ Se diseñaron cinco objetos LwM2M custom para exponer diagnósticos detallados d
 \end{tabularx}
 \end{table}
 
-\noindent Los modelos XML se encuentran en \texttt{models/\{10483,10484,10485,10486,33000\}.xml} y se cargan en Leshan para habilitar la decodificación correcta de recursos custom.
+\noindent Los modelos XML se encuentran en \texttt{models/\{10483,10484,10485,10486,33000\}.xml} y se cargan en ThingsBoard Edge para habilitar la decodificación correcta de recursos custom.
 
 % =============================================================================
 \section{Pasarela de Borde (Edge Gateway)}
@@ -444,24 +444,35 @@ La pasarela de borde ejecuta sobre \textbf{Raspberry Pi 4 Model B} (\SI{4}{\giga
 
 \begin{enumerate}[leftmargin=1.5cm]
     \item \textbf{OpenThread Border Router (OTBR):} Puente entre la red Thread mesh y la red IPv6/IPv4 del gateway, utilizando un dongle nRF52840 como Radio Co-Processor (RCP) vía USB.
-    \item \textbf{Servidor LwM2M:} Eclipse Leshan ejecutando como contenedor Docker, exponiendo REST API en puerto 18080 y CoAP en puerto 5683.
-    \item \textbf{Motor de reglas y persistencia:} ThingsBoard Edge con PostgreSQL+TimescaleDB para almacenamiento time-series local.
+    \item \textbf{Servidor LwM2M:} ThingsBoard Edge con transporte LwM2M integrado, exponiendo API REST en puerto 8090 y CoAP en puerto 5683.
+    \item \textbf{Motor de reglas y persistencia:} ThingsBoard Edge con PostgreSQL para almacenamiento time-series local.
 \end{enumerate}
 
-\subsection{Servidor Leshan LwM2M}
+\subsection{Servidor LwM2M (ThingsBoard Edge)}
 
-\textbf{Eclipse Leshan} es la implementación Java de referencia del protocolo LwM2M de Eclipse Foundation. En la arquitectura del piloto:
+\textbf{ThingsBoard Edge} integra un transporte LwM2M nativo basado en Eclipse Californium. En la arquitectura del piloto:
 
 \begin{table}[H]
 \centering
-\caption{Configuración del servidor Leshan en el gateway}
-\label{tab:leshan}
+\caption{Configuración del servidor LwM2M en el gateway}
+\label{tab:lwm2m-server}
 \begin{tabularx}{\textwidth}{l X}
 \toprule
 \textbf{Parámetro} & \textbf{Valor} \\
 \midrule
-Versión JAR & Leshan 1.x (Feb 2021) sobre Californium 2.x \\
-Contenedor Docker & \texttt{leshan-srv} en OTBR (\SI{192.168.1.111}{}) \\
+Versión & ThingsBoard Edge 4.2.1EDGE \\
+Contenedor Docker & \texttt{tb-edge} en OTBR (\SI{192.168.1.111}{}) \\
+Puerto CoAP & 5683 (UDP, no seguro --- modo NoSec para piloto) \\
+Puerto API REST & 8090 (API REST + interfaz web de gestión) \\
+Modelos LwM2M custom & 10483, 10484, 10485, 10486, 33000 \\
+Framework CoAP & Eclipse Californium \\
+\bottomrule
+\end{tabularx}
+\end{table}
+\textbf{Parámetro} & \textbf{Valor} \\
+\midrule
+Versión & ThingsBoard Edge 4.2.1EDGE sobre Californium \\
+Contenedor Docker & \texttt{tb-edge} en OTBR (\SI{192.168.1.111}{}) \\
 Puerto CoAP & 5683 (UDP, no seguro --- modo NoSec para piloto) \\
 Puerto Web UI & 18080 (REST API + interfaz web de gestión) \\
 Modelos XML custom & 10483, 10484, 10485, 10486, 33000 \\
@@ -472,7 +483,7 @@ Framework CoAP & Eclipse Californium 2.x \\
 
 \subsection{Configuración de Californium (CoAP Engine)}
 
-Un hallazgo crítico de esta investigación fue la importancia de la configuración del motor CoAP \textbf{Californium} que subyace a Leshan. Los parámetros de retransmisión impactan directamente en la tasa de éxito de lecturas LwM2M:
+Un hallazgo crítico de esta investigación fue la importancia de la configuración del motor CoAP \textbf{Californium} que subyace al transporte LwM2M de ThingsBoard Edge. Los parámetros de retransmisión impactan directamente en la tasa de éxito de lecturas LwM2M:
 
 \begin{table}[H]
 \centering
@@ -508,12 +519,12 @@ El flujo de datos completo desde la generación de telemetría hasta la lectura 
 \begin{enumerate}[leftmargin=1.5cm]
     \item \textbf{Nodo ESP32-C6} genera valores de telemetría (simulados o leídos del medidor vía RS-485/DLMS).
     \item \textbf{Motor LwM2M de Zephyr} codifica valores en formato TLV/CoAP y los registra como recursos.
-    \item \textbf{Registro LwM2M:} El cliente envía \texttt{Register} al servidor Leshan con lista de objetos soportados.
-    \item \textbf{Leshan REST API} recibe solicitud de lectura HTTP (e.g., \texttt{GET /api/clients/ami-esp32c6-25c0/10242/0/0}).
+    \item \textbf{Registro LwM2M:} El cliente envía \texttt{Register} al servidor LwM2M de ThingsBoard Edge con lista de objetos soportados.
+    \item \textbf{TB Edge REST API} recibe solicitud de lectura HTTP (e.g., \texttt{GET /api/plugins/telemetry/DEVICE/\{id\}/values/timeseries}).
     \item \textbf{Californium} traduce la solicitud HTTP a un mensaje CoAP \texttt{GET} Confirmable (CON).
     \item \textbf{CoAP sobre UDP/IPv6} viaja por la red Thread mesh (6LoWPAN) hasta el nodo.
     \item \textbf{Nodo} procesa la solicitud y envía CoAP \texttt{ACK} con el valor del recurso.
-    \item \textbf{Leshan} devuelve el valor al cliente REST en formato JSON.
+    \item \textbf{ThingsBoard Edge} devuelve el valor al cliente REST en formato JSON.
 \end{enumerate}
 
 \noindent\textbf{Latencia típica E2E} (lectura individual): \SI{33}{\milli\second} mediana, \SI{423}{\milli\second} promedio (incluye retransmisiones esporádicas).
@@ -522,7 +533,7 @@ El flujo de datos completo desde la generación de telemetría hasta la lectura 
 \section{Pruebas de Rendimiento: Optimización V1 $\rightarrow$ V2 $\rightarrow$ V3}
 % =============================================================================
 
-Se realizaron tres campañas de pruebas sistemáticas para optimizar el rendimiento de lectura de recursos LwM2M a través de la API REST de Leshan. Cada campaña utilizó un script PowerShell automatizado (\texttt{tools/test\_suite\_latency.ps1}) que lee 22 recursos distintos en 10 rondas (\textbf{220 lecturas totales por prueba}).
+Se realizaron tres campañas de pruebas sistemáticas para optimizar el rendimiento de lectura de recursos LwM2M a través de la API REST del servidor. Cada campaña utilizó un script PowerShell automatizado que lee 22 recursos distintos en 10 rondas (\textbf{220 lecturas totales por prueba}).
 
 \subsection{Configuraciones de Prueba}
 
@@ -534,8 +545,8 @@ Se realizaron tres campañas de pruebas sistemáticas para optimizar el rendimie
 \toprule
 \textbf{Versión} & \textbf{Calif. ACK\_TIMEOUT} & \textbf{API Timeout} & \textbf{Cambio clave} \\
 \midrule
-V1 & \SI{2500}{\milli\second} & Defecto Leshan & Línea base con Californium optimizado \\
-V2 & \SI{5000}{\milli\second} (defecto RFC) & Defecto Leshan & Calif.\ más lento, sin API timeout \\
+V1 & \SI{2500}{\milli\second} & Defecto servidor & Línea base con Californium optimizado \\
+V2 & \SI{5000}{\milli\second} (defecto RFC) & Defecto servidor & Calif.\ más lento, sin API timeout \\
 V3 & \SI{2500}{\milli\second} & \texttt{?timeout=10} & Calif.\ rápido + ventana API extendida \\
 \bottomrule
 \end{tabularx}
@@ -570,7 +581,7 @@ Lecturas recuperadas 5--10s & 0 & 0 & \textbf{10} \\
 
 \subsubsection{V1: Línea base con retransmisiones rápidas}
 
-Con \texttt{ACK\_TIMEOUT=2500ms} en Californium, las retransmisiones CoAP son agresivas: primer retry a \SI{2.5}{\second}, segundo a \SI{6.3}{\second}. Esto permite recuperar paquetes perdidos dentro de la ventana de timeout por defecto de la API de Leshan ($\sim$\SI{5}{\second}). La mediana de \SI{27}{\milli\second} indica que la mayoría de lecturas son rápidas, pero 12 lecturas agotaron el timeout.
+Con \texttt{ACK\_TIMEOUT=2500ms} en Californium, las retransmisiones CoAP son agresivas: primer retry a \SI{2.5}{\second}, segundo a \SI{6.3}{\second}. Esto permite recuperar paquetes perdidos dentro de la ventana de timeout por defecto de la API del servidor ($\sim$\SI{5}{\second}). La mediana de \SI{27}{\milli\second} indica que la mayoría de lecturas son rápidas, pero 12 lecturas agotaron el timeout.
 
 \subsubsection{V2: Regresión con RFC 7252 por defecto}
 
@@ -581,7 +592,7 @@ Al restaurar \texttt{ACK\_TIMEOUT=5000ms} (valor por defecto RFC 7252), la prime
 La configuración óptima combina:
 \begin{itemize}[leftmargin=1.2cm]
     \item \textbf{Californium \texttt{ACK\_TIMEOUT=2500ms}:} Retransmisiones rápidas (1er retry a \SI{2.5}{\second}).
-    \item \textbf{Leshan API \texttt{?timeout=10}:} Ventana de espera de \SI{10}{\second} en la API REST.
+    \item \textbf{API del servidor \texttt{?timeout=10}:} Ventana de espera de \SI{10}{\second} en la API REST.
     \item \textbf{Corrección PowerShell 5.1:} Interpolación \texttt{\$\{rid\}?timeout=10} en lugar de \texttt{\$rid?timeout=10} (bug de parsing PS 5.1).
 \end{itemize}
 
@@ -614,12 +625,12 @@ $>$10.000 ms & 6 & \textcolor{fail-red}{Timeout 504 --- fallo} \\
 
 \subsection{Hallazgo 1: La temporización CoAP domina la tasa de éxito}
 
-El factor más influyente en la fiabilidad de lecturas LwM2M no es la calidad del enlace radio ni la capacidad del nodo, sino la \textbf{interacción entre los timeouts del motor CoAP (Californium) y la ventana de espera de la API REST (Leshan)}. Un \texttt{ACK\_TIMEOUT} demasiado conservador (RFC~7252: \SI{5}{\second}) causa que la primera retransmisión llegue justo cuando la API ya ha abortado la espera.
+El factor más influyente en la fiabilidad de lecturas LwM2M no es la calidad del enlace radio ni la capacidad del nodo, sino la \textbf{interacción entre los timeouts del motor CoAP (Californium) y la ventana de espera de la API REST del servidor LwM2M}. Un \texttt{ACK\_TIMEOUT} demasiado conservador (RFC~7252: \SI{5}{\second}) causa que la primera retransmisión llegue justo cuando la API ya ha abortado la espera.
 
 \begin{center}
 \fbox{
 \begin{minipage}{0.85\textwidth}
-\textbf{Recomendación:} Para redes 6LoWPAN/Thread con Leshan, configurar Californium con \texttt{ACK\_TIMEOUT=2500ms} y la API con \texttt{?timeout=10} o superior. Esto proporciona $\geq$3 oportunidades de retransmisión dentro de la ventana de la API.
+\textbf{Recomendación:} Para redes 6LoWPAN/Thread con ThingsBoard Edge, configurar Californium con \texttt{ACK\_TIMEOUT=2500ms} y la API con \texttt{?timeout=10} o superior. Esto proporciona $\geq$3 oportunidades de retransmisión dentro de la ventana de la API.
 \end{minipage}
 }
 \end{center}
@@ -636,7 +647,7 @@ Las 10 lecturas recuperadas en la banda 5--10 segundos en V3 demuestran que Cali
 
 \subsection{Hallazgo 4: Interpolación PS 5.1 vs.\ PS 7+}
 
-Un bug sutil en PowerShell 5.1 causó que el parámetro \texttt{?timeout=10} no se enviara correctamente al servidor Leshan. La expresión:
+Un bug sutil en PowerShell 5.1 causó que el parámetro \texttt{?timeout=10} no se enviara correctamente al servidor LwM2M. La expresión:
 
 \begin{lstlisting}[language=bash]
 # BUG en PowerShell 5.1:
@@ -679,7 +690,7 @@ v0.9.0 & \texttt{v0.9.0} & Objeto 5 (Firmware Update --- FOTA simulado) \\
 v0.10.0 & \texttt{v0.10.0} & Objeto 4 (ConnMon real) + Object 33000 (Thread Diag) \\
 v0.11.0 & \texttt{v0.11.0} & Valores reales en Object 4 (RSSI, LQI, IPv6, Partition ID) \\
 v0.12.0 & \texttt{v0.12.0} & Objetos Thread 10483--10486 (Network, Commission, Neighbor, CLI) \\
---- & \texttt{aa34561} & Optimización V3: Leshan \texttt{?timeout=10} + corrección PS 5.1 \\
+--- & \texttt{aa34561} & Optimización V3: API \texttt{?timeout=10} + corrección PS 5.1 \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -706,7 +717,7 @@ v0.12.0 & \texttt{v0.12.0} & Objetos Thread 10483--10486 (Network, Commission, N
 \texttt{src/lwm2m\_obj\_thread\_neighbor.\{c,h\}} & Object 10485: tabla de vecinos (14 recursos/inst.) \\
 \texttt{src/lwm2m\_obj\_thread\_commission.\{c,h\}} & Object 10484: comisionamiento Thread \\
 \texttt{src/lwm2m\_obj\_thread\_cli.\{c,h\}} & Object 10486: CLI remoto OpenThread \\
-\texttt{models/*.xml} & Definiciones XML de objetos custom para Leshan \\
+\texttt{models/*.xml} & Definiciones XML de objetos custom LwM2M \\
 \texttt{tools/test\_suite\_latency.ps1} & Script de pruebas automatizadas (22 recursos $\times$ 10 rondas) \\
 \texttt{tools/graph\_v1\_v2\_v3\_comparison.py} & Generación de gráficas comparativas 3-way \\
 \bottomrule
@@ -782,7 +793,7 @@ Vendor lock-in & Alto & Medio & Alto & \textbf{Nulo} \\
 
     \item \textbf{Datos reales de la red Thread:} Los objetos 4, 33000 y 10483--10486 se alimentan directamente de la API de OpenThread, proporcionando visibilidad real de RSSI, LQI, tabla de vecinos, contadores MAC y direcciones IPv6 a través del estándar LwM2M.
 
-    \item \textbf{Optimización CoAP/Californium validada:} La configuración \texttt{ACK\_TIMEOUT=2500ms} (Californium) + \texttt{?timeout=10} (Leshan API) alcanzó 97,3\,\% de éxito vs.\ 90,9\,\% con parámetros RFC por defecto, una mejora de +6,4 puntos porcentuales.
+    \item \textbf{Optimización CoAP/Californium validada:} La configuración \texttt{ACK\_TIMEOUT=2500ms} (Californium) + \texttt{?timeout=10} (API del servidor) alcanzó 97,3\,\% de éxito vs.\ 90,9\,\% con parámetros RFC por defecto, una mejora de +6,4 puntos porcentuales.
 
     \item \textbf{Escalabilidad demostrada:} 100 medidores trifásicos consumen apenas 0,16\,\% del canal Thread (\SI{250}{\kilo\bit\per\second}), con buffer de gateway de \SI{303}{\mega\byte}/semana.
 
