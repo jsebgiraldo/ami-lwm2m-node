@@ -26,8 +26,6 @@
 #include <openthread/thread.h>
 #include <openthread/instance.h>
 
-#include <math.h>
-
 #include "lwm2m_obj_power_meter.h"
 #include "lwm2m_obj_thread_diag.h"
 #include "lwm2m_obj_thread_net.h"
@@ -51,7 +49,7 @@ LOG_MODULE_REGISTER(ami_lwm2m, LOG_LEVEL_INF);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "XIAO-ESP32-C6"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.14.1"
+#define CLIENT_FIRMWARE_VER     "0.15.0"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -70,12 +68,10 @@ static char endpoint_name[32];
  */
 static int dlms_poll_interval_s = DLMS_POLL_INTERVAL_DEFAULT;
 
-/* Configurable observer re-notify interval (milliseconds).
- * 0 = disabled (rely on DLMS poll notifications only).
- * Set via shell: "notify_interval <ms>" e.g. 1000 for 1 second.
+/* v0.15.0: notify_interval removed — notifications are now
+ * synchronized with the DLMS poll cycle via threshold-based
+ * smart notification in meter_push_to_lwm2m().
  */
-static int notify_interval_ms;
-static int64_t last_notify_ms;
 
 /* Track last DLMS poll time */
 static int64_t last_dlms_poll_ms;
@@ -223,24 +219,9 @@ static int lwm2m_setup(void)
 	return 0;
 }
 
-/* ---- Shell command: set observer re-notify interval ---- */
-static int cmd_notify_interval(const struct shell *sh, size_t argc, char **argv)
-{
-	int ms = atoi(argv[1]);
-
-	if (ms < 0) {
-		shell_error(sh, "interval must be >= 0");
-		return -EINVAL;
-	}
-	notify_interval_ms = ms;
-	shell_print(sh, "notify_interval set to %d ms%s",
-		    ms, ms == 0 ? " (disabled)" : "");
-	LOG_INF("notify_interval changed to %d ms", ms);
-	return 0;
-}
-SHELL_CMD_ARG_REGISTER(notify_interval, NULL,
-		       "Set observer re-notify interval in ms (0=disabled)",
-		       cmd_notify_interval, 2, 0);
+/* v0.15.0: notify_interval shell command removed.
+ * Notifications are now threshold-based, synchronized with DLMS poll.
+ */
 
 /* ---- Shell command: set DLMS poll interval ---- */
 static int cmd_dlms_interval(const struct shell *sh, size_t argc, char **argv)
@@ -264,52 +245,10 @@ SHELL_CMD_ARG_REGISTER(dlms_interval, NULL,
 		       "Set DLMS meter poll interval in seconds (5-300, default 15)",
 		       cmd_dlms_interval, 2, 0);
 
-/* ---- Force-notify: perturb value if unchanged so LwM2M engine sends it ---- */
-static void force_notify_f64(uint16_t obj_id, uint16_t inst_id, uint16_t res_id)
-{
-	double val = 0.0;
-
-	if (lwm2m_get_f64(&LWM2M_OBJ(obj_id, inst_id, res_id), &val) == 0) {
-		/* Nudge value by smallest representable step — triggers change
-		 * detection in LwM2M engine without affecting measurement.
-		 * nextafter(0.0, 1.0) ≈ 5e-324, invisible to real readings.
-		 */
-		double nudged = nextafter(val, val + 1.0);
-		lwm2m_set_f64(&LWM2M_OBJ(obj_id, inst_id, res_id), nudged);
-	}
-	lwm2m_notify_observer(obj_id, inst_id, res_id);
-}
-
-/* ---- Re-notify all observers with cached values ---- */
-static void notify_all_observers(void)
-{
-	/* Force-notify ALL observed power meter resources.
-	 * Uses nextafter() to perturb the value by the smallest
-	 * representable delta, ensuring LwM2M engine sees a "change"
-	 * even for static values (e.g. reactivePower=0.0).
-	 */
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_TENSION_R_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_CURRENT_R_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_TENSION_S_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_CURRENT_S_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_TENSION_T_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_CURRENT_T_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_R_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_S_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_T_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_POWER_R_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_APPARENT_POWER_R_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_POWER_FACTOR_R_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_3P_ACTIVE_POWER_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_3P_REACTIVE_POWER_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_3P_APPARENT_POWER_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_3P_POWER_FACTOR_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_ENERGY_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_ENERGY_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_APPARENT_ENERGY_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_FREQUENCY_RID);
-	force_notify_f64(POWER_METER_OBJECT_ID, 0, PM_NEUTRAL_CURRENT_RID);
-}
+/* v0.15.0: force_notify_f64() and notify_all_observers() removed.
+ * Threshold-based smart notification in meter_push_to_lwm2m() handles
+ * all observer notifications directly after each DLMS poll cycle.
+ */
 
 /* ---- Read real meter data via RS485/DLMS ---- */
 static void update_sensors(void)
@@ -483,9 +422,9 @@ int main(void)
 	lwm2m_rd_client_start(&client_ctx, endpoint_name, 0,
 			      rd_client_event, observe_cb);
 
-	/* Main loop — DLMS poll at configurable interval, optional fast notifications */
-	LOG_INF("Entering sensor loop (DLMS=%ds, notify=%dms)",
-		dlms_poll_interval_s, notify_interval_ms);
+	/* Main loop — DLMS poll at configurable interval with smart threshold notify */
+	LOG_INF("Entering sensor loop (DLMS=%ds, threshold-notify)",
+		dlms_poll_interval_s);
 
 	/* Initial update so resources have real values before first sleep */
 	update_connectivity_metrics();
@@ -493,7 +432,6 @@ int main(void)
 	update_thread_neighbors();
 	k_sem_give(&dlms_poll_sem);  /* Trigger initial DLMS poll in background */
 	last_dlms_poll_ms = k_uptime_get();
-	last_notify_ms = last_dlms_poll_ms;
 
 	while (1) {
 		k_sleep(LOOP_TICK);
@@ -509,15 +447,6 @@ int main(void)
 			update_thread_network();
 			update_thread_neighbors();
 			last_dlms_poll_ms = now;
-		} else if (lwm2m_connected && notify_interval_ms > 0 &&
-			   (now - last_notify_ms) >= notify_interval_ms) {
-			/* Re-trigger observer notifications at the
-			 * configured interval (set via shell).
-			 * DLMS data is cached; this only marks resources
-			 * dirty so the LwM2M engine sends CoAP Notify.
-			 */
-			notify_all_observers();
-			last_notify_ms = now;
 		}
 	}
 

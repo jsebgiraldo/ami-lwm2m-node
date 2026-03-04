@@ -68,6 +68,20 @@ static inline void k_sleep(int ms) { (void)ms; }
 #define LOG_LEVEL_WRN  2
 #define LOG_LEVEL_ERR  1
 
+/* ---- Zephyr IS_ENABLED / Kconfig stubs ---- */
+#ifndef IS_ENABLED
+#define _IS_ENABLED1(cfg_val) _IS_ENABLED2(_IS_EMPTY_##cfg_val)
+#define _IS_ENABLED2(one_or_two_args) _IS_ENABLED3(one_or_two_args 1, 0)
+#define _IS_ENABLED3(ignore_this, val, ...) val
+#define _IS_EMPTY_ ~,1
+
+/* Simplified IS_ENABLED: returns 1 if macro is defined to 1 */
+#define IS_ENABLED(cfg) _IS_ENABLED1(cfg)
+#endif
+
+/* Enable single-phase mode for tests (matches prj.conf) */
+#define CONFIG_AMI_SINGLE_PHASE 1
+
 /* ---- Zephyr kernel header replacement ---- */
 /* When source files #include <zephyr/kernel.h>, redirect to this file */
 
