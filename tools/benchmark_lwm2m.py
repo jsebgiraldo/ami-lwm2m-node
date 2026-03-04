@@ -65,8 +65,8 @@ DEVICE_NAME = "ami-esp32c6-2434"
 DEVICE_ID = "cc9da070-135b-11f1-80f9-cdb955f2c365"
 PROFILE_ID = "b6d55c90-12db-11f1-b535-433a231637c4"
 
-# DLMS polling interval (seconds) — the meter is read every 30s
-DLMS_POLL_INTERVAL = 30
+# DLMS polling interval (seconds) — the meter is read every 15s (v0.14.0)
+DLMS_POLL_INTERVAL = 15
 
 # ── LwM2M Observe Paths ────────────────────────────────────────────
 

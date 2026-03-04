@@ -10,8 +10,6 @@
 ```
 thesis_export_v3/
 ├── README.md
-├── comparison_report_v013_v014.txt    # Reporte textual v0.13 vs v0.14
-├── comparison_report_v014_v0141.txt   # Reporte textual v0.14 vs v0.14.1 (RSSI/LQI fix)
 ├── datos/
 │   ├── v013_benchmark/                # Firmware v0.13.0 (DLMS poll 30s)
 │   │   ├── benchmark_summary.json
@@ -35,9 +33,7 @@ thesis_export_v3/
 ├── figuras/
 │   ├── v013_graficos/                 # 6 PNGs benchmark v0.13.0
 │   ├── v014_graficos/                 # 6 PNGs benchmark v0.14.0
-│   ├── v0141_graficos/                # 6 PNGs benchmark v0.14.1 (NEW)
-│   ├── comparacion_v013_v014/         # 6 PNGs comparativo v0.13→v0.14
-│   ├── comparacion_v014_v0141/        # 6 PNGs comparativo v0.14→v0.14.1 (NEW)
+│   ├── v0141_graficos/                # 6 PNGs benchmark v0.14.1
 │   └── deep_10s/                      # 12 PNGs deep 10s analysis
 └── tablas/
     ├── lwm2m_benchmark.tex
@@ -89,4 +85,4 @@ Each scenario: 30s warmup + 300s data collection. DLMS poll every 15s (v0.14+).
 | v0.14.0 | 14/16 | 0.260 msgs/s | 0 samples | 0 samples |
 | v0.14.1 | **16/16** | **1.693 msgs/s** | **-80 dBm** | **67%** |
 
-## Files: 101 total
+## Files: 86 total
