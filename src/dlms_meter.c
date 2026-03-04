@@ -822,6 +822,7 @@ void meter_push_to_lwm2m(const struct meter_readings *readings)
 	THRESH_CHECK(apparent_power_r, PM_APPARENT_POWER_R_RID,  THRESH_POWER);
 	THRESH_CHECK(power_factor_r,   PM_POWER_FACTOR_R_RID,    THRESH_POWER_FACTOR);
 
+#ifndef CONFIG_AMI_SINGLE_PHASE
 	/* ---- Phase S ---- */
 	THRESH_CHECK(voltage_s,        PM_TENSION_S_RID,         THRESH_VOLTAGE);
 	THRESH_CHECK(current_s,        PM_CURRENT_S_RID,         THRESH_CURRENT);
@@ -837,6 +838,7 @@ void meter_push_to_lwm2m(const struct meter_readings *readings)
 	THRESH_CHECK(reactive_power_t, PM_REACTIVE_POWER_T_RID,  THRESH_POWER);
 	THRESH_CHECK(apparent_power_t, PM_APPARENT_POWER_T_RID,  THRESH_POWER);
 	THRESH_CHECK(power_factor_t,   PM_POWER_FACTOR_T_RID,    THRESH_POWER_FACTOR);
+#endif /* !CONFIG_AMI_SINGLE_PHASE */
 
 	/* ---- Totals ---- */
 	THRESH_CHECK(total_active_power,   PM_3P_ACTIVE_POWER_RID,   THRESH_POWER);
@@ -861,12 +863,20 @@ void meter_push_to_lwm2m(const struct meter_readings *readings)
 		polls_without_notify++;
 	}
 
-	LOG_INF("LwM2M smart-notify: %d/27 resources notified%s "
+#ifdef CONFIG_AMI_SINGLE_PHASE
+	#define TOTAL_RESOURCES 15   /* Phase R(6) + Totals(4) + Energy(3) + Freq + Neutral */
+#else
+	#define TOTAL_RESOURCES 27
+#endif
+
+	LOG_INF("LwM2M smart-notify: %d/%d resources notified%s "
 		"(V=%.1f I=%.2f P=%.2fkW E=%.1fkWh f=%.1fHz)",
-		notified, force ? " [forced]" : "",
+		notified, TOTAL_RESOURCES, force ? " [forced]" : "",
 		readings->voltage_r, readings->current_r,
 		readings->total_active_power, readings->active_energy,
 		readings->frequency);
+
+	#undef TOTAL_RESOURCES
 }
 
 enum meter_state meter_get_state(void)

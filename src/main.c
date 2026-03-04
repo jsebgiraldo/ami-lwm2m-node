@@ -49,7 +49,7 @@ LOG_MODULE_REGISTER(ami_lwm2m, LOG_LEVEL_INF);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "XIAO-ESP32-C6"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.15.0"
+#define CLIENT_FIRMWARE_VER     "0.15.1"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -301,48 +301,14 @@ static void dlms_thread_entry(void *p1, void *p2, void *p3)
 K_THREAD_DEFINE(dlms_tid, 4096, dlms_thread_entry,
 		NULL, NULL, NULL, 5, 0, 0);
 
-/* ---- Fallback: no meter data available — send zeros ---- */
+/*
+ * Fallback: meter init or poll failed.
+ * Do NOT push zeros — that would corrupt the LwM2M cache with fake data.
+ * The previous valid readings (or LwM2M defaults) remain in place.
+ */
 static void update_sensors_fallback(void)
 {
-	/* Set all Object 10242 resources to 0.0 */
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_TENSION_R_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_CURRENT_R_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_R_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_POWER_R_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_APPARENT_POWER_R_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_POWER_FACTOR_R_RID), 0.0);
-
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_TENSION_S_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_CURRENT_S_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_S_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_POWER_S_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_APPARENT_POWER_S_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_POWER_FACTOR_S_RID), 0.0);
-
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_TENSION_T_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_CURRENT_T_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_POWER_T_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_POWER_T_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_APPARENT_POWER_T_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_POWER_FACTOR_T_RID), 0.0);
-
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_3P_ACTIVE_POWER_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_3P_REACTIVE_POWER_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_3P_APPARENT_POWER_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_3P_POWER_FACTOR_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_ENERGY_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_REACTIVE_ENERGY_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_APPARENT_ENERGY_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_FREQUENCY_RID), 0.0);
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_NEUTRAL_CURRENT_RID), 0.0);
-
-	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_TENSION_R_RID);
-	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_CURRENT_R_RID);
-	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_3P_ACTIVE_POWER_RID);
-	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_ENERGY_RID);
-	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, PM_FREQUENCY_RID);
-
-	LOG_INF("No meter data — sending zeros");
+	LOG_WRN("Meter unavailable — keeping last known values (no zeros sent)");
 }
 
 /* ---- Main ---- */
