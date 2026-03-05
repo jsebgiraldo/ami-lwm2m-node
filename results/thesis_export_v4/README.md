@@ -4,7 +4,8 @@
 **Dispositivo:** ami-esp32c6-2434 (ESP32-C6 + Thread)  
 **Plataforma:** Zephyr RTOS → Thread mesh → TB Edge (LwM2M)  
 **Fecha:** 2026-03-04  
-**Novedad v4:** Firmware v0.15.1 — Notificación inteligente por umbrales (THRESH_CHECK)
+**Novedad v4:** Firmware v0.15.1 — Notificación inteligente por umbrales (THRESH_CHECK)  
+**Novedad v4.1:** Firmware v0.17.0 — Validación de lecturas por campo (`field_mask` + sanity check)
 
 ## Estructura
 
@@ -35,10 +36,17 @@ thesis_export_v4/
 │   └── deep_10s/                      # 12 PNGs deep 10s analysis
 └── tablas/
     ├── lwm2m_benchmark.tex            # Tabla original (v0.13 era)
-    ├── lwm2m_benchmark_v0151.tex      # Tabla v0.15.1 (4 escenarios) ← NUEVO
-    ├── lwm2m_cross_version.tex        # Comparativa cross-version ← NUEVO
+    ├── lwm2m_benchmark_v0151.tex      # Tabla v0.15.1 (4 escenarios)
+    ├── lwm2m_cross_version.tex        # Comparativa cross-version
     ├── lwm2m_10s_deep.tex
-    └── iat_per_key_10s.tex
+    ├── iat_per_key_10s.tex
+    ├── unit_tests_v016.tex            # Tests v0.16.0 (111/111)
+    ├── unit_tests_v017.tex            # Tests v0.17.0 (118/118) ← NUEVO
+    ├── field_mask_v017.tex            # Mapa de bits field_mask ← NUEVO
+    ├── sanity_check_v017.tex          # Parámetros sanity check ← NUEVO
+    ├── firmware_evolution_v017.tex    # Evolución v0.13→v0.17 ← NUEVO
+    ├── protection_layers_v017.tex     # Capas de protección ← NUEVO
+    └── memory_comparison_v017.tex     # Flash/RAM v0.16 vs v0.17 ← NUEVO
 ```
 
 ## Firmware Versions
@@ -71,6 +79,36 @@ thesis_export_v4/
 - TOTAL_RESOURCES dinámico: 15 (single-phase) o 27 (tri-phase)
 - **Impacto:** Reduce tráfico innecesario ~61% vs v0.14.1 (escenario 1s: 0.661 vs 1.693 msgs/s)
 
+### v0.16.0 (Zero-Value Fix)
+- Cache `last_good` con flag `last_good_valid`: lecturas con valores cero se reemplazan
+  por el último valor real conocido
+- Previene que caídas momentáneas de comunicación DLMS envíen 0.0 al servidor
+- **Tests:** 111/111 passed (HDLC 29, COSEM 43, DLMS Logic 39)
+- **Memoria:** Flash 16.91% (709,636 B), RAM 63.82% (312,068 B)
+
+### v0.17.0 (Field-Mask Validation) ← NUEVO
+- **`field_mask` bitmask** (`uint32_t`): bit `i` se activa solo si `obis_table[i]` fue leído
+  exitosamente del medidor. 27 campos OBIS → bits 0–26
+- **`read_target`**: Número de campos OBIS objetivo (excluye fases S/T en modo monofásico)
+- **`MIN_READ_PERCENT = 50`**: Lectura marcada inválida si menos del 50% de los OBIS
+  objetivo fueron leídos exitosamente
+- **`readings_sanity_check()` reforzado**:
+  - Tensión ∈ [50, 500] V
+  - Frecuencia ∈ [40, 70] Hz
+  - Presencia mínima: al menos tensión o frecuencia en `field_mask`
+  - Cobertura OBIS ≥ 50% de `read_target`
+- **`THRESH_CHECK` con `bit_idx`**: Cada campo verifica su bit en `field_mask` antes de
+  enviar al servidor LwM2M. Campos no leídos se omiten (`skipped++`)
+- **`last_good` por campo**: Solo actualiza los campos con bit activo en `field_mask`.
+  Campos fallidos conservan su último valor real
+- **`consecutive_meter_failures`** en `main.c`: Contador de fallos consecutivos del medidor.
+  Tras `MAX_CONSEC_FAILURES = 5` fallos, emite log crítico. Se reinicia al primer éxito
+- **`meter_read_all()` comienza con `memset(0)`**: Ya no pre-llena con `last_good`.
+  Cada campo debe ser leído explícitamente para tener valor no-cero
+- **Tests:** 118/118 passed (HDLC 29, COSEM 43, DLMS Logic 46 — 7 nuevos tests)
+- **Memoria:** Flash 15.36% (644,200 B), RAM 64.88% (317,248 B)
+- **Commit:** `7f34ab3` (6 files, +514 −142)
+
 ## Benchmark Protocol
 
 ### v0.13.0 — v0.14.1
@@ -95,6 +133,8 @@ thesis_export_v4/
 | v0.14.0 | 14/16 | 78 | 0.260 msgs/s | — | 0 samples | 0 samples | DLMS 15s, force-notify |
 | v0.14.1 | **16/16** | **508** | **1.693 msgs/s** | **1.81** | -80 | 67 | ConnMon v1.3 fix |
 | v0.15.1 | **16/16** | 119 | 0.661 msgs/s | 11.46 | -93 | 33 | **Smart thresholds** |
+| v0.16.0 | **16/16** | — | — | — | — | — | Zero-value cache |
+| v0.17.0 | **16/16** | — | — | — | — | — | **field\_mask validation** |
 
 ### Análisis v0.15.1
 
@@ -149,6 +189,16 @@ v0.15.1 demuestra el trade-off fundamental en AMI sobre Thread:
 - Para redes Thread con ancho de banda limitado, v0.15.1 es superior en escala
 - El cuello de botella L1 (DLMS ~15s) hace que cualquier pmin < 15s desperdicie
   recursos de red sin ganar información adicional
+
+v0.17.0 cierra la brecha de confiabilidad de datos:
+- **Garantía de integridad**: Solo lecturas realmente obtenidas del medidor DLMS
+  llegan al servidor LwM2M — nunca valores cacheados, cero, o fabricados
+- **Arquitectura defensiva de 6 capas**: Desde `field_mask` por OBIS individual
+  hasta `sanity_check` con rangos físicos, cada capa atrapa un modo de fallo diferente
+- **Impacto en producción**: Un nodo AMI que pierde comunicación RS-485 con el medidor
+  NO contamina la base de datos con valores erróneos — permanece en silencio hasta
+  recuperar conectividad real
+- **Costo mínimo**: +5.2 KB RAM (1.06 pp), -65 KB Flash (1.55 pp menos)
 
 ## Files
 
