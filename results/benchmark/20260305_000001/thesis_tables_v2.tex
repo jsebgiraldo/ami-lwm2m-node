@@ -1,0 +1,60 @@
+% ═══════════════════════════════════════════════════════════════
+% Tabla 1: Rendimiento agregado por escenario
+% ═══════════════════════════════════════════════════════════════
+\begin{table}[htbp]
+\centering
+\caption{Rendimiento de transporte LwM2M bajo diferentes intervalos de observación basados en $T_{stable}$}
+\label{tab:benchmark-v2-aggregate}
+\begin{tabular}{lcrrrrr}
+\toprule
+\textbf{Escenario} & \textbf{$p_{min}=p_{max}$} & \textbf{Msgs} & \textbf{Msgs/s} & \textbf{IAT avg (s)} & \textbf{RSSI (dBm)} & \textbf{CoAP (KB)} \\
+\midrule
+$1\times T_{stable}$ & 15s & 161 & 0.537 & 25.8 & -82.6 & 9.7 \\
+$2\times T_{stable}$ & 30s & 80 & 0.267 & 21.8 & -83.8 & 4.8 \\
+$4\times T_{stable}$ & 60s & 128 & 0.427 & 37.4 & -87.2 & 7.8 \\
+$5\times T_{stable}$ & 75s & 111 & 0.370 & 39.4 & -91.2 & 6.7 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ═══════════════════════════════════════════════════════════════
+% Tabla 2: Completitud por grupo de recursos
+% ═══════════════════════════════════════════════════════════════
+\begin{table}[htbp]
+\centering
+\caption{Completitud de datos separada por tipo de recurso: dinámicos (valor cambia cada ciclo DLMS) vs.\ estables (valor constante o de variación lenta)}
+\label{tab:benchmark-v2-groups}
+\begin{tabular}{lrrrrrr}
+\toprule
+& \multicolumn{3}{c}{\textbf{Dinámicos (6 llaves)}} & \multicolumn{3}{c}{\textbf{Estables (10 llaves)}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+\textbf{Escenario} & Msgs & Esperados & Compl.\% & Msgs & Esperados & Compl.\% \\
+\midrule
+$1\times T_{stable}$ & 97 & 120 & 80.8\% & 64 & 200 & 32.0\% \\
+$2\times T_{stable}$ & 41 & 60 & 68.3\% & 39 & 100 & 39.0\% \\
+$4\times T_{stable}$ & 70 & 30 & 233.3\% & 58 & 50 & 116.0\% \\
+$5\times T_{stable}$ & 77 & 24 & 320.8\% & 34 & 40 & 85.0\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ═══════════════════════════════════════════════════════════════
+% Tabla 3: Tiempo inter-arribo (IAT) por grupo
+% ═══════════════════════════════════════════════════════════════
+\begin{table}[htbp]
+\centering
+\caption{Tiempo inter-arribo (IAT) promedio y mediana por grupo de recursos}
+\label{tab:benchmark-v2-iat}
+\begin{tabular}{lccrrccrr}
+\toprule
+& & \multicolumn{3}{c}{\textbf{Dinámicos}} & & \multicolumn{3}{c}{\textbf{Estables}} \\
+\cmidrule(lr){3-5} \cmidrule(lr){7-9}
+\textbf{Escenario} & $p_{min}$ (s) & IAT avg & IAT med & $\sigma$ & & IAT avg & IAT med & $\sigma$ \\
+\midrule
+$1\times T_{stable}$ & 15 & 23.3s & 23.7s & 20.5 & & 51.7s & 53.7s & 13.0 \\
+$2\times T_{stable}$ & 30 & 14.7s & 15.1s & 0.7 & & 30.2s & 30.2s & 1.5 \\
+$4\times T_{stable}$ & 60 & 25.2s & 13.9s & 2.5 & & 58.7s & 41.2s & 24.9 \\
+$5\times T_{stable}$ & 75 & 22.6s & 16.2s & 2.1 & & 98.3s & 101.2s & 49.7 \\
+\bottomrule
+\end{tabular}
+\end{table}
