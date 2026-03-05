@@ -1,0 +1,36 @@
+% constants_v018.tex — Constantes clave del firmware v0.18.0
+\begin{table}[htbp]
+\centering
+\caption{Constantes de configuración del firmware --- v0.18.0}
+\label{tab:constants_v018}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Constante} & \textbf{Valor} & \textbf{Archivo} & \textbf{Descripción} \\
+\midrule
+\texttt{MIN\_READ\_PERCENT}       & 50         & \texttt{dlms\_meter.c} & \% mínimo de OBIS para lectura válida \\
+\texttt{VOLTAGE\_MIN}             & 50.0\,V    & \texttt{dlms\_meter.c} & Límite inferior tensión \\
+\texttt{VOLTAGE\_MAX}             & 500.0\,V   & \texttt{dlms\_meter.c} & Límite superior tensión \\
+\texttt{FREQ\_MIN}                & 40.0\,Hz   & \texttt{dlms\_meter.c} & Límite inferior frecuencia \\
+\texttt{FREQ\_MAX}                & 70.0\,Hz   & \texttt{dlms\_meter.c} & Límite superior frecuencia \\
+\texttt{MAX\_CONSEC\_FAILURES}    & 5          & \texttt{main.c}        & Fallos antes de log crítico \\
+\texttt{CONN\_UPDATE\_INTERVAL\_S}& 60\,s      & \texttt{main.c}        & Intervalo métricas radio \\
+\texttt{dlms\_poll\_interval\_s}  & 15\,s      & \texttt{main.c}        & Intervalo lectura DLMS medidor \\
+\bottomrule
+\end{tabular}
+
+\vspace{1em}
+\caption*{\textbf{Constantes eliminadas en v0.18.0} (antes en \texttt{dlms\_meter.c}):}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Constante eliminada} & \textbf{Valor anterior} & \textbf{Razón de eliminación} \\
+\midrule
+\texttt{THRESH\_VOLTAGE}       & 1.0\,V   & Delegado a \texttt{pmin/pmax} del servidor \\
+\texttt{THRESH\_CURRENT}       & 0.1\,A   & Delegado a \texttt{pmin/pmax} del servidor \\
+\texttt{THRESH\_POWER}         & 0.01\,kW & Umbral $\ll$ fluctuación real $\rightarrow$ siempre notificaba \\
+\texttt{THRESH\_POWER\_FACTOR} & 0.01     & Delegado a \texttt{pmin/pmax} del servidor \\
+\texttt{THRESH\_ENERGY}        & 0.1\,kWh & Delegado a \texttt{pmin/pmax} del servidor \\
+\texttt{THRESH\_FREQUENCY}     & 0.1\,Hz  & Delegado a \texttt{pmin/pmax} del servidor \\
+\texttt{MAX\_SILENT\_POLLS}    & 5        & Sin thresholds no aplica \\
+\bottomrule
+\end{tabular}
+\end{table}

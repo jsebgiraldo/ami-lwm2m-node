@@ -1,0 +1,17 @@
+% unit_tests_v018.tex — Resumen tests unitarios v0.18.0
+\begin{table}[htbp]
+\centering
+\caption{Resultados de tests unitarios --- v0.18.0}
+\label{tab:unit_tests_v018}
+\begin{tabular}{@{}lccl@{}}
+\toprule
+\textbf{Suite} & \textbf{Tests} & \textbf{Resultado} & \textbf{Cobertura} \\
+\midrule
+HDLC        & 29/29 & PASS & CRC-16, construcción/parsing de tramas SNRM, DISC, I-frame \\
+COSEM       & 43/43 & PASS & AARQ, AARE, GET request/response, RLRQ, decodificación tipos \\
+DLMS Logic  & 45/45 & PASS & OBIS table, field\_mask, sanity check, PUSH\_FIELD \\
+\midrule
+\textbf{Total} & \textbf{117/117} & \textbf{ALL PASS} & \\
+\bottomrule
+\end{tabular}
+\end{table}
