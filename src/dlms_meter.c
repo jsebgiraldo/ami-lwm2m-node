@@ -804,65 +804,38 @@ int meter_poll(struct meter_readings *readings)
 }
 
 /*
- * Smart threshold-based notification (v0.15.0)
+ * Periodic push with server-controlled rate (v0.18.0)
  *
- * Instead of blindly notifying all 27 LwM2M resources every poll cycle,
- * we compare each new reading against the last-notified value.  Only
- * resources whose change exceeds the configured threshold are notified via
- * CoAP Observe.  This reduces Thread/CoAP traffic while still providing
- * timely updates for significant electrical changes.
+ * v0.15.0–v0.17.0 used threshold-based notification (THRESH_CHECK) that
+ * compared each reading against the last-notified value. While elegant,
+ * the low thresholds (e.g. THRESH_POWER=0.01) caused almost every reading
+ * to trigger a notify — defeating the purpose and flooding the Thread mesh.
  *
- * A forced re-notify happens after MAX_SILENT_POLLS consecutive polls
- * without any notification, to keep TB Edge observers alive.
+ * v0.18.0 simplifies: the firmware just sets the LwM2M resource value and
+ * calls lwm2m_notify_observer() every DLMS poll (15s). The actual CoAP
+ * notification rate is controlled by the server's observe attributes
+ * (pmin/pmax) — this is the standard LwM2M approach.
  *
- * Threshold values are chosen for typical residential AMI:
- *   Voltage:      ±1.0 V   (~0.5% of 220 V)
- *   Current:      ±0.05 A  (noise floor for CTs)
- *   Power:        ±0.01 kW (10 W change)
- *   Power Factor: ±0.01    (0.01 change in -1..1)
- *   Energy:       ±0.1 kWh (monotonic, always grows)
- *   Frequency:    ±0.1 Hz  (very stable at 50/60 Hz)
+ * Safety validation (voltage/frequency range check) is preserved via
+ * readings_sanity_check() to prevent obviously invalid data.
+ *
+ * The field_mask guard remains: only fields actually read from the meter
+ * in this cycle are pushed — no stale/zero data reaches the server.
  */
-
-/* ---- Notification thresholds ---- */
-#define THRESH_VOLTAGE        1.0    /* V   */
-#define THRESH_CURRENT        0.05   /* A   */
-#define THRESH_POWER          0.01   /* kW / kvar / kVA */
-#define THRESH_POWER_FACTOR   0.01   /* dimensionless    */
-#define THRESH_ENERGY         0.1    /* kWh / kvarh / kVAh */
-#define THRESH_FREQUENCY      0.1    /* Hz  */
-
-/* Force re-notify all observers after this many silent polls */
-#define MAX_SILENT_POLLS      5
-
-/* State for threshold comparison */
-static struct meter_readings last_notified;
-static bool  first_push = true;
-static int   polls_without_notify;
 
 /*
- * Helper macro: compare field against threshold, update LwM2M resource and
- * notify observer only when the change exceeds the threshold (or forced).
- * Always updates the LwM2M resource cache regardless.
+ * Helper macro: push a field to LwM2M if it was read this cycle.
+ * The LwM2M observe engine (pmin/pmax) controls the actual CoAP rate.
  */
-/*
- * v0.17.0: THRESH_CHECK now takes a bit index and only pushes the value
- * if the corresponding field was actually read from the meter this cycle.
- * Fields not in field_mask are skipped — no stale/cached data is sent.
- */
-#define THRESH_CHECK(field, rid, thresh, bit_idx) do {                         \
+#define PUSH_FIELD(field, rid, bit_idx) do {                                  \
 	if (!(readings->field_mask & (1u << (bit_idx)))) {                    \
-		skipped++;                                                        \
-		break;                                                            \
+		skipped++;                                                    \
+		break;                                                        \
 	}                                                                     \
-	double _delta = fabs(readings->field - last_notified.field);          \
-	if (force || _delta >= (thresh)) {                                    \
-		lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, rid),    \
-			      readings->field);                               \
-		lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, rid);        \
-		last_notified.field = readings->field;                        \
-		notified++;                                                   \
-	}                                                                     \
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, rid),            \
+		      readings->field);                                       \
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, rid);                \
+	pushed++;                                                             \
 } while (0)
 
 /*
@@ -929,59 +902,49 @@ void meter_push_to_lwm2m(const struct meter_readings *readings)
 		return;
 	}
 
-	/* Force notification on first poll or after MAX_SILENT_POLLS */
-	bool force = first_push || (polls_without_notify >= MAX_SILENT_POLLS);
-	int notified = 0;
+	int pushed = 0;
 	int skipped = 0;   /* Fields not read from meter this cycle */
 
 	/* ---- Phase R (obis indices 0-5) ---- */
-	THRESH_CHECK(voltage_r,        PM_TENSION_R_RID,         THRESH_VOLTAGE,      0);
-	THRESH_CHECK(current_r,        PM_CURRENT_R_RID,         THRESH_CURRENT,      1);
-	THRESH_CHECK(active_power_r,   PM_ACTIVE_POWER_R_RID,    THRESH_POWER,        2);
-	THRESH_CHECK(reactive_power_r, PM_REACTIVE_POWER_R_RID,  THRESH_POWER,        3);
-	THRESH_CHECK(apparent_power_r, PM_APPARENT_POWER_R_RID,  THRESH_POWER,        4);
-	THRESH_CHECK(power_factor_r,   PM_POWER_FACTOR_R_RID,    THRESH_POWER_FACTOR, 5);
+	PUSH_FIELD(voltage_r,        PM_TENSION_R_RID,         0);
+	PUSH_FIELD(current_r,        PM_CURRENT_R_RID,         1);
+	PUSH_FIELD(active_power_r,   PM_ACTIVE_POWER_R_RID,    2);
+	PUSH_FIELD(reactive_power_r, PM_REACTIVE_POWER_R_RID,  3);
+	PUSH_FIELD(apparent_power_r, PM_APPARENT_POWER_R_RID,  4);
+	PUSH_FIELD(power_factor_r,   PM_POWER_FACTOR_R_RID,    5);
 
 #ifndef CONFIG_AMI_SINGLE_PHASE
 	/* ---- Phase S (obis indices 6-11) ---- */
-	THRESH_CHECK(voltage_s,        PM_TENSION_S_RID,         THRESH_VOLTAGE,      6);
-	THRESH_CHECK(current_s,        PM_CURRENT_S_RID,         THRESH_CURRENT,      7);
-	THRESH_CHECK(active_power_s,   PM_ACTIVE_POWER_S_RID,    THRESH_POWER,        8);
-	THRESH_CHECK(reactive_power_s, PM_REACTIVE_POWER_S_RID,  THRESH_POWER,        9);
-	THRESH_CHECK(apparent_power_s, PM_APPARENT_POWER_S_RID,  THRESH_POWER,       10);
-	THRESH_CHECK(power_factor_s,   PM_POWER_FACTOR_S_RID,    THRESH_POWER_FACTOR,11);
+	PUSH_FIELD(voltage_s,        PM_TENSION_S_RID,         6);
+	PUSH_FIELD(current_s,        PM_CURRENT_S_RID,         7);
+	PUSH_FIELD(active_power_s,   PM_ACTIVE_POWER_S_RID,    8);
+	PUSH_FIELD(reactive_power_s, PM_REACTIVE_POWER_S_RID,  9);
+	PUSH_FIELD(apparent_power_s, PM_APPARENT_POWER_S_RID, 10);
+	PUSH_FIELD(power_factor_s,   PM_POWER_FACTOR_S_RID,   11);
 
 	/* ---- Phase T (obis indices 12-17) ---- */
-	THRESH_CHECK(voltage_t,        PM_TENSION_T_RID,         THRESH_VOLTAGE,     12);
-	THRESH_CHECK(current_t,        PM_CURRENT_T_RID,         THRESH_CURRENT,     13);
-	THRESH_CHECK(active_power_t,   PM_ACTIVE_POWER_T_RID,    THRESH_POWER,       14);
-	THRESH_CHECK(reactive_power_t, PM_REACTIVE_POWER_T_RID,  THRESH_POWER,       15);
-	THRESH_CHECK(apparent_power_t, PM_APPARENT_POWER_T_RID,  THRESH_POWER,       16);
-	THRESH_CHECK(power_factor_t,   PM_POWER_FACTOR_T_RID,    THRESH_POWER_FACTOR,17);
+	PUSH_FIELD(voltage_t,        PM_TENSION_T_RID,        12);
+	PUSH_FIELD(current_t,        PM_CURRENT_T_RID,        13);
+	PUSH_FIELD(active_power_t,   PM_ACTIVE_POWER_T_RID,   14);
+	PUSH_FIELD(reactive_power_t, PM_REACTIVE_POWER_T_RID, 15);
+	PUSH_FIELD(apparent_power_t, PM_APPARENT_POWER_T_RID, 16);
+	PUSH_FIELD(power_factor_t,   PM_POWER_FACTOR_T_RID,   17);
 #endif /* !CONFIG_AMI_SINGLE_PHASE */
 
 	/* ---- Totals (obis indices 18-21) ---- */
-	THRESH_CHECK(total_active_power,   PM_3P_ACTIVE_POWER_RID,   THRESH_POWER,        18);
-	THRESH_CHECK(total_reactive_power, PM_3P_REACTIVE_POWER_RID, THRESH_POWER,        19);
-	THRESH_CHECK(total_apparent_power, PM_3P_APPARENT_POWER_RID, THRESH_POWER,        20);
-	THRESH_CHECK(total_power_factor,   PM_3P_POWER_FACTOR_RID,   THRESH_POWER_FACTOR, 21);
+	PUSH_FIELD(total_active_power,   PM_3P_ACTIVE_POWER_RID,   18);
+	PUSH_FIELD(total_reactive_power, PM_3P_REACTIVE_POWER_RID, 19);
+	PUSH_FIELD(total_apparent_power, PM_3P_APPARENT_POWER_RID, 20);
+	PUSH_FIELD(total_power_factor,   PM_3P_POWER_FACTOR_RID,   21);
 
 	/* ---- Energy (obis indices 22-24) ---- */
-	THRESH_CHECK(active_energy,   PM_ACTIVE_ENERGY_RID,   THRESH_ENERGY, 22);
-	THRESH_CHECK(reactive_energy, PM_REACTIVE_ENERGY_RID, THRESH_ENERGY, 23);
-	THRESH_CHECK(apparent_energy, PM_APPARENT_ENERGY_RID, THRESH_ENERGY, 24);
+	PUSH_FIELD(active_energy,   PM_ACTIVE_ENERGY_RID,   22);
+	PUSH_FIELD(reactive_energy, PM_REACTIVE_ENERGY_RID, 23);
+	PUSH_FIELD(apparent_energy, PM_APPARENT_ENERGY_RID, 24);
 
 	/* ---- Other (obis indices 25-26) ---- */
-	THRESH_CHECK(frequency,       PM_FREQUENCY_RID,       THRESH_FREQUENCY, 25);
-	THRESH_CHECK(neutral_current, PM_NEUTRAL_CURRENT_RID, THRESH_CURRENT,   26);
-
-	/* Update silence counter */
-	if (notified > 0) {
-		polls_without_notify = 0;
-		first_push = false;
-	} else {
-		polls_without_notify++;
-	}
+	PUSH_FIELD(frequency,       PM_FREQUENCY_RID,       25);
+	PUSH_FIELD(neutral_current, PM_NEUTRAL_CURRENT_RID, 26);
 
 #ifdef CONFIG_AMI_SINGLE_PHASE
 	#define TOTAL_RESOURCES 15   /* Phase R(6) + Totals(4) + Energy(3) + Freq + Neutral */
@@ -989,9 +952,9 @@ void meter_push_to_lwm2m(const struct meter_readings *readings)
 	#define TOTAL_RESOURCES 27
 #endif
 
-	LOG_INF("LwM2M smart-notify: %d/%d notified, %d skipped (not read)%s "
+	LOG_INF("LwM2M push: %d/%d pushed, %d skipped (not read) "
 		"(V=%.1f I=%.2f P=%.2fkW E=%.1fkWh f=%.1fHz)",
-		notified, TOTAL_RESOURCES, skipped, force ? " [forced]" : "",
+		pushed, TOTAL_RESOURCES, skipped,
 		readings->voltage_r, readings->current_r,
 		readings->total_active_power, readings->active_energy,
 		readings->frequency);

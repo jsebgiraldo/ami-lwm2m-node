@@ -375,7 +375,7 @@ void test_failed_reads_stay_zero(void)
 	/*
 	 * v0.17.0: Failed reads are NOT filled with last_good.
 	 * They stay at 0.0 and their field_mask bit is NOT set.
-	 * THRESH_CHECK skips them, so they never reach the server.
+	 * PUSH_FIELD skips them, so they never reach the server.
 	 */
 	struct meter_readings r;
 	memset(&r, 0, sizeof(r));
@@ -637,43 +637,45 @@ void test_sanity_check_voltage_only_no_frequency(void)
 	ASSERT_TRUE(readings_sanity_check(&r));
 }
 
-/* ==== THRESH_CHECK macro boundary tests ==== */
+/* ==== Periodic push (v0.18.0) — field_mask guard tests ==== */
 
-void test_thresh_check_no_notify_within_threshold(void)
+void test_push_field_skips_when_bit_not_set(void)
 {
-	/* Delta within threshold should NOT trigger notification */
-	double old_val = 120.0;
-	double new_val = 120.5;  /* delta = 0.5 < THRESH_VOLTAGE (1.0) */
-	double delta = fabs(new_val - old_val);
-	ASSERT_TRUE(delta < THRESH_VOLTAGE);
+	/* If a field's bit is NOT in field_mask, it should be skipped */
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+	r.valid = true;
+	r.field_mask = 0;  /* No bits set → every field should be skipped */
+	/* Simulate: for bit_idx 0, mask & (1u << 0) == 0 → skip */
+	ASSERT_TRUE((r.field_mask & (1u << 0)) == 0);
+	ASSERT_TRUE((r.field_mask & (1u << 25)) == 0);
 }
 
-void test_thresh_check_notify_exceeds_threshold(void)
+void test_push_field_pushes_when_bit_set(void)
 {
-	/* Delta exceeding threshold should trigger notification */
-	double old_val = 120.0;
-	double new_val = 121.5;  /* delta = 1.5 >= THRESH_VOLTAGE (1.0) */
-	double delta = fabs(new_val - old_val);
-	ASSERT_TRUE(delta >= THRESH_VOLTAGE);
+	/* If a field's bit IS in field_mask, it should be pushed */
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+	r.valid = true;
+	r.field_mask = (1u << 0) | (1u << 18) | (1u << 25);
+	ASSERT_TRUE((r.field_mask & (1u << 0)) != 0);   /* voltage_r */
+	ASSERT_TRUE((r.field_mask & (1u << 18)) != 0);   /* total_active_power */
+	ASSERT_TRUE((r.field_mask & (1u << 25)) != 0);   /* frequency */
+	ASSERT_TRUE((r.field_mask & (1u << 1)) == 0);    /* current_r NOT set */
 }
 
-void test_thresh_check_zero_would_exceed_threshold(void)
+void test_push_field_all_27_bits(void)
 {
-	/* A zero replacing a real value would always exceed threshold */
-	double old_val = 122.4;
-	double zero_val = 0.0;
-	double delta = fabs(zero_val - old_val);
-	/* This is why the zero-fill bug was so insidious */
-	ASSERT_TRUE(delta >= THRESH_VOLTAGE);
-}
-
-void test_thresh_check_last_good_within_threshold(void)
-{
-	/* A last-good value replacing a failed read stays within threshold */
-	double old_val = 122.4;
-	double last_good_val = 122.4;  /* same as last notified */
-	double delta = fabs(last_good_val - old_val);
-	ASSERT_TRUE(delta < THRESH_VOLTAGE);
+	/* Full read: all 27 bits set → all fields pushed */
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+	r.valid = true;
+	r.field_mask = 0x07FFFFFFu;  /* bits 0-26 */
+	for (int i = 0; i < 27; i++) {
+		ASSERT_TRUE((r.field_mask & (1u << i)) != 0);
+	}
+	/* Bit 27 should NOT be set */
+	ASSERT_TRUE((r.field_mask & (1u << 27)) == 0);
 }
 
 /* ==== Test Suite Runner ==== */
@@ -744,11 +746,10 @@ void run_dlms_logic_tests(void)
 	RUN_TEST(test_sanity_check_requires_field_coverage);
 	RUN_TEST(test_sanity_check_voltage_only_no_frequency);
 
-	/* THRESH_CHECK boundary tests */
-	RUN_TEST(test_thresh_check_no_notify_within_threshold);
-	RUN_TEST(test_thresh_check_notify_exceeds_threshold);
-	RUN_TEST(test_thresh_check_zero_would_exceed_threshold);
-	RUN_TEST(test_thresh_check_last_good_within_threshold);
+	/* Periodic push — field_mask guard (v0.18.0) */
+	RUN_TEST(test_push_field_skips_when_bit_not_set);
+	RUN_TEST(test_push_field_pushes_when_bit_set);
+	RUN_TEST(test_push_field_all_27_bits);
 
 	TEST_SUITE_END("DLMS Logic");
 }

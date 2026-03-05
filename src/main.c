@@ -60,6 +60,7 @@ static char endpoint_name[32];
 
 /* Sensor update intervals */
 #define DLMS_POLL_INTERVAL_DEFAULT  15   /* seconds — default DLMS meter poll */
+#define CONN_UPDATE_INTERVAL_S     60   /* seconds — RSSI/LQI/Thread update (v0.18.0) */
 #define LOOP_TICK              K_MSEC(500)     /* Main loop tick */
 
 /* Runtime-configurable DLMS poll interval (seconds).
@@ -413,8 +414,8 @@ int main(void)
 			      rd_client_event, observe_cb);
 
 	/* Main loop — DLMS poll at configurable interval with smart threshold notify */
-	LOG_INF("Entering sensor loop (DLMS=%ds, threshold-notify)",
-		dlms_poll_interval_s);
+	LOG_INF("Entering sensor loop (DLMS=%ds, conn=%ds, threshold-notify)",
+		dlms_poll_interval_s, CONN_UPDATE_INTERVAL_S);
 
 	/* Initial update so resources have real values before first sleep */
 	update_connectivity_metrics();
@@ -422,6 +423,7 @@ int main(void)
 	update_thread_neighbors();
 	k_sem_give(&dlms_poll_sem);  /* Trigger initial DLMS poll in background */
 	last_dlms_poll_ms = k_uptime_get();
+	int64_t last_conn_update_ms = last_dlms_poll_ms;
 
 	while (1) {
 		k_sleep(LOOP_TICK);
@@ -433,10 +435,15 @@ int main(void)
 			if (!dlms_thread_running) {
 				k_sem_give(&dlms_poll_sem);  /* Wake DLMS thread */
 			}
+			last_dlms_poll_ms = now;
+		}
+
+		/* Connectivity metrics at slower rate (v0.18.0: decoupled from DLMS) */
+		if ((now - last_conn_update_ms) >= (CONN_UPDATE_INTERVAL_S * 1000)) {
 			update_connectivity_metrics();
 			update_thread_network();
 			update_thread_neighbors();
-			last_dlms_poll_ms = now;
+			last_conn_update_ms = now;
 		}
 	}
 

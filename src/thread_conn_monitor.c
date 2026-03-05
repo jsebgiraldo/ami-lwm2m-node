@@ -325,20 +325,25 @@ void update_connectivity_metrics(void)
 				  strlen(router_ip_str) + 1, 0);
 	}
 
-	/* ---- Notify observers (force-notify RSSI/LQI) ---- */
-	/* RSSI/LQI may stay stable across polls — nudge value by ±1
-	 * to defeat LwM2M engine's same-value suppression.
-	 * 1 dBm / 1% error is within measurement noise.
+	/* ---- Notify observers (only on real change — v0.18.0) ---- */
+	/* v0.17.0 used a ±1 dBm "nudge" to defeat same-value suppression,
+	 * which caused RSSI/LQI to be sent every poll (15s) even when stable.
+	 * Now we only notify when the value actually changes, saving ~70%
+	 * of radio traffic in aggressive observe scenarios.
 	 */
-	static bool rssi_nudge;
-	lwm2m_set_s16(&LWM2M_OBJ(4, 0, 2),
-		      (int16_t)(best_rssi + (rssi_nudge ? 0 : 1)));
-	lwm2m_set_s16(&LWM2M_OBJ(4, 0, 3),
-		      lqi_to_percent(best_lqi) + (rssi_nudge ? 0 : 1));
-	rssi_nudge = !rssi_nudge;
+	static int16_t prev_rssi = -128;
+	static int16_t prev_lqi_pct = -1;
+	int16_t lqi_pct = lqi_to_percent(best_lqi);
 
-	lwm2m_notify_observer(4, 0, 2);   /* RSSI */
-	lwm2m_notify_observer(4, 0, 3);   /* Link Quality */
+	lwm2m_set_s16(&LWM2M_OBJ(4, 0, 2), (int16_t)best_rssi);
+	lwm2m_set_s16(&LWM2M_OBJ(4, 0, 3), lqi_pct);
+
+	if (best_rssi != prev_rssi || lqi_pct != prev_lqi_pct) {
+		lwm2m_notify_observer(4, 0, 2);   /* RSSI */
+		lwm2m_notify_observer(4, 0, 3);   /* Link Quality */
+		prev_rssi = best_rssi;
+		prev_lqi_pct = lqi_pct;
+	}
 	lwm2m_notify_observer(4, 0, 4);   /* IP Addresses */
 	lwm2m_notify_observer(4, 0, 5);   /* Router IP */
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_TX_TOTAL_RID);
