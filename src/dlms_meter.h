@@ -74,10 +74,12 @@ struct meter_readings {
 	double neutral_current;        /* A */
 
 	/* Metadata */
-	bool   valid;                  /* True if at least some readings succeeded */
-	int    read_count;             /* Number of successful OBIS reads */
-	int    error_count;            /* Number of failed OBIS reads */
-	int64_t timestamp_ms;          /* Uptime when readings were taken */
+	bool     valid;                /* True if enough readings succeeded */
+	int      read_count;           /* Number of successful OBIS reads */
+	int      error_count;          /* Number of failed OBIS reads */
+	int      read_target;          /* Number of non-skipped OBIS codes attempted */
+	uint32_t field_mask;           /* Bitmask: bit i set = obis_table[i] was read OK */
+	int64_t  timestamp_ms;         /* Uptime when readings were taken */
 };
 
 /* Meter configuration */

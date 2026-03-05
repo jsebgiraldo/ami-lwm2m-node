@@ -633,6 +633,13 @@ static int read_scaler_unit(int table_idx)
 	return 0;
 }
 
+/*
+ * Minimum percentage of non-skipped OBIS codes that must be read
+ * successfully before we consider the readings valid for LwM2M push.
+ * 50% = at least 14/27 (3-phase) or 8/15 (single-phase).
+ */
+#define MIN_READ_PERCENT  50
+
 int meter_read_all(struct meter_readings *readings)
 {
 	if (!readings) {
@@ -644,18 +651,16 @@ int meter_read_all(struct meter_readings *readings)
 		return -ENOTCONN;
 	}
 
-	/* Initialize with last-good values (not zeros!) so that any
-	 * field that fails to read retains the previous good value
-	 * rather than sending 0 to LwM2M / ThingsBoard.
+	/* v0.17.0: Start with zeros — only fields actually read from the
+	 * meter will be pushed to LwM2M.  The field_mask tracks which
+	 * fields are real meter data vs unread.
 	 */
-	if (last_good_valid) {
-		memcpy(readings, &last_good, sizeof(*readings));
-	} else {
-		memset(readings, 0, sizeof(*readings));
-	}
+	memset(readings, 0, sizeof(*readings));
 	readings->timestamp_ms = k_uptime_get();
 	readings->read_count = 0;
 	readings->error_count = 0;
+	readings->read_target = 0;
+	readings->field_mask = 0;
 	readings->valid = false;
 
 	/*
@@ -708,6 +713,7 @@ int meter_read_all(struct meter_readings *readings)
 						    obis_table[i].offset);
 			*target = val;
 			readings->read_count++;
+			readings->field_mask |= (1u << i);
 
 			LOG_DBG("  %s = %.3f", obis_table[i].name, val);
 		} else {
@@ -728,27 +734,37 @@ int meter_read_all(struct meter_readings *readings)
 	int64_t elapsed = k_uptime_get() - t_start;
 	LOG_INF("Value reads completed in %lld ms", elapsed);
 
-	readings->valid = (readings->read_count > 0);
-
-	/* Update last-good cache with successfully-read values.
-	 * Fields that failed to read kept their last_good value
-	 * (from the memcpy above), so we can safely cache the whole struct.
+	/* v0.17.0: Require minimum read coverage before considering valid.
+	 * At least MIN_READ_PERCENT of non-skipped OBIS codes must succeed.
+	 * This prevents pushing mostly-stale data when the meter is flaky.
 	 */
-	if (readings->valid) {
+	readings->read_target = read_target;
+	int min_reads = (read_target * MIN_READ_PERCENT + 99) / 100;
+	readings->valid = (readings->read_count >= min_reads);
+
+	/* Update last-good cache ONLY with fields that were actually read.
+	 * Don't overwrite last_good with zeros for failed fields.
+	 */
+	if (readings->valid && last_good_valid) {
+		for (size_t j = 0; j < OBIS_TABLE_SIZE; j++) {
+			if (readings->field_mask & (1u << j)) {
+				double *src = (double *)((uint8_t *)readings +
+							 obis_table[j].offset);
+				double *dst = (double *)((uint8_t *)&last_good +
+							 obis_table[j].offset);
+				*dst = *src;
+			}
+		}
+	} else if (readings->valid) {
+		/* First successful read: initialize entire last_good */
 		memcpy(&last_good, readings, sizeof(last_good));
 		last_good_valid = true;
 	}
 
-	int fill_count = 0;
-	if (readings->error_count > 0 && last_good_valid) {
-		/* Log that we filled gaps with last-good values */
-		fill_count = readings->error_count;
-		LOG_WRN("Filled %d failed reads with last-good values (zero prevention)",
-			fill_count);
-	}
-
-	LOG_INF("Meter read complete: %d/%d successful (%d skipped, %d filled)",
-		readings->read_count, read_target, skip_count, fill_count);
+	LOG_INF("Meter read complete: %d/%d successful (%d skipped, mask=0x%08X)%s",
+		readings->read_count, read_target, skip_count,
+		readings->field_mask,
+		readings->valid ? "" : " [BELOW MIN COVERAGE]");
 
 	return readings->valid ? 0 : -EIO;
 }
@@ -829,7 +845,16 @@ static int   polls_without_notify;
  * notify observer only when the change exceeds the threshold (or forced).
  * Always updates the LwM2M resource cache regardless.
  */
-#define THRESH_CHECK(field, rid, thresh) do {                                 \
+/*
+ * v0.17.0: THRESH_CHECK now takes a bit index and only pushes the value
+ * if the corresponding field was actually read from the meter this cycle.
+ * Fields not in field_mask are skipped — no stale/cached data is sent.
+ */
+#define THRESH_CHECK(field, rid, thresh, bit_idx) do {                         \
+	if (!(readings->field_mask & (1u << (bit_idx)))) {                    \
+		skipped++;                                                        \
+		break;                                                            \
+	}                                                                     \
 	double _delta = fabs(readings->field - last_notified.field);          \
 	if (force || _delta >= (thresh)) {                                    \
 		lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, rid),    \
@@ -842,16 +867,53 @@ static int   polls_without_notify;
 
 /*
  * Sanity check: reject readings that are obviously invalid.
- * Voltage should never be exactly 0.0 if the meter is connected.
- * This is a safety net in case the last-good cache wasn't populated.
+ * v0.17.0: Strengthened with range validation and coverage check.
+ *
+ * A connected AMI meter must report:
+ *   - Voltage in [50, 500] V  (covers 110V/220V/380V systems)
+ *   - Frequency in [40, 70] Hz (covers 50Hz and 60Hz grids)
+ *   - Minimum field coverage (enough fields actually read)
  */
+#define VOLTAGE_MIN   50.0
+#define VOLTAGE_MAX  500.0
+#define FREQ_MIN      40.0
+#define FREQ_MAX      70.0
+
 static bool readings_sanity_check(const struct meter_readings *r)
 {
-	/* On a connected meter, Phase-R voltage is always > 0 */
-	if (r->voltage_r == 0.0 && r->frequency == 0.0) {
-		LOG_WRN("Sanity check FAILED: voltage=0, freq=0 — suppressing");
+	/* Check 1: voltage must have been read and be in plausible range */
+	if (r->field_mask & (1u << 0)) {  /* bit 0 = voltage_r */
+		if (r->voltage_r < VOLTAGE_MIN || r->voltage_r > VOLTAGE_MAX) {
+			LOG_WRN("Sanity FAIL: voltage_r=%.1f out of range [%.0f,%.0f]",
+				r->voltage_r, VOLTAGE_MIN, VOLTAGE_MAX);
+			return false;
+		}
+	}
+
+	/* Check 2: frequency must be in plausible range (if read) */
+	if (r->field_mask & (1u << 25)) {  /* bit 25 = frequency */
+		if (r->frequency < FREQ_MIN || r->frequency > FREQ_MAX) {
+			LOG_WRN("Sanity FAIL: frequency=%.1f out of range [%.0f,%.0f]",
+				r->frequency, FREQ_MIN, FREQ_MAX);
+			return false;
+		}
+	}
+
+	/* Check 3: must have voltage OR frequency actually read */
+	if (!(r->field_mask & ((1u << 0) | (1u << 25)))) {
+		LOG_WRN("Sanity FAIL: neither voltage nor frequency were read");
 		return false;
 	}
+
+	/* Check 4: minimum field coverage */
+	int bits_set = __builtin_popcount(r->field_mask);
+	int min_fields = (r->read_target * MIN_READ_PERCENT + 99) / 100;
+	if (bits_set < min_fields) {
+		LOG_WRN("Sanity FAIL: only %d/%d fields read (need %d)",
+			bits_set, r->read_target, min_fields);
+		return false;
+	}
+
 	return true;
 }
 
@@ -870,47 +932,48 @@ void meter_push_to_lwm2m(const struct meter_readings *readings)
 	/* Force notification on first poll or after MAX_SILENT_POLLS */
 	bool force = first_push || (polls_without_notify >= MAX_SILENT_POLLS);
 	int notified = 0;
+	int skipped = 0;   /* Fields not read from meter this cycle */
 
-	/* ---- Phase R ---- */
-	THRESH_CHECK(voltage_r,        PM_TENSION_R_RID,         THRESH_VOLTAGE);
-	THRESH_CHECK(current_r,        PM_CURRENT_R_RID,         THRESH_CURRENT);
-	THRESH_CHECK(active_power_r,   PM_ACTIVE_POWER_R_RID,    THRESH_POWER);
-	THRESH_CHECK(reactive_power_r, PM_REACTIVE_POWER_R_RID,  THRESH_POWER);
-	THRESH_CHECK(apparent_power_r, PM_APPARENT_POWER_R_RID,  THRESH_POWER);
-	THRESH_CHECK(power_factor_r,   PM_POWER_FACTOR_R_RID,    THRESH_POWER_FACTOR);
+	/* ---- Phase R (obis indices 0-5) ---- */
+	THRESH_CHECK(voltage_r,        PM_TENSION_R_RID,         THRESH_VOLTAGE,      0);
+	THRESH_CHECK(current_r,        PM_CURRENT_R_RID,         THRESH_CURRENT,      1);
+	THRESH_CHECK(active_power_r,   PM_ACTIVE_POWER_R_RID,    THRESH_POWER,        2);
+	THRESH_CHECK(reactive_power_r, PM_REACTIVE_POWER_R_RID,  THRESH_POWER,        3);
+	THRESH_CHECK(apparent_power_r, PM_APPARENT_POWER_R_RID,  THRESH_POWER,        4);
+	THRESH_CHECK(power_factor_r,   PM_POWER_FACTOR_R_RID,    THRESH_POWER_FACTOR, 5);
 
 #ifndef CONFIG_AMI_SINGLE_PHASE
-	/* ---- Phase S ---- */
-	THRESH_CHECK(voltage_s,        PM_TENSION_S_RID,         THRESH_VOLTAGE);
-	THRESH_CHECK(current_s,        PM_CURRENT_S_RID,         THRESH_CURRENT);
-	THRESH_CHECK(active_power_s,   PM_ACTIVE_POWER_S_RID,    THRESH_POWER);
-	THRESH_CHECK(reactive_power_s, PM_REACTIVE_POWER_S_RID,  THRESH_POWER);
-	THRESH_CHECK(apparent_power_s, PM_APPARENT_POWER_S_RID,  THRESH_POWER);
-	THRESH_CHECK(power_factor_s,   PM_POWER_FACTOR_S_RID,    THRESH_POWER_FACTOR);
+	/* ---- Phase S (obis indices 6-11) ---- */
+	THRESH_CHECK(voltage_s,        PM_TENSION_S_RID,         THRESH_VOLTAGE,      6);
+	THRESH_CHECK(current_s,        PM_CURRENT_S_RID,         THRESH_CURRENT,      7);
+	THRESH_CHECK(active_power_s,   PM_ACTIVE_POWER_S_RID,    THRESH_POWER,        8);
+	THRESH_CHECK(reactive_power_s, PM_REACTIVE_POWER_S_RID,  THRESH_POWER,        9);
+	THRESH_CHECK(apparent_power_s, PM_APPARENT_POWER_S_RID,  THRESH_POWER,       10);
+	THRESH_CHECK(power_factor_s,   PM_POWER_FACTOR_S_RID,    THRESH_POWER_FACTOR,11);
 
-	/* ---- Phase T ---- */
-	THRESH_CHECK(voltage_t,        PM_TENSION_T_RID,         THRESH_VOLTAGE);
-	THRESH_CHECK(current_t,        PM_CURRENT_T_RID,         THRESH_CURRENT);
-	THRESH_CHECK(active_power_t,   PM_ACTIVE_POWER_T_RID,    THRESH_POWER);
-	THRESH_CHECK(reactive_power_t, PM_REACTIVE_POWER_T_RID,  THRESH_POWER);
-	THRESH_CHECK(apparent_power_t, PM_APPARENT_POWER_T_RID,  THRESH_POWER);
-	THRESH_CHECK(power_factor_t,   PM_POWER_FACTOR_T_RID,    THRESH_POWER_FACTOR);
+	/* ---- Phase T (obis indices 12-17) ---- */
+	THRESH_CHECK(voltage_t,        PM_TENSION_T_RID,         THRESH_VOLTAGE,     12);
+	THRESH_CHECK(current_t,        PM_CURRENT_T_RID,         THRESH_CURRENT,     13);
+	THRESH_CHECK(active_power_t,   PM_ACTIVE_POWER_T_RID,    THRESH_POWER,       14);
+	THRESH_CHECK(reactive_power_t, PM_REACTIVE_POWER_T_RID,  THRESH_POWER,       15);
+	THRESH_CHECK(apparent_power_t, PM_APPARENT_POWER_T_RID,  THRESH_POWER,       16);
+	THRESH_CHECK(power_factor_t,   PM_POWER_FACTOR_T_RID,    THRESH_POWER_FACTOR,17);
 #endif /* !CONFIG_AMI_SINGLE_PHASE */
 
-	/* ---- Totals ---- */
-	THRESH_CHECK(total_active_power,   PM_3P_ACTIVE_POWER_RID,   THRESH_POWER);
-	THRESH_CHECK(total_reactive_power, PM_3P_REACTIVE_POWER_RID, THRESH_POWER);
-	THRESH_CHECK(total_apparent_power, PM_3P_APPARENT_POWER_RID, THRESH_POWER);
-	THRESH_CHECK(total_power_factor,   PM_3P_POWER_FACTOR_RID,   THRESH_POWER_FACTOR);
+	/* ---- Totals (obis indices 18-21) ---- */
+	THRESH_CHECK(total_active_power,   PM_3P_ACTIVE_POWER_RID,   THRESH_POWER,        18);
+	THRESH_CHECK(total_reactive_power, PM_3P_REACTIVE_POWER_RID, THRESH_POWER,        19);
+	THRESH_CHECK(total_apparent_power, PM_3P_APPARENT_POWER_RID, THRESH_POWER,        20);
+	THRESH_CHECK(total_power_factor,   PM_3P_POWER_FACTOR_RID,   THRESH_POWER_FACTOR, 21);
 
-	/* ---- Energy ---- */
-	THRESH_CHECK(active_energy,   PM_ACTIVE_ENERGY_RID,   THRESH_ENERGY);
-	THRESH_CHECK(reactive_energy, PM_REACTIVE_ENERGY_RID, THRESH_ENERGY);
-	THRESH_CHECK(apparent_energy, PM_APPARENT_ENERGY_RID, THRESH_ENERGY);
+	/* ---- Energy (obis indices 22-24) ---- */
+	THRESH_CHECK(active_energy,   PM_ACTIVE_ENERGY_RID,   THRESH_ENERGY, 22);
+	THRESH_CHECK(reactive_energy, PM_REACTIVE_ENERGY_RID, THRESH_ENERGY, 23);
+	THRESH_CHECK(apparent_energy, PM_APPARENT_ENERGY_RID, THRESH_ENERGY, 24);
 
-	/* ---- Other ---- */
-	THRESH_CHECK(frequency,       PM_FREQUENCY_RID,       THRESH_FREQUENCY);
-	THRESH_CHECK(neutral_current, PM_NEUTRAL_CURRENT_RID, THRESH_CURRENT);
+	/* ---- Other (obis indices 25-26) ---- */
+	THRESH_CHECK(frequency,       PM_FREQUENCY_RID,       THRESH_FREQUENCY, 25);
+	THRESH_CHECK(neutral_current, PM_NEUTRAL_CURRENT_RID, THRESH_CURRENT,   26);
 
 	/* Update silence counter */
 	if (notified > 0) {
@@ -926,9 +989,9 @@ void meter_push_to_lwm2m(const struct meter_readings *readings)
 	#define TOTAL_RESOURCES 27
 #endif
 
-	LOG_INF("LwM2M smart-notify: %d/%d resources notified%s "
+	LOG_INF("LwM2M smart-notify: %d/%d notified, %d skipped (not read)%s "
 		"(V=%.1f I=%.2f P=%.2fkW E=%.1fkWh f=%.1fHz)",
-		notified, TOTAL_RESOURCES, force ? " [forced]" : "",
+		notified, TOTAL_RESOURCES, skipped, force ? " [forced]" : "",
 		readings->voltage_r, readings->current_r,
 		readings->total_active_power, readings->active_energy,
 		readings->frequency);

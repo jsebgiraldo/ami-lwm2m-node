@@ -250,6 +250,13 @@ SHELL_CMD_ARG_REGISTER(dlms_interval, NULL,
  * all observer notifications directly after each DLMS poll cycle.
  */
 
+/*
+ * v0.17.0: Consecutive meter failure tracking.
+ * After MAX_CONSEC_FAILURES, suppress data to avoid pushing stale values.
+ */
+#define MAX_CONSEC_FAILURES  5
+static int consecutive_meter_failures;
+
 /* ---- Read real meter data via RS485/DLMS ---- */
 static void update_sensors(void)
 {
@@ -260,6 +267,7 @@ static void update_sensors(void)
 		if (ret < 0) {
 			LOG_ERR("Meter init failed: %d — using fallback", ret);
 			update_sensors_fallback();
+			consecutive_meter_failures++;
 			return;
 		}
 		meter_initialized = true;
@@ -268,12 +276,28 @@ static void update_sensors(void)
 	/* Full poll cycle: connect → read → disconnect */
 	ret = meter_poll(&last_readings);
 	if (ret < 0) {
-		LOG_WRN("Meter poll failed (%d) — using fallback", ret);
+		consecutive_meter_failures++;
+		if (consecutive_meter_failures >= MAX_CONSEC_FAILURES) {
+			LOG_ERR("Meter poll failed %d consecutive times — "
+				"NO data sent to server (all stale)",
+				consecutive_meter_failures);
+		} else {
+			LOG_WRN("Meter poll failed (%d) — keeping last values "
+				"(%d/%d failures)", ret,
+				consecutive_meter_failures, MAX_CONSEC_FAILURES);
+		}
 		update_sensors_fallback();
 		return;
 	}
 
-	/* Push real readings to LwM2M */
+	/* Reset failure counter on success */
+	if (consecutive_meter_failures > 0) {
+		LOG_INF("Meter recovered after %d failures",
+			consecutive_meter_failures);
+	}
+	consecutive_meter_failures = 0;
+
+	/* Push ONLY real meter readings to LwM2M (field_mask gates each field) */
 	meter_push_to_lwm2m(&last_readings);
 }
 

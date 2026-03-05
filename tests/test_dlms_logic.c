@@ -110,15 +110,19 @@ void test_readings_struct_has_metadata(void)
 	struct meter_readings r;
 	memset(&r, 0, sizeof(r));
 
-	/* Metadata fields exist and are writable */
+	/* Metadata fields exist and are writable (v0.17.0: added read_target, field_mask) */
 	r.valid = true;
 	r.read_count = 22;
 	r.error_count = 5;
+	r.read_target = 27;
+	r.field_mask = 0x07FFFFFF;
 	r.timestamp_ms = 123456;
 
 	ASSERT_TRUE(r.valid);
 	ASSERT_EQ(22, r.read_count);
 	ASSERT_EQ(5, r.error_count);
+	ASSERT_EQ(27, r.read_target);
+	ASSERT_EQ((int)0x07FFFFFF, (int)r.field_mask);
 	ASSERT_EQ(123456, (int)r.timestamp_ms);
 }
 
@@ -357,7 +361,7 @@ void test_obis_active_energy(void)
 	ASSERT_EQ(MR_OFF(active_energy), obis_table[22].offset);
 }
 
-/* ==== Zero-Value Prevention (v0.16.0) ==== */
+/* ==== Read Validation & Field Mask (v0.17.0) ==== */
 
 void test_last_good_cache_initially_invalid(void)
 {
@@ -366,95 +370,91 @@ void test_last_good_cache_initially_invalid(void)
 	ASSERT_FALSE(last_good_valid);
 }
 
-void test_last_good_fills_failed_reads(void)
+void test_failed_reads_stay_zero(void)
 {
 	/*
-	 * Simulate: first poll succeeds fully (populates last_good),
-	 * second poll has a failed read → field keeps last_good value.
+	 * v0.17.0: Failed reads are NOT filled with last_good.
+	 * They stay at 0.0 and their field_mask bit is NOT set.
+	 * THRESH_CHECK skips them, so they never reach the server.
 	 */
 	struct meter_readings r;
 	memset(&r, 0, sizeof(r));
 
-	/* Populate last_good with known values */
-	last_good_valid = true;
-	memset(&last_good, 0, sizeof(last_good));
-	last_good.voltage_r = 122.4;
-	last_good.current_r = 5.5;
-	last_good.frequency = 60.0;
-	last_good.active_energy = 1234.5;
-
-	/* Simulate what meter_read_all does: copy last_good into readings */
-	if (last_good_valid) {
-		memcpy(&r, &last_good, sizeof(r));
-	} else {
-		memset(&r, 0, sizeof(r));
-	}
-
-	/* A "failed read" means the field was NOT overwritten →
-	 * it retains the last_good value from the memcpy above.
-	 * Simulate a successful read of only voltage and frequency.
-	 */
-	r.voltage_r = 123.0;    /* new good value */
-	r.frequency = 60.1;     /* new good value */
-	/* current_r NOT overwritten → keeps 5.5 from last_good */
-	/* active_energy NOT overwritten → keeps 1234.5 from last_good */
-
+	/* Only voltage_r and frequency were successfully read */
+	r.voltage_r = 123.0;
+	r.frequency = 60.1;
+	r.field_mask = (1u << 0) | (1u << 25);  /* bits 0, 25 */
 	r.read_count = 2;
-	r.error_count = 2;  /* 2 failed reads */
-	r.valid = true;
+	r.error_count = 25;
 
-	/* Verify: failed reads have last_good values, NOT zeros */
-	ASSERT_FLOAT_EQ(123.0, r.voltage_r, 0.001);    /* new value */
-	ASSERT_FLOAT_EQ(5.5,   r.current_r, 0.001);    /* last_good */
-	ASSERT_FLOAT_EQ(60.1,  r.frequency, 0.001);     /* new value */
-	ASSERT_FLOAT_EQ(1234.5, r.active_energy, 0.001);/* last_good */
+	/* Verify: successfully read fields have real values */
+	ASSERT_FLOAT_EQ(123.0, r.voltage_r, 0.001);
+	ASSERT_FLOAT_EQ(60.1,  r.frequency, 0.001);
+
+	/* Verify: failed reads are zero (NOT last_good) */
+	ASSERT_FLOAT_EQ(0.0, r.current_r, 0.001);
+	ASSERT_FLOAT_EQ(0.0, r.active_energy, 0.001);
+
+	/* Verify: field_mask only has bits for successful reads */
+	ASSERT_TRUE(r.field_mask & (1u << 0));     /* voltage_r: read */
+	ASSERT_TRUE(r.field_mask & (1u << 25));    /* frequency: read */
+	ASSERT_FALSE(r.field_mask & (1u << 1));    /* current_r: NOT read */
+	ASSERT_FALSE(r.field_mask & (1u << 22));   /* active_energy: NOT read */
 }
 
 void test_first_poll_zeros_without_last_good(void)
 {
-	/*
-	 * Very first poll: no last_good available → fields start at 0.
-	 * This is expected — the first poll must succeed to populate cache.
-	 */
+	/* All polls start with memset(0) — field_mask gates what gets pushed */
 	struct meter_readings r;
 	last_good_valid = false;
 
-	/* Simulate what meter_read_all does without last_good */
-	if (last_good_valid) {
-		memcpy(&r, &last_good, sizeof(r));
-	} else {
-		memset(&r, 0, sizeof(r));
-	}
+	memset(&r, 0, sizeof(r));
+	r.field_mask = 0;
 
 	ASSERT_FLOAT_EQ(0.0, r.voltage_r, 0.001);
 	ASSERT_FLOAT_EQ(0.0, r.current_r, 0.001);
 	ASSERT_FLOAT_EQ(0.0, r.frequency, 0.001);
+	ASSERT_EQ(0, (int)r.field_mask);
 }
 
-void test_last_good_updated_after_valid_read(void)
+void test_last_good_updated_per_field(void)
 {
-	/* After a valid read, last_good should be updated */
+	/*
+	 * v0.17.0: last_good is updated per-field, only for fields
+	 * that were actually read (bit set in field_mask).
+	 */
+	last_good_valid = true;
+	memset(&last_good, 0, sizeof(last_good));
+	last_good.voltage_r = 120.0;
+	last_good.current_r = 5.0;
+
 	struct meter_readings r;
 	memset(&r, 0, sizeof(r));
-	r.voltage_r = 220.5;
-	r.frequency = 50.0;
+	r.voltage_r = 122.0;  /* New reading */
+	r.field_mask = (1u << 0);  /* Only voltage_r was read */
 	r.valid = true;
-	r.read_count = 2;
+	r.read_target = 27;
 
-	/* Simulate what meter_read_all does after the read loop */
-	if (r.valid) {
-		memcpy(&last_good, &r, sizeof(last_good));
-		last_good_valid = true;
+	/* Simulate per-field update logic from meter_read_all() */
+	for (size_t j = 0; j < OBIS_TABLE_SIZE; j++) {
+		if (r.field_mask & (1u << j)) {
+			double *src = (double *)((uint8_t *)&r +
+						  obis_table[j].offset);
+			double *dst = (double *)((uint8_t *)&last_good +
+						  obis_table[j].offset);
+			*dst = *src;
+		}
 	}
 
-	ASSERT_TRUE(last_good_valid);
-	ASSERT_FLOAT_EQ(220.5, last_good.voltage_r, 0.001);
-	ASSERT_FLOAT_EQ(50.0,  last_good.frequency, 0.001);
+	/* voltage_r updated to new value */
+	ASSERT_FLOAT_EQ(122.0, last_good.voltage_r, 0.001);
+	/* current_r NOT in field_mask → retains old value */
+	ASSERT_FLOAT_EQ(5.0, last_good.current_r, 0.001);
 }
 
 void test_last_good_not_updated_on_invalid_read(void)
 {
-	/* If all reads fail (valid=false), last_good should NOT be updated */
+	/* If reads are invalid (below min coverage), last_good untouched */
 	struct meter_readings old_good;
 	memset(&old_good, 0, sizeof(old_good));
 	old_good.voltage_r = 120.0;
@@ -467,10 +467,11 @@ void test_last_good_not_updated_on_invalid_read(void)
 	memset(&r, 0, sizeof(r));
 	r.valid = false;
 	r.read_count = 0;
+	r.field_mask = 0;
 
-	/* Do NOT update last_good */
+	/* Do NOT update last_good when invalid */
 	if (r.valid) {
-		memcpy(&last_good, &r, sizeof(last_good));
+		/* would update per-field... */
 	}
 
 	/* last_good should still hold old values */
@@ -479,14 +480,73 @@ void test_last_good_not_updated_on_invalid_read(void)
 	ASSERT_FLOAT_EQ(60.0,  last_good.frequency, 0.001);
 }
 
-/* ==== Sanity Check ==== */
+/* ==== Field Mask (v0.17.0) ==== */
+
+void test_field_mask_initially_zero(void)
+{
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+	ASSERT_EQ(0, (int)r.field_mask);
+}
+
+void test_field_mask_bit_for_each_obis(void)
+{
+	/* 27 OBIS entries fit in uint32_t (bits 0-26) */
+	ASSERT_TRUE(OBIS_TABLE_SIZE <= 32);
+
+	/* Verify each bit can be set independently */
+	uint32_t all_bits = 0;
+	for (size_t i = 0; i < OBIS_TABLE_SIZE; i++) {
+		all_bits |= (1u << i);
+	}
+	/* 27 bits = 0x07FFFFFF */
+	ASSERT_EQ((int)0x07FFFFFF, (int)all_bits);
+}
+
+void test_min_read_percent_threshold(void)
+{
+	/*
+	 * MIN_READ_PERCENT=50 means at least 50% of reads must succeed.
+	 * For 27 OBIS codes: min = ceil(27*50/100) = ceil(13.5) = 14
+	 */
+	int read_target = 27;
+	int min_reads = (read_target * MIN_READ_PERCENT + 99) / 100;
+	ASSERT_EQ(14, min_reads);
+
+	/* For single-phase (15 non-skipped): min = ceil(7.5) = 8 */
+	read_target = 15;
+	min_reads = (read_target * MIN_READ_PERCENT + 99) / 100;
+	ASSERT_EQ(8, min_reads);
+}
+
+void test_valid_requires_min_coverage(void)
+{
+	/* With read_target=27, need 14+ successful reads */
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+
+	r.read_count = 10;  /* Below threshold */
+	r.read_target = 27;
+	int min_reads = (r.read_target * MIN_READ_PERCENT + 99) / 100;
+	r.valid = (r.read_count >= min_reads);
+	ASSERT_FALSE(r.valid);  /* 10 < 14 → invalid */
+
+	/* Exactly at threshold → valid */
+	r.read_count = 14;
+	r.valid = (r.read_count >= min_reads);
+	ASSERT_TRUE(r.valid);  /* 14 >= 14 → valid */
+}
+
+/* ==== Sanity Check (v0.17.0: range validation + field coverage) ==== */
 
 void test_sanity_check_rejects_all_zeros(void)
 {
 	struct meter_readings r;
 	memset(&r, 0, sizeof(r));
 	r.valid = true;
-	/* Both voltage_r=0 and frequency=0 → should FAIL */
+	r.field_mask = 0;      /* Nothing was read */
+	r.read_target = 27;
+	/* Neither voltage (bit 0) nor frequency (bit 25) read → FAIL */
 	ASSERT_FALSE(readings_sanity_check(&r));
 }
 
@@ -497,6 +557,9 @@ void test_sanity_check_accepts_valid_readings(void)
 	r.voltage_r = 122.0;
 	r.frequency = 60.0;
 	r.valid = true;
+	r.read_target = 4;
+	r.field_mask = (1u << 0) | (1u << 1) | (1u << 25) | (1u << 26);
+	/* 4/4 bits set = 100% > 50% → passes all checks */
 	ASSERT_TRUE(readings_sanity_check(&r));
 }
 
@@ -509,17 +572,68 @@ void test_sanity_check_accepts_zero_current(void)
 	r.frequency = 60.0;
 	r.current_r = 0.0;
 	r.valid = true;
+	r.read_target = 3;
+	r.field_mask = (1u << 0) | (1u << 1) | (1u << 25);
 	ASSERT_TRUE(readings_sanity_check(&r));
 }
 
-void test_sanity_check_voltage_only(void)
+void test_sanity_check_rejects_voltage_out_of_range(void)
 {
-	/* Voltage ok but frequency=0 → pass (only both zero fails) */
+	/* Voltage outside [50, 500] → should FAIL */
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+	r.voltage_r = 600.0;  /* Way too high */
+	r.frequency = 60.0;
+	r.valid = true;
+	r.read_target = 2;
+	r.field_mask = (1u << 0) | (1u << 25);
+	ASSERT_FALSE(readings_sanity_check(&r));
+
+	/* Too low */
+	r.voltage_r = 30.0;
+	ASSERT_FALSE(readings_sanity_check(&r));
+}
+
+void test_sanity_check_rejects_frequency_out_of_range(void)
+{
+	/* Frequency outside [40, 70] → should FAIL */
 	struct meter_readings r;
 	memset(&r, 0, sizeof(r));
 	r.voltage_r = 120.0;
-	r.frequency = 0.0;
+	r.frequency = 80.0;  /* Too high */
 	r.valid = true;
+	r.read_target = 2;
+	r.field_mask = (1u << 0) | (1u << 25);
+	ASSERT_FALSE(readings_sanity_check(&r));
+
+	/* Too low */
+	r.frequency = 30.0;
+	ASSERT_FALSE(readings_sanity_check(&r));
+}
+
+void test_sanity_check_requires_field_coverage(void)
+{
+	/* Even with valid voltage/frequency, too few fields → FAIL */
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+	r.voltage_r = 120.0;
+	r.frequency = 60.0;
+	r.valid = true;
+	r.read_target = 27;
+	r.field_mask = (1u << 0) | (1u << 25);  /* Only 2/27 = 7% < 50% */
+	ASSERT_FALSE(readings_sanity_check(&r));
+}
+
+void test_sanity_check_voltage_only_no_frequency(void)
+{
+	/* Voltage read but not frequency → passes check 3 (at least one read) */
+	struct meter_readings r;
+	memset(&r, 0, sizeof(r));
+	r.voltage_r = 120.0;
+	r.valid = true;
+	r.read_target = 2;
+	r.field_mask = (1u << 0) | (1u << 1);  /* voltage_r + current_r */
+	/* Frequency not read (bit 25 not set) → freq range check skipped */
 	ASSERT_TRUE(readings_sanity_check(&r));
 }
 
@@ -608,18 +722,27 @@ void run_dlms_logic_tests(void)
 	RUN_TEST(test_obis_frequency);
 	RUN_TEST(test_obis_active_energy);
 
-	/* Zero-value prevention (v0.16.0) */
+	/* Read Validation & Field Mask (v0.17.0) */
 	RUN_TEST(test_last_good_cache_initially_invalid);
-	RUN_TEST(test_last_good_fills_failed_reads);
+	RUN_TEST(test_failed_reads_stay_zero);
 	RUN_TEST(test_first_poll_zeros_without_last_good);
-	RUN_TEST(test_last_good_updated_after_valid_read);
+	RUN_TEST(test_last_good_updated_per_field);
 	RUN_TEST(test_last_good_not_updated_on_invalid_read);
 
-	/* Sanity check */
+	/* Field mask */
+	RUN_TEST(test_field_mask_initially_zero);
+	RUN_TEST(test_field_mask_bit_for_each_obis);
+	RUN_TEST(test_min_read_percent_threshold);
+	RUN_TEST(test_valid_requires_min_coverage);
+
+	/* Sanity check (v0.17.0: range + coverage) */
 	RUN_TEST(test_sanity_check_rejects_all_zeros);
 	RUN_TEST(test_sanity_check_accepts_valid_readings);
 	RUN_TEST(test_sanity_check_accepts_zero_current);
-	RUN_TEST(test_sanity_check_voltage_only);
+	RUN_TEST(test_sanity_check_rejects_voltage_out_of_range);
+	RUN_TEST(test_sanity_check_rejects_frequency_out_of_range);
+	RUN_TEST(test_sanity_check_requires_field_coverage);
+	RUN_TEST(test_sanity_check_voltage_only_no_frequency);
 
 	/* THRESH_CHECK boundary tests */
 	RUN_TEST(test_thresh_check_no_notify_within_threshold);
