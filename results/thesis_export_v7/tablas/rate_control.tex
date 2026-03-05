@@ -1,0 +1,21 @@
+% rate_control.tex — Control de frecuencia pmin/pmax (v0.18.0)
+\begin{table}[htbp]
+\centering
+\caption{Control de frecuencia de notificaciones --- enfoque LwM2M estándar}
+\label{tab:rate-control}
+\begin{tabular}{@{}p{2.5cm}p{11cm}@{}}
+\toprule
+\textbf{Elemento} & \textbf{Descripción} \\
+\midrule
+\textbf{Firmware} (cliente) & Cada 15\,s: lee medidor vía DLMS/RS-485, ejecuta \texttt{PUSH\_FIELD} para cada campo leído $\rightarrow$ \texttt{lwm2m\_set\_f64()} + \texttt{lwm2m\_notify\_observer()} \\
+\addlinespace
+\textbf{Observe engine} (Zephyr LwM2M stack) & Evalúa atributos \texttt{pmin}/\texttt{pmax} antes de emitir CoAP notify. Si $t < \text{pmin}$: suprime. Si $t > \text{pmax}$: fuerza. \\
+\addlinespace
+\textbf{Servidor} (TB Edge) & Configura \texttt{pmin}/\texttt{pmax} por recurso vía perfil de dispositivo. Ajustable desde dashboard sin reflashear. \\
+\addlinespace
+\textbf{Ventaja} & El operador controla el rate desde la interfaz web. No requiere recompilación del firmware para cambiar frecuencia de reporte. \\
+\addlinespace
+\textbf{Radio} & RSSI/LQI en Object~4, intervalo separado de 60\,s. Notificación incondicional: el motor observe aplica \texttt{pmin}/\texttt{pmax}. \\
+\bottomrule
+\end{tabular}
+\end{table}

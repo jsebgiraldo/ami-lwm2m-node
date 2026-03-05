@@ -1,0 +1,20 @@
+% constants.tex — Constantes de configuración del firmware (v0.18.0)
+\begin{table}[htbp]
+\centering
+\caption{Constantes de configuración del firmware}
+\label{tab:constants}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Constante} & \textbf{Valor} & \textbf{Archivo} & \textbf{Descripción} \\
+\midrule
+\texttt{MIN\_READ\_PERCENT}       & 50         & \texttt{dlms\_meter.c} & \% mínimo de OBIS para lectura válida \\
+\texttt{VOLTAGE\_MIN}             & 50.0\,V    & \texttt{dlms\_meter.c} & Límite inferior tensión \\
+\texttt{VOLTAGE\_MAX}             & 500.0\,V   & \texttt{dlms\_meter.c} & Límite superior tensión \\
+\texttt{FREQ\_MIN}                & 40.0\,Hz   & \texttt{dlms\_meter.c} & Límite inferior frecuencia \\
+\texttt{FREQ\_MAX}                & 70.0\,Hz   & \texttt{dlms\_meter.c} & Límite superior frecuencia \\
+\texttt{MAX\_CONSEC\_FAILURES}    & 5          & \texttt{main.c}        & Fallos antes de log crítico \\
+\texttt{CONN\_UPDATE\_INTERVAL\_S}& 60\,s      & \texttt{main.c}        & Intervalo métricas radio \\
+\texttt{dlms\_poll\_interval\_s}  & 15\,s      & \texttt{main.c}        & Intervalo lectura DLMS medidor \\
+\bottomrule
+\end{tabular}
+\end{table}

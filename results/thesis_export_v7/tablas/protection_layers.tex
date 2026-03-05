@@ -1,0 +1,21 @@
+% protection_layers.tex — Arquitectura defensiva 5 capas (v0.18.0)
+\begin{table}[htbp]
+\centering
+\caption{Arquitectura de protección de datos --- 5 capas}
+\label{tab:protection-layers}
+\begin{tabular}{@{}clp{8cm}@{}}
+\toprule
+\textbf{Capa} & \textbf{Componente} & \textbf{Protección} \\
+\midrule
+L1 & \texttt{meter\_read\_all()} & \texttt{memset(0)} inicial + \texttt{field\_mask} por OBIS individual. Campos fallidos permanecen en 0 con bit OFF. \\
+\addlinespace
+L2 & \texttt{MIN\_READ\_PERCENT} & Si cobertura de lectura $<50\%$ del objetivo, \texttt{valid = false} y se descarta toda la lectura. \\
+\addlinespace
+L3 & \texttt{readings\_sanity\_check()} & Rangos físicos: $V \in [50, 500]$\,V, $f \in [40, 70]$\,Hz. Requiere al menos tensión o frecuencia presente. \\
+\addlinespace
+L4 & \texttt{PUSH\_FIELD(bit\_idx)} & Omite campos cuyo bit no está activo en \texttt{field\_mask}. Solo datos realmente leídos llegan al servidor. \\
+\addlinespace
+L5 & \texttt{consecutive\_meter\_failures} & Log crítico tras 5 fallos consecutivos de comunicación RS-485/DLMS. \\
+\bottomrule
+\end{tabular}
+\end{table}
