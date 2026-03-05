@@ -678,6 +678,124 @@ void test_push_field_all_27_bits(void)
 	ASSERT_TRUE((r.field_mask & (1u << 27)) == 0);
 }
 
+/* ==== v0.19.0: OBIS Retry & Diagnostics ==== */
+
+void test_retry_constants(void)
+{
+	/* Retry config must be reasonable */
+	ASSERT_TRUE(OBIS_READ_MAX_RETRIES >= 1);
+	ASSERT_TRUE(OBIS_READ_MAX_RETRIES <= 5);
+	ASSERT_TRUE(OBIS_RETRY_DELAY_MS >= 50);
+	ASSERT_TRUE(OBIS_RETRY_DELAY_MS <= 500);
+	ASSERT_TRUE(DIAG_LOG_INTERVAL >= 5);
+}
+
+void test_obis_diag_struct_size(void)
+{
+	/* Must have one diag entry per OBIS table entry */
+	ASSERT_EQ((int)ARRAY_SIZE(obis_diag), (int)OBIS_TABLE_SIZE);
+}
+
+void test_obis_diag_initially_zero(void)
+{
+	/* After memset, all diagnostic counters should be zero */
+	memset(obis_diag, 0, sizeof(obis_diag));
+	for (size_t i = 0; i < OBIS_TABLE_SIZE; i++) {
+		ASSERT_EQ(0, (int)obis_diag[i].success);
+		ASSERT_EQ(0, (int)obis_diag[i].fail);
+		ASSERT_EQ(0, (int)obis_diag[i].retries);
+		ASSERT_EQ(0, (int)obis_diag[i].skip);
+		ASSERT_EQ(0, (int)obis_diag[i].total_ms);
+	}
+}
+
+void test_obis_diag_counters_writable(void)
+{
+	/* Simulate a few polls worth of diagnostics */
+	memset(obis_diag, 0, sizeof(obis_diag));
+
+	obis_diag[0].success = 18;   /* voltage_r: often fails */
+	obis_diag[0].fail = 2;
+	obis_diag[0].retries = 4;    /* 2 retries per failure */
+	obis_diag[2].success = 20;   /* active_power_r: always succeeds */
+	obis_diag[2].fail = 0;
+
+	ASSERT_EQ(18, (int)obis_diag[0].success);
+	ASSERT_EQ(2,  (int)obis_diag[0].fail);
+	ASSERT_EQ(4,  (int)obis_diag[0].retries);
+	ASSERT_EQ(20, (int)obis_diag[2].success);
+	ASSERT_EQ(0,  (int)obis_diag[2].fail);
+
+	/* Success rate calculation */
+	uint32_t total = obis_diag[0].success + obis_diag[0].fail;
+	int pct = total > 0 ? (int)(obis_diag[0].success * 100 / total) : 0;
+	ASSERT_EQ(90, pct);  /* 18/20 = 90% */
+}
+
+void test_poll_duration_tracking(void)
+{
+	/* Verify poll duration tracking variables */
+	poll_count = 0;
+	last_poll_duration_ms = 0;
+	poll_duration_sum_ms = 0;
+
+	/* Simulate 3 polls */
+	poll_count = 3;
+	poll_duration_sum_ms = 5000 + 6000 + 5500;  /* 16500 ms total */
+	last_poll_duration_ms = 5500;
+
+	int64_t avg = meter_get_avg_poll_duration_ms();
+	ASSERT_EQ(5500, (int)avg);  /* 16500/3 = 5500 */
+	ASSERT_EQ(5500, (int)meter_get_poll_duration_ms());
+	ASSERT_EQ(3, (int)meter_get_poll_count());
+
+	/* Cleanup */
+	poll_count = 0;
+	last_poll_duration_ms = 0;
+	poll_duration_sum_ms = 0;
+}
+
+void test_obis_diag_api_bounds(void)
+{
+	/* meter_get_obis_diag should handle out-of-bounds gracefully */
+	uint32_t s = 99, f = 99, r = 99, sk = 99;
+	meter_get_obis_diag(-1, &s, &f, &r, &sk);
+	ASSERT_EQ(0, (int)s);
+	ASSERT_EQ(0, (int)f);
+
+	meter_get_obis_diag(999, &s, &f, &r, &sk);
+	ASSERT_EQ(0, (int)s);
+
+	/* NULL pointers should not crash */
+	meter_get_obis_diag(0, NULL, NULL, NULL, NULL);
+}
+
+void test_obis_diag_api_valid_index(void)
+{
+	memset(obis_diag, 0, sizeof(obis_diag));
+	obis_diag[0].success = 42;
+	obis_diag[0].fail = 3;
+	obis_diag[0].retries = 5;
+	obis_diag[0].skip = 0;
+
+	uint32_t s, f, r, sk;
+	meter_get_obis_diag(0, &s, &f, &r, &sk);
+	ASSERT_EQ(42, (int)s);
+	ASSERT_EQ(3,  (int)f);
+	ASSERT_EQ(5,  (int)r);
+	ASSERT_EQ(0,  (int)sk);
+
+	/* Cleanup */
+	memset(obis_diag, 0, sizeof(obis_diag));
+}
+
+void test_avg_poll_duration_zero_polls(void)
+{
+	poll_count = 0;
+	poll_duration_sum_ms = 0;
+	ASSERT_EQ(0, (int)meter_get_avg_poll_duration_ms());
+}
+
 /* ==== Test Suite Runner ==== */
 
 void run_dlms_logic_tests(void)
@@ -750,6 +868,16 @@ void run_dlms_logic_tests(void)
 	RUN_TEST(test_push_field_skips_when_bit_not_set);
 	RUN_TEST(test_push_field_pushes_when_bit_set);
 	RUN_TEST(test_push_field_all_27_bits);
+
+	/* OBIS retry & diagnostics (v0.19.0) */
+	RUN_TEST(test_retry_constants);
+	RUN_TEST(test_obis_diag_struct_size);
+	RUN_TEST(test_obis_diag_initially_zero);
+	RUN_TEST(test_obis_diag_counters_writable);
+	RUN_TEST(test_poll_duration_tracking);
+	RUN_TEST(test_obis_diag_api_bounds);
+	RUN_TEST(test_obis_diag_api_valid_index);
+	RUN_TEST(test_avg_poll_duration_zero_polls);
 
 	TEST_SUITE_END("DLMS Logic");
 }

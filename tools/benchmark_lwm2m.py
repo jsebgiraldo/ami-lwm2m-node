@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
 """
-benchmark_lwm2m.py — LwM2M Observe Interval Benchmark Suite
-============================================================
+benchmark_lwm2m.py — LwM2M Observe Interval Benchmark Suite  (v2)
+==================================================================
 Thesis: Tesis_jsgiraldod_2026_rev_final
 
 Measures network and telemetry performance at different LwM2M observe
 intervals (pmin/pmax) over IEEE 802.15.4 Thread mesh.
 
-Test Scenarios:
-  - Baseline  : Grupo1 pmin=15/pmax=30, Grupo2 pmin=60/pmax=300
-  - Aggressive: ALL resources pmin=1  / pmax=1
-  - Medium    : ALL resources pmin=5  / pmax=5
+v2 Benchmark Design (T_stable-based):
+  All scenarios use pmin = pmax = k × T_stable, where T_stable is the
+  DLMS poll interval (the minimum meaningful notification period).
+  Using pmin < T_poll is pointless because the meter cannot provide
+  new data faster than it is polled.
 
-Note: Relaxed (10s) scenario removed — pmax=10 < DLMS_poll=15s causes
-observation expiry before the first threshold notification.
+  Scenarios:
+    - 1×T_stable  : pmin=pmax=T_stable  (max useful rate)
+    - 2×T_stable  : pmin=pmax=2*T_stable
+    - 4×T_stable  : pmin=pmax=4*T_stable
+    - 5×T_stable  : pmin=pmax=5*T_stable
+
+  T_stable defaults to DLMS_POLL_INTERVAL (15s) but can be overridden
+  via --t-stable to match the actual measured poll cycle.
 
 For each scenario the script:
   1. Reconfigures the TB Edge device profile via REST API
@@ -35,11 +42,12 @@ Output:
   results/benchmark/ — CSV per scenario + summary JSON + thesis tables
 
 Usage:
-  python benchmark_lwm2m.py                   # Full run (all scenarios)
-  python benchmark_lwm2m.py --scenario 1s     # Single scenario
-  python benchmark_lwm2m.py --dry-run         # Validate without changing profile
-  python benchmark_lwm2m.py --collect-only    # Collect current config (no profile change)
-  python benchmark_lwm2m.py --duration 300    # Collection window per scenario (seconds)
+  python benchmark_lwm2m.py                    # Full run (all 4 scenarios)
+  python benchmark_lwm2m.py --scenario 1xT     # Single scenario
+  python benchmark_lwm2m.py --t-stable 20      # Override T_stable (seconds)
+  python benchmark_lwm2m.py --dry-run           # Validate without changing profile
+  python benchmark_lwm2m.py --collect-only      # Collect current config (no profile change)
+  python benchmark_lwm2m.py --duration 300      # Collection window per scenario (seconds)
 """
 
 import argparse
@@ -145,42 +153,47 @@ TELEMETRY_KEYS = [
 #   CoAP header (4) + token (8) + options (~20) + CBOR payload (~30)
 COAP_NOTIFY_OVERHEAD_BYTES = 62
 
-# ── Test Scenarios ──────────────────────────────────────────────────
+# ── T_stable-based Scenarios (v2) ───────────────────────────────────
+#
+# T_stable = DLMS poll interval. This is the minimum meaningful observe
+# period because the meter cannot provide new data faster than it is polled.
+# All scenarios use pmin = pmax = k × T_stable (uniform for all resources).
+#
+# Why not pmin < T_poll?  The benchmark v1 showed that pmin=1/pmax=1
+# generated ~40% duplicate messages (stddev=0) because pmax forced re-sends
+# of stale values.  pmin=5/pmax=5 produced fewer messages than baseline
+# because the firmware only updates values every 15s.  Both waste resources.
 
-SCENARIOS = {
-    "baseline": {
-        "label": "Baseline (Produccion)",
-        "description": "Grupo1 pmin=15/pmax=30, Grupo2 pmin=60/pmax=300",
-        "grupo1": {"pmin": 15, "pmax": 30},
-        "grupo2": {"pmin": 60, "pmax": 300},
-        "radio":  {"pmin": 60, "pmax": 300},
-        "fw":     {"pmin": 60, "pmax": 300},
-        "uniform": False,
-        "notify_interval_ms": 0,      # Disabled — rely on DLMS poll (~30s)
-    },
-    "1s": {
-        "label": "Agresivo (1s)",
-        "description": "Todos los recursos pmin=1, pmax=1",
-        "uniform_pmin": 1,
-        "uniform_pmax": 1,
-        "uniform": True,
-        "notify_interval_ms": 1000,
-    },
-    "5s": {
-        "label": "Medio (5s)",
-        "description": "Todos los recursos pmin=5, pmax=5",
-        "uniform_pmin": 5,
-        "uniform_pmax": 5,
-        "uniform": True,
-        "notify_interval_ms": 5000,
-    },
-    # NOTE: Relaxed (10s) scenario removed — pmax=10 < DLMS_poll_interval=15s
-    # causes LwM2M observations to expire before the first threshold notification.
-    # See thesis section on layer bottleneck analysis.
-}
+T_STABLE_DEFAULT = DLMS_POLL_INTERVAL  # seconds, can be overridden by --t-stable
 
-# Default scenario execution order
-SCENARIO_ORDER = ["baseline", "1s", "5s"]
+def build_scenarios(t_stable):
+    """Build T_stable-based scenarios dynamically.
+
+    Returns (scenarios_dict, scenario_order_list).
+    """
+    multipliers = [1, 2, 4, 5]
+    scenarios = {}
+    order = []
+
+    for k in multipliers:
+        period = k * t_stable
+        name = f"{k}xT"
+        scenarios[name] = {
+            "label": f"{k}×T_stable ({period}s)",
+            "description": f"Todos los recursos pmin={period}, pmax={period} (T_stable={t_stable}s)",
+            "uniform_pmin": period,
+            "uniform_pmax": period,
+            "uniform": True,
+            "notify_interval_ms": 0,  # v0.18.0+: firmware always pushes, engine controls rate
+            "t_multiplier": k,
+            "t_stable": t_stable,
+        }
+        order.append(name)
+
+    return scenarios, order
+
+# Build default scenarios (can be rebuilt later with --t-stable override)
+SCENARIOS, SCENARIO_ORDER = build_scenarios(T_STABLE_DEFAULT)
 
 # ═══════════════════════════════════════════════════════════════════
 # TB Edge REST API Helpers
@@ -268,7 +281,7 @@ def get_latest_telemetry(token, keys=None):
 def configure_profile_for_scenario(token, scenario):
     """Change profile observe pmin/pmax according to scenario config.
 
-    Returns the modified profile for later restoration.
+    v2: All scenarios are uniform (pmin=pmax=k*T_stable for all resources).
     """
     profile = get_profile(token)
     tc = profile.get("profileData", {}).get("transportConfiguration", {})
@@ -279,20 +292,11 @@ def configure_profile_for_scenario(token, scenario):
 
     attr_lwm2m = {}
 
-    if scenario["uniform"]:
-        pmin = scenario["uniform_pmin"]
-        pmax = scenario["uniform_pmax"]
-        for path in all_observe:
-            attr_lwm2m[path] = {"pmin": pmin, "pmax": pmax}
-    else:
-        for path in GRUPO1_PATHS:
-            attr_lwm2m[path] = dict(scenario["grupo1"])
-        for path in GRUPO2_PATHS:
-            attr_lwm2m[path] = dict(scenario["grupo2"])
-        for path in RADIO_PATHS:
-            attr_lwm2m[path] = dict(scenario["radio"])
-        for path in FW_PATHS:
-            attr_lwm2m[path] = dict(scenario["fw"])
+    # v2: all scenarios use uniform pmin/pmax
+    pmin = scenario["uniform_pmin"]
+    pmax = scenario["uniform_pmax"]
+    for path in all_observe:
+        attr_lwm2m[path] = {"pmin": pmin, "pmax": pmax}
 
     observe_attr["keyName"] = KEY_NAMES
     observe_attr["observe"] = all_observe
@@ -309,10 +313,10 @@ def configure_profile_for_scenario(token, scenario):
 
 
 def restore_baseline(token):
-    """Restore the production baseline profile."""
-    print("\n  Restaurando perfil baseline...")
-    configure_profile_for_scenario(token, SCENARIOS["baseline"])
-    print("  Perfil restaurado a produccion.")
+    """Restore the conservative profile (5×T_stable) after benchmarking."""
+    print("\n  Restaurando perfil a 5×T_stable (produccion)...")
+    configure_profile_for_scenario(token, SCENARIOS[SCENARIO_ORDER[-1]])
+    print("  Perfil restaurado.")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -340,24 +344,8 @@ def compute_metrics(telemetry_data, duration_sec, scenario_cfg):
         n = len(samples)
         total_messages += n
 
-        # Determine expected pmax for this key
-        if scenario_cfg["uniform"]:
-            pmax = scenario_cfg["uniform_pmax"]
-        else:
-            # Map key back to path to find its group
-            path = None
-            for p, k in KEY_NAMES.items():
-                if k == key:
-                    path = p
-                    break
-            if path in GRUPO1_PATHS:
-                pmax = scenario_cfg["grupo1"]["pmax"]
-            elif path in GRUPO2_PATHS:
-                pmax = scenario_cfg["grupo2"]["pmax"]
-            elif path in RADIO_PATHS:
-                pmax = scenario_cfg["radio"]["pmax"]
-            else:
-                pmax = scenario_cfg.get("fw", {}).get("pmax", 300)
+        # Determine expected pmax for this key (v2: always uniform)
+        pmax = scenario_cfg["uniform_pmax"]
 
         expected = max(1, int(duration_sec / pmax))
         total_expected += expected
@@ -648,12 +636,13 @@ def save_summary_json(all_results, output_dir):
     """Save the complete benchmark summary as JSON."""
     fname = os.path.join(output_dir, "benchmark_summary.json")
     summary = {
-        "benchmark": "LwM2M Observe Interval Performance",
+        "benchmark": "LwM2M Observe Interval Performance (T_stable-based v2)",
         "thesis": "Tesis_jsgiraldod_2026_rev_final",
         "device": DEVICE_NAME,
         "device_id": DEVICE_ID,
         "profile": PROFILE_ID,
         "dlms_poll_interval_s": DLMS_POLL_INTERVAL,
+        "t_stable_s": SCENARIOS[SCENARIO_ORDER[0]].get("t_stable", DLMS_POLL_INTERVAL),
         "generated_at": datetime.now(tz=timezone.utc).isoformat(),
         "scenarios": {},
     }
@@ -847,17 +836,15 @@ def run_scenario(token, scenario_name, duration_sec, warmup_sec,
             return result
 
         # Set firmware-side notify interval via serial
-        notify_ms = scenario.get("notify_interval_ms", 0)
+        # v0.18.0+: firmware always pushes, LwM2M engine handles rate.
+        # No notify_interval needed. Just force re-registration.
         if serial_port:
-            print(f"\n  [1b/7] Configurando firmware notify_interval={notify_ms}ms...")
-            set_firmware_notify_interval(notify_ms, serial_port)
-
-            print(f"\n  [1c/7] Forzando LwM2M re-registration...")
+            print(f"\n  [1b/7] Forzando LwM2M re-registration...")
             force_lwm2m_update(serial_port)
             print(f"        Esperando 15s para que observes se re-establezcan...")
             time.sleep(15)
         else:
-            print(f"        AVISO: Sin puerto serial — no se puede configurar firmware")
+            print(f"        AVISO: Sin puerto serial — no se puede forzar re-registration")
     elif dry_run:
         print(f"\n  [1/7] DRY-RUN: Se configuraria {scenario['label']} (sin cambios)")
     else:
@@ -925,26 +912,28 @@ def run_scenario(token, scenario_name, duration_sec, warmup_sec,
         print(f"        Telemetria activa: {keys_with_data}/{len(TELEMETRY_KEYS)} llaves")
         result["metrics"] = {"per_key": {}, "aggregate": {"note": "dry-run snapshot"}}
 
-    # Step 5: Quick rate verification (for non-baseline scenarios)
-    if not dry_run and scenario_name != "baseline":
-        print(f"\n  [5/7] Verificacion de tasa de recepcion...")
-        # Check last 30s to confirm observe interval matches
+    # Step 5: Quick rate verification
+    if not dry_run:
+        pmax_s = scenario.get("uniform_pmax", 15)
+        verify_window = max(30, pmax_s * 3)  # At least 3× pmax
+        print(f"\n  [5/7] Verificacion de tasa (ultimos {verify_window}s)...")
         verify_ts_end = int(time.time() * 1000)
-        verify_ts_start = verify_ts_end - 30000
+        verify_ts_start = verify_ts_end - (verify_window * 1000)
         try:
-            verify_data = get_telemetry(token, verify_ts_start, verify_ts_end, keys=["voltage"])
-            v_samples = verify_data.get("voltage", [])
+            verify_data = get_telemetry(token, verify_ts_start, verify_ts_end,
+                                        keys=["totalActivePower"])
+            v_samples = verify_data.get("totalActivePower", [])
             if len(v_samples) >= 2:
                 ts_list = sorted([s["ts"] for s in v_samples])
                 deltas = [(ts_list[i+1] - ts_list[i])/1000 for i in range(len(ts_list)-1)]
                 avg_iat = sum(deltas)/len(deltas)
-                print(f"        voltage: {len(v_samples)} muestras en 30s, IAT avg={avg_iat:.1f}s")
+                print(f"        totalActivePower: {len(v_samples)} muestras, IAT avg={avg_iat:.1f}s (esperado ~{pmax_s}s)")
             else:
-                print(f"        voltage: {len(v_samples)} muestras en 30s")
+                print(f"        totalActivePower: {len(v_samples)} muestras en {verify_window}s")
         except Exception as e:
             print(f"        Error verificando tasa: {e}")
     else:
-        print(f"\n  [5/7] Verificacion de tasa: {'omitido (baseline/dry-run)'}")
+        print(f"\n  [5/7] Verificacion de tasa: omitido (dry-run)")
 
     # Step 6: OT diagnostics AFTER
     if serial_port and not dry_run:
@@ -953,12 +942,8 @@ def run_scenario(token, scenario_name, duration_sec, warmup_sec,
     else:
         print(f"\n  [6/7] Diagnosticos OT: {'omitido (dry-run)' if dry_run else 'sin puerto serial'}")
 
-    # Step 7: Restore baseline notify interval for next scenario
-    if serial_port and not dry_run and scenario_name != "baseline":
-        print(f"\n  [7/7] Restaurando notify_interval=0 (pre-next scenario)...")
-        set_firmware_notify_interval(0, serial_port)
-    else:
-        print(f"\n  [7/7] Restore notify: {'n/a' if scenario_name == 'baseline' else 'omitido'}")
+    # Step 7: Done
+    print(f"\n  [7/7] Escenario {scenario_name} completo.")
     return result
 
 
@@ -988,15 +973,14 @@ def _override_edge_url(url):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="LwM2M Observe Interval Benchmark Suite",
+        description="LwM2M Observe Interval Benchmark Suite (T_stable-based v2)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument(
         "--scenario", "-s",
-        choices=list(SCENARIOS.keys()) + ["all"],
         default="all",
-        help="Scenario to run (default: all)",
+        help="Scenario to run: 1xT, 2xT, 4xT, 5xT, or 'all' (default: all)",
     )
     parser.add_argument(
         "--duration", "-d",
@@ -1033,11 +1017,31 @@ def main():
         default=None,
         help=f"TB Edge URL (default: {EDGE_URL})",
     )
+    parser.add_argument(
+        "--t-stable",
+        type=int, default=None,
+        help=f"T_stable in seconds — the DLMS poll interval "
+             f"(default: {DLMS_POLL_INTERVAL}). Scenarios become "
+             f"1×T, 2×T, 4×T, 5×T.",
+    )
 
     args = parser.parse_args()
 
     if args.edge_url:
         _override_edge_url(args.edge_url)
+
+    # Rebuild scenarios if --t-stable is specified
+    global SCENARIOS, SCENARIO_ORDER
+    t_stable = args.t_stable if args.t_stable else T_STABLE_DEFAULT
+    if args.t_stable:
+        SCENARIOS, SCENARIO_ORDER = build_scenarios(args.t_stable)
+        print(f"  T_stable overridden to {args.t_stable}s")
+        print(f"  Scenarios: {', '.join(SCENARIO_ORDER)}")
+
+    # Validate --scenario
+    if args.scenario != "all" and args.scenario not in SCENARIOS:
+        parser.error(f"Unknown scenario '{args.scenario}'. "
+                     f"Choose from: {', '.join(SCENARIOS.keys())}, all")
 
     # Determine output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1063,7 +1067,7 @@ def main():
 
     print()
     print("=" * 60)
-    print("  LwM2M OBSERVE BENCHMARK SUITE")
+    print("  LwM2M OBSERVE BENCHMARK SUITE (v2 — T_stable-based)")
     print("  Tesis_jsgiraldod_2026_rev_final")
     print("=" * 60)
     print(f"  Device     : {DEVICE_NAME}")
@@ -1071,7 +1075,11 @@ def main():
     print(f"  Profile    : {PROFILE_ID}")
     print(f"  Resources  : {n_resources} telemetry keys")
     print(f"  DLMS poll  : {DLMS_POLL_INTERVAL}s")
+    print(f"  T_stable   : {t_stable}s")
     print(f"  Scenarios  : {', '.join(scenarios_to_run)}")
+    for name in scenarios_to_run:
+        s = SCENARIOS[name]
+        print(f"    {name}: pmin={s['uniform_pmin']}s pmax={s['uniform_pmax']}s")
     print(f"  Duration   : {args.duration}s per scenario")
     print(f"  Warmup     : {args.warmup}s per scenario")
     print(f"  Est. total : {total_time_est / 60:.0f} min")
@@ -1123,14 +1131,9 @@ def main():
             print(f"\n  Pausa de {pause}s antes del siguiente escenario...")
             time.sleep(pause)
 
-    # Restore baseline after non-baseline tests
+    # Restore profile to relaxed 5×T_stable after benchmark
     if not args.dry_run and not args.collect_only:
-        if scenarios_to_run != ["baseline"]:
-            restore_baseline(token)
-            # Also restore firmware notify interval to disabled
-            if args.serial_port:
-                print("  Restaurando firmware notify_interval=0...")
-                set_firmware_notify_interval(0, args.serial_port)
+        restore_baseline(token)
 
     # Generate reports
     print(f"\n{'=' * 60}")

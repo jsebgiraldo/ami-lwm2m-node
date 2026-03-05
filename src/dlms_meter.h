@@ -159,4 +159,40 @@ void meter_push_to_lwm2m(const struct meter_readings *readings);
  */
 enum meter_state meter_get_state(void);
 
+/**
+ * @brief Get duration of the last meter_poll() cycle in ms
+ *
+ * This is T_cycle: the total time for connect + read_all + disconnect.
+ * Use to determine T_stable for benchmark design.
+ *
+ * @return Duration in milliseconds, or 0 if no poll has completed
+ */
+int64_t meter_get_poll_duration_ms(void);
+
+/**
+ * @brief Get running average of all poll cycle durations in ms
+ *
+ * @return Average duration in milliseconds
+ */
+int64_t meter_get_avg_poll_duration_ms(void);
+
+/**
+ * @brief Get total number of completed poll cycles
+ *
+ * @return Poll count
+ */
+uint32_t meter_get_poll_count(void);
+
+/**
+ * @brief Get per-OBIS diagnostic counters
+ *
+ * @param index     OBIS table index (0 to OBIS_TABLE_SIZE-1)
+ * @param success   Output: cumulative successful reads (NULL to skip)
+ * @param fail      Output: cumulative failed reads (NULL to skip)
+ * @param retries   Output: cumulative retry attempts (NULL to skip)
+ * @param skip      Output: cumulative skip count (NULL to skip)
+ */
+void meter_get_obis_diag(int index, uint32_t *success, uint32_t *fail,
+			 uint32_t *retries, uint32_t *skip);
+
 #endif /* DLMS_METER_H_ */

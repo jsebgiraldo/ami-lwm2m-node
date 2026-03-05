@@ -169,6 +169,29 @@ static struct meter_readings last_good;
 static bool last_good_valid;
 
 /*
+ * v0.19.0: Per-OBIS diagnostic counters — cumulative across all polls.
+ * Tracks success/fail/skip counts and per-read timing to identify
+ * problematic OBIS codes and determine T_cycle accurately.
+ */
+#define OBIS_READ_MAX_RETRIES  2   /* Retries per OBIS read on transient error */
+#define OBIS_RETRY_DELAY_MS  100   /* Delay between retries */
+#define DIAG_LOG_INTERVAL     10   /* Log per-OBIS stats every N polls */
+
+struct obis_diag {
+	uint32_t success;    /* Cumulative successful reads */
+	uint32_t fail;       /* Cumulative failed reads (after all retries) */
+	uint32_t retries;    /* Cumulative retry attempts (not counting first try) */
+	uint32_t skip;       /* Cumulative times skipped (auto-skip or single-phase) */
+	int64_t  total_ms;   /* Cumulative read time (ms) for timing analysis */
+};
+
+static struct obis_diag obis_diag[ARRAY_SIZE(obis_table)];
+static uint32_t poll_count;            /* Total polls executed */
+static int64_t  last_poll_duration_ms; /* Duration of last meter_poll() */
+static int64_t  poll_duration_sum_ms;  /* Sum of all poll durations */
+static int64_t  last_read_cycle_ms;    /* Duration of last meter_read_all() */
+
+/*
  * Runtime skip bitmap: OBIS codes that return "data access error" (e.g.,
  * Phase S/T voltage/current on a single-phase meter) are auto-skipped in
  * subsequent poll cycles to avoid wasting ~430 ms per unsupported register.
@@ -699,13 +722,48 @@ int meter_read_all(struct meter_readings *readings)
 
 	for (size_t i = 0; i < OBIS_TABLE_SIZE; i++) {
 		if (obis_skip[i]) {
+			obis_diag[i].skip++;
 			continue;
 		}
 
+		int64_t t_read = k_uptime_get();
 		struct cosem_get_result result;
-		int ret = read_obis_value(&obis_table[i], &result);
+		int ret = -1;
+		bool ok = false;
 
-		if (ret == 0 && result.success) {
+		/*
+		 * v0.19.0: Retry loop for transient failures (timeout,
+		 * protocol error). -EACCES is NOT retried — it means
+		 * the meter explicitly refuses the register.
+		 */
+		for (int attempt = 0; attempt <= OBIS_READ_MAX_RETRIES; attempt++) {
+			if (attempt > 0) {
+				obis_diag[i].retries++;
+				LOG_WRN("  %s: retry %d/%d after %dms",
+					obis_table[i].name, attempt,
+					OBIS_READ_MAX_RETRIES,
+					OBIS_RETRY_DELAY_MS);
+				k_sleep(K_MSEC(OBIS_RETRY_DELAY_MS));
+			}
+
+			memset(&result, 0, sizeof(result));
+			ret = read_obis_value(&obis_table[i], &result);
+
+			if (ret == 0 && result.success) {
+				ok = true;
+				break;
+			}
+
+			/* Don't retry access-denied — meter explicitly refuses */
+			if (ret == -EACCES) {
+				break;
+			}
+		}
+
+		int64_t read_ms = k_uptime_get() - t_read;
+		obis_diag[i].total_ms += read_ms;
+
+		if (ok) {
 			double val = value_to_double(&result, i);
 
 			/* Write value to the correct field in readings */
@@ -714,11 +772,16 @@ int meter_read_all(struct meter_readings *readings)
 			*target = val;
 			readings->read_count++;
 			readings->field_mask |= (1u << i);
+			obis_diag[i].success++;
 
-			LOG_DBG("  %s = %.3f", obis_table[i].name, val);
+			LOG_DBG("  %s = %.3f (%lldms)", obis_table[i].name,
+				val, read_ms);
 		} else {
-			LOG_WRN("  %s: read failed (%d)", obis_table[i].name, ret);
+			LOG_WRN("  %s: read failed (%d) after %d attempts (%lldms)",
+				obis_table[i].name, ret,
+				OBIS_READ_MAX_RETRIES + 1, read_ms);
 			readings->error_count++;
+			obis_diag[i].fail++;
 
 			/* Auto-skip OBIS codes that the meter refuses (error 4) */
 			if (ret == -EACCES) {
@@ -732,6 +795,7 @@ int meter_read_all(struct meter_readings *readings)
 	}
 
 	int64_t elapsed = k_uptime_get() - t_start;
+	last_read_cycle_ms = elapsed;
 	LOG_INF("Value reads completed in %lld ms", elapsed);
 
 	/* v0.17.0: Require minimum read coverage before considering valid.
@@ -761,6 +825,25 @@ int meter_read_all(struct meter_readings *readings)
 		last_good_valid = true;
 	}
 
+	/* v0.19.0: Log per-OBIS diagnostic summary every DIAG_LOG_INTERVAL polls */
+	if (poll_count > 0 && (poll_count % DIAG_LOG_INTERVAL) == 0) {
+		LOG_INF("=== OBIS Diagnostics after %u polls ===", poll_count);
+		for (size_t i = 0; i < OBIS_TABLE_SIZE; i++) {
+			if (obis_skip[i] && obis_diag[i].success == 0) {
+				continue;  /* Don't log permanently-skipped entries */
+			}
+			uint32_t total = obis_diag[i].success + obis_diag[i].fail;
+			int pct = total > 0 ? (int)(obis_diag[i].success * 100 / total) : 0;
+			int64_t avg_ms = total > 0 ? obis_diag[i].total_ms / (int64_t)total : 0;
+			LOG_INF("  [%2zu] %-20s ok=%u fail=%u retry=%u skip=%u "
+				"rate=%d%% avg=%lldms",
+				i, obis_table[i].name,
+				obis_diag[i].success, obis_diag[i].fail,
+				obis_diag[i].retries, obis_diag[i].skip,
+				pct, avg_ms);
+		}
+	}
+
 	LOG_INF("Meter read complete: %d/%d successful (%d skipped, mask=0x%08X)%s",
 		readings->read_count, read_target, skip_count,
 		readings->field_mask,
@@ -778,7 +861,8 @@ int meter_poll(struct meter_readings *readings)
 	}
 
 	int64_t poll_start = k_uptime_get();
-	LOG_INF("=== Meter poll cycle ===");
+	poll_count++;
+	LOG_INF("=== Meter poll cycle #%u ===", poll_count);
 
 	/* Connect */
 	ret = meter_connect();
@@ -798,7 +882,12 @@ int meter_poll(struct meter_readings *readings)
 	meter_disconnect();
 
 	int64_t poll_ms = k_uptime_get() - poll_start;
-	LOG_INF("=== Meter poll complete: %lld ms ===", poll_ms);
+	last_poll_duration_ms = poll_ms;
+	poll_duration_sum_ms += poll_ms;
+
+	int64_t avg_poll_ms = poll_count > 0 ? poll_duration_sum_ms / (int64_t)poll_count : 0;
+	LOG_INF("=== Meter poll complete: %lld ms (avg=%lld ms, T_read=%lld ms) ===",
+		poll_ms, avg_poll_ms, last_read_cycle_ms);
 
 	return ret;
 }
@@ -965,4 +1054,35 @@ void meter_push_to_lwm2m(const struct meter_readings *readings)
 enum meter_state meter_get_state(void)
 {
 	return state;
+}
+
+int64_t meter_get_poll_duration_ms(void)
+{
+	return last_poll_duration_ms;
+}
+
+int64_t meter_get_avg_poll_duration_ms(void)
+{
+	return poll_count > 0 ? poll_duration_sum_ms / (int64_t)poll_count : 0;
+}
+
+uint32_t meter_get_poll_count(void)
+{
+	return poll_count;
+}
+
+void meter_get_obis_diag(int index, uint32_t *success, uint32_t *fail,
+			 uint32_t *retries, uint32_t *skip)
+{
+	if (index < 0 || (size_t)index >= OBIS_TABLE_SIZE) {
+		if (success) *success = 0;
+		if (fail) *fail = 0;
+		if (retries) *retries = 0;
+		if (skip) *skip = 0;
+		return;
+	}
+	if (success) *success = obis_diag[index].success;
+	if (fail)    *fail    = obis_diag[index].fail;
+	if (retries) *retries = obis_diag[index].retries;
+	if (skip)    *skip    = obis_diag[index].skip;
 }
