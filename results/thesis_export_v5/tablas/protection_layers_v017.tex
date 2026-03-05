@@ -1,0 +1,44 @@
+% Tabla: Arquitectura de protección multicapa — Firmware v0.17.0
+% Pipeline defensivo contra lecturas erróneas del medidor DLMS
+% Fecha: 2026-03-04
+
+\begin{table}[htbp]
+\centering
+\caption{Arquitectura de protección contra lecturas erróneas — v0.17.0}
+\label{tab:protection-layers-v017}
+\begin{tabular}{c l p{7.5cm}}
+\toprule
+\textbf{Capa} & \textbf{Componente} & \textbf{Descripción} \\
+\midrule
+L1 & \texttt{meter\_read\_all()}
+   & Inicia con \texttt{memset(0)}. Cada lectura OBIS exitosa
+     activa su bit en \texttt{field\_mask}. Campos fallidos
+     permanecen en cero. \\
+\addlinespace
+L2 & \texttt{MIN\_READ\_PERCENT}
+   & Si menos del 50\,\% de los códigos OBIS objetivo fueron
+     leídos, la lectura se marca \texttt{valid = false} y
+     \texttt{meter\_read\_all()} retorna \texttt{-EIO}. \\
+\addlinespace
+L3 & \texttt{readings\_sanity\_check()}
+   & Verifica rangos físicos: tensión $\in [50, 500]$\,V,
+     frecuencia $\in [40, 70]$\,Hz, presencia de V o f,
+     y cobertura $\geq 50$\,\% de \texttt{read\_target}. \\
+\addlinespace
+L4 & \texttt{THRESH\_CHECK(bit\_idx)}
+   & Antes de notificar cada campo al servidor LwM2M,
+     verifica que su bit esté activo en \texttt{field\_mask}.
+     Campos no leídos se omiten (\texttt{skipped++}). \\
+\addlinespace
+L5 & \texttt{last\_good} por campo
+   & Solo los campos con bit activo en \texttt{field\_mask}
+     actualizan su valor en la caché \texttt{last\_good}.
+     Campos fallidos conservan su último valor real. \\
+\addlinespace
+L6 & \texttt{consecutive\_meter\_failures}
+   & Contador en \texttt{main.c}: tras
+     \texttt{MAX\_CONSEC\_FAILURES = 5} fallos consecutivos,
+     emite log crítico. Se reinicia al primer éxito. \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -1,0 +1,30 @@
+% Tabla: Umbrales de notificación THRESH_CHECK — Firmware v0.17.0
+% Cada campo solo se notifica al servidor si el cambio excede el umbral
+% Y su bit está activo en field_mask (lectura real del medidor)
+% Fecha: 2026-03-04
+
+\begin{table}[htbp]
+\centering
+\caption{Umbrales de notificación \texttt{THRESH\_CHECK} — v0.17.0}
+\label{tab:thresholds-v017}
+\begin{tabular}{l c l c}
+\toprule
+\textbf{Tipo de magnitud} & \textbf{Umbral} & \textbf{Campos} & \textbf{Bits} \\
+\midrule
+Tensión (V)        & 1.0\,V    & \texttt{voltage\_\{r,s,t\}}         & 0, 6, 12 \\
+Corriente (A)      & 0.05\,A   & \texttt{current\_\{r,s,t\}}, neutral & 1, 7, 13, 26 \\
+Potencia (kW/kvar/kVA) & 0.01 & Activa, reactiva, aparente          & 2--4, 8--10, 14--16, 18--20 \\
+Factor de potencia & 0.01      & \texttt{power\_factor\_\{r,s,t\}}, total & 5, 11, 17, 21 \\
+Energía (kWh)      & 0.1       & Activa, reactiva, aparente          & 22--24 \\
+Frecuencia (Hz)    & 0.1\,Hz   & \texttt{frequency}                  & 25 \\
+\midrule
+\multicolumn{4}{l}{\texttt{MAX\_SILENT\_POLLS = 5} → fuerza re-notificación cada $\sim$75s de silencio} \\
+\bottomrule
+\end{tabular}
+
+\smallskip
+\footnotesize
+\textit{Nota:} En v0.17.0, \texttt{THRESH\_CHECK} verifica \texttt{field\_mask \& (1 $\ll$ bit\_idx)}
+antes de evaluar el umbral. Si el bit no está activo (campo no leído del medidor),
+el campo se omite sin notificar ni actualizar \texttt{last\_notified}.
+\end{table}

@@ -1,0 +1,24 @@
+% Tabla: Uso de memoria — Firmware v0.17.0 (ESP32-C6)
+% Build: west build -b xiao_esp32c6/esp32c6/hpcore ami-lwm2m-node --sysbuild
+% Fecha: 2026-03-04
+
+\begin{table}[htbp]
+\centering
+\caption{Uso de memoria del firmware v0.17.0 — ESP32-C6}
+\label{tab:memory-v017}
+\begin{tabular}{l r r r}
+\toprule
+\textbf{Región} & \textbf{Usado (B)} & \textbf{Disponible (B)} & \textbf{\% Usado} \\
+\midrule
+Flash (\texttt{FLASH})      & 644\,200  & 4\,194\,176 & 15.36\,\% \\
+RAM (\texttt{sram0\_0\_seg}) & 317\,248  & 488\,976    & 64.88\,\% \\
+IROM (\texttt{irom0\_0\_seg}) & 499\,124 & 4\,194\,304 & 11.90\,\% \\
+DROM (\texttt{drom0\_0\_seg}) & 54\,504  & 4\,194\,304 & 1.30\,\% \\
+\bottomrule
+\end{tabular}
+
+\smallskip
+\footnotesize
+\textit{Board:} \texttt{xiao\_esp32c6/esp32c6/hpcore} (RISC-V, Zephyr RTOS).
+Compilado con \texttt{west build --sysbuild}. Incluye MCUboot bootloader.
+\end{table}
