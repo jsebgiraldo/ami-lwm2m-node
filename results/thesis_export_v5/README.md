@@ -27,8 +27,21 @@ garantiza que **solo datos realmente leídos del medidor** lleguen al servidor.
 ```
 thesis_export_v5/
 ├── README.md
+├── generate_figures.py                # Generador figuras arquitectónicas (5 PNGs)
+├── generate_benchmark_figures.py      # Generador figuras benchmark (5 PNGs)
 ├── datos/
 │   └── test_results_v017.txt          # Salida completa 118/118 tests
+├── figuras/
+│   ├── fig_field_mask.png             # Diagrama campo field_mask 27 bits
+│   ├── fig_protection_layers.png      # Arquitectura 6 capas defensiva
+│   ├── fig_memory_comparison.png      # Flash/RAM comparación por versión
+│   ├── fig_validation_flow.png        # Flujo validación completo
+│   ├── fig_test_summary.png           # Resumen suites de tests
+│   ├── fig_benchmark_throughput.png   # Throughput comparativo 3 escenarios
+│   ├── fig_benchmark_iat.png          # IAT por recurso y escenario
+│   ├── fig_benchmark_timeline.png     # Timeline scatter telemetría
+│   ├── fig_benchmark_coap_rssi.png    # Overhead CoAP + RSSI/LQI
+│   └── fig_benchmark_completeness.png # Heatmap completitud por recurso
 └── tablas/
     ├── unit_tests_v017.tex            # Resumen tests (HDLC 29, COSEM 43, Logic 46)
     ├── new_tests_v017.tex             # Detalle de 10 tests nuevos/actualizados
@@ -36,7 +49,8 @@ thesis_export_v5/
     ├── field_mask_v017.tex            # Mapa de 27 bits OBIS
     ├── sanity_check_v017.tex          # Parámetros de validación de rangos
     ├── protection_layers_v017.tex     # Arquitectura defensiva 6 capas
-    └── thresholds_v017.tex            # Umbrales THRESH_CHECK con bit_idx
+    ├── thresholds_v017.tex            # Umbrales THRESH_CHECK con bit_idx
+    └── benchmark_scenarios.tex        # Tabla comparativa benchmark 3 escenarios
 ```
 
 ---
@@ -167,6 +181,44 @@ Tests nuevos en v0.17.0 (7 nuevos + 3 actualizados):
 
 ---
 
+## Benchmark LwM2M — Rendimiento de Transporte
+
+Benchmark ejecutado contra dispositivo real `ami-esp32c6-2434` conectado via Thread
+802.15.4 a ThingsBoard Edge v4.2.1. Tres escenarios con 300s de recolección + 90s de
+warmup por escenario. 16 llaves de telemetría, DLMS poll cada 15s.
+
+**Fecha:** 2026-03-04 20:23:50  
+**Datos fuente:** `results/benchmark/20260304_202350/`
+
+### Resultados Comparativos
+
+| Escenario | Mensajes | Throughput | IAT avg | CoAP | RSSI | LQI |
+|-----------|----------|-----------|---------|------|------|-----|
+| Baseline (pmin=15s) | 88 | 0.293 msgs/s | 32.11 s | 5.3 KB | -86.80 dBm | 60.40% |
+| Agresivo (pmin=1s) | 246 | 0.820 msgs/s | 10.56 s | 14.9 KB | -86.99 dBm | 52.77% |
+| Moderado (pmin=5s) | 81 | 0.270 msgs/s | 35.84 s | 4.9 KB | -86.25 dBm | 67.00% |
+
+### Análisis
+
+- **Agresivo (1s):** 2.8× más mensajes que baseline pero con IAT real de ~10.6s
+  (bottleneck en el poll DLMS de 15s). LQI baja a 52.8% por saturación del canal.
+- **Moderado (5s):** Similar al baseline — el intervalo de 5s queda dominado
+  por el ciclo DLMS de 15s, sin beneficio real sobre baseline.
+- **Baseline:** Mejor equilibrio consumo/información: LQI 60.4%, throughput
+  suficiente para monitoreo de red eléctrica.
+
+### Figuras Generadas
+
+| Figura | Archivo | Descripción |
+|--------|---------|-------------|
+| Throughput | `fig_benchmark_throughput.png` | Barras comparativas msgs, msgs/s, completitud |
+| IAT | `fig_benchmark_iat.png` | IAT promedio agrupado por recurso y escenario |
+| Timeline | `fig_benchmark_timeline.png` | Distribución temporal scatter de telemetría |
+| CoAP/RSSI | `fig_benchmark_coap_rssi.png` | Overhead CoAP + RSSI/LQI dual-axis |
+| Completitud | `fig_benchmark_completeness.png` | Heatmap muestras por recurso y escenario |
+
+---
+
 ## Cómo usar en la tesis
 
 Los archivos `.tex` en `tablas/` se incluyen directamente:
@@ -182,4 +234,17 @@ Los archivos `.tex` en `tablas/` se incluyen directamente:
 \input{thesis_export_v5/tablas/unit_tests_v017}
 \input{thesis_export_v5/tablas/new_tests_v017}
 \input{thesis_export_v5/tablas/memory_v017}
+\input{thesis_export_v5/tablas/benchmark_scenarios}
+
+% Figuras de arquitectura:
+\includegraphics[width=\textwidth]{thesis_export_v5/figuras/fig_field_mask}
+\includegraphics[width=\textwidth]{thesis_export_v5/figuras/fig_protection_layers}
+\includegraphics[width=\textwidth]{thesis_export_v5/figuras/fig_validation_flow}
+
+% Figuras de benchmark:
+\includegraphics[width=\textwidth]{thesis_export_v5/figuras/fig_benchmark_throughput}
+\includegraphics[width=\textwidth]{thesis_export_v5/figuras/fig_benchmark_iat}
+\includegraphics[width=\textwidth]{thesis_export_v5/figuras/fig_benchmark_timeline}
+\includegraphics[width=\textwidth]{thesis_export_v5/figuras/fig_benchmark_coap_rssi}
+\includegraphics[width=\textwidth]{thesis_export_v5/figuras/fig_benchmark_completeness}
 ```
