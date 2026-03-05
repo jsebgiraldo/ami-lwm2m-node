@@ -325,25 +325,25 @@ void update_connectivity_metrics(void)
 				  strlen(router_ip_str) + 1, 0);
 	}
 
-	/* ---- Notify observers (only on real change — v0.18.0) ---- */
-	/* v0.17.0 used a ±1 dBm "nudge" to defeat same-value suppression,
-	 * which caused RSSI/LQI to be sent every poll (15s) even when stable.
-	 * Now we only notify when the value actually changes, saving ~70%
-	 * of radio traffic in aggressive observe scenarios.
+	/* ---- Update & notify all observers (v0.18.0) ---- */
+	/* Always set values and call notify_observer(). The Zephyr LwM2M
+	 * observe engine enforces pmin/pmax: if the server has set pmin=15s,
+	 * no CoAP notification will be emitted faster than that, even if
+	 * we call notify_observer() every 60s. If pmax is set, the engine
+	 * will force a notification even if the value hasn't changed.
+	 *
+	 * Previous versions used firmware-side filtering (nudge in v0.17.0,
+	 * prev_rssi/prev_lqi_pct initially in v0.18.0), but that violated
+	 * pmax: a stable RSSI would never trigger a notification, even if
+	 * the server expected periodic updates via pmax.
 	 */
-	static int16_t prev_rssi = -128;
-	static int16_t prev_lqi_pct = -1;
 	int16_t lqi_pct = lqi_to_percent(best_lqi);
 
 	lwm2m_set_s16(&LWM2M_OBJ(4, 0, 2), (int16_t)best_rssi);
 	lwm2m_set_s16(&LWM2M_OBJ(4, 0, 3), lqi_pct);
 
-	if (best_rssi != prev_rssi || lqi_pct != prev_lqi_pct) {
-		lwm2m_notify_observer(4, 0, 2);   /* RSSI */
-		lwm2m_notify_observer(4, 0, 3);   /* Link Quality */
-		prev_rssi = best_rssi;
-		prev_lqi_pct = lqi_pct;
-	}
+	lwm2m_notify_observer(4, 0, 2);   /* RSSI */
+	lwm2m_notify_observer(4, 0, 3);   /* Link Quality */
 	lwm2m_notify_observer(4, 0, 4);   /* IP Addresses */
 	lwm2m_notify_observer(4, 0, 5);   /* Router IP */
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_TX_TOTAL_RID);
