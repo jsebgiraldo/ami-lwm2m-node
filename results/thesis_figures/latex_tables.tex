@@ -1,0 +1,48 @@
+% ═══════════════════════════════════════════════════════════
+% Tabla: Metricas agregadas por escenario
+% Generada automaticamente — v0.18.0
+% ═══════════════════════════════════════════════════════════
+\begin{table}[htbp]
+\centering
+\caption{Rendimiento del nodo AMI bajo diferentes configuraciones de observación LwM2M}
+\label{tab:benchmark-aggregate}
+\footnotesize
+\begin{tabular}{lrrrrrrr}
+\toprule
+\textbf{Escenario} & \textbf{Msgs} & \textbf{Keys} & \textbf{Msgs/s} & \textbf{IAT (s)} & \textbf{CoAP (KB)} & \textbf{RSSI} & \textbf{LQI} \\
+\midrule
+Producción & 70 & 15/16 & 0.233 & 37.5 & 4.2 & -85.8 & 60.4 \\
+Agresivo \textrm{(1s)} & 1386 & 16/16 & 4.620 & 2.6 & 83.9 & -86.6 & 59.3 \\
+Medio \textrm{(5s)} & 21 & 16/16 & 0.070 & 5.6 & 1.3 & -88.0 & 67.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Mensajes recibidos por recurso LwM2M en ventana de 300\,s}
+\label{tab:benchmark-per-key}
+\footnotesize
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Recurso} & \textbf{Producción} & \textbf{Agresivo (1s)} & \textbf{Medio (5s)} \\
+\midrule
+V & 0 & 1 & 1 \\
+I & 1 & 1 & 1 \\
+P & 18 & 21 & 1 \\
+Ea & 3 & 3 & 1 \\
+Q & 5 & 1 & 1 \\
+S & 14 & 21 & 1 \\
+PF & 1 & 163 & 2 \\
+Ptot & 5 & 143 & 2 \\
+Qtot & 2 & 136 & 2 \\
+Stot & 5 & 89 & 1 \\
+PFtot & 1 & 166 & 1 \\
+Er & 1 & 140 & 2 \\
+Es & 3 & 111 & 1 \\
+f & 1 & 118 & 2 \\
+RSSI & 5 & 120 & 1 \\
+LQI & 5 & 152 & 1 \\
+\bottomrule
+\end{tabular}
+\end{table}
