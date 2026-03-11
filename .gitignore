@@ -54,3 +54,10 @@ src/boot_test.c
 # Large binaries & PDFs (thesis PDF tracked separately if needed)
 tesis-rev22.pdf
 *.pdf
+
+# Memory bank (contexto local del agente, no va al repo)
+memory-bank/
+
+# Scripts locales de build/flash (rutas absolutas a este PC)
+build_flash.ps1
+setup_env.ps1
