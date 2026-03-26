@@ -1,156 +1,155 @@
-# Lecciones Aprendidas — Sesiones 1-7
+# Lessons Learned — Sessions 1-7
 
-Documento que captura los problemas encontrados y sus soluciones durante el
-desarrollo e integración del sistema AMI.
+Document capturing problems found and their solutions during the
+development and integration of the AMI system.
 
 ---
 
-## 1. Puerto 5683 compartido entre LwM2M y CoAP (Sesión 7)
+## 1. Port 5683 shared between LwM2M and CoAP (Session 7)
 
-**Síntoma**: El nodo ESP32 no podía registrarse en TB Edge. Puerto 5683 occupied.
+**Symptom**: The ESP32 node could not register with TB Edge. Port 5683 occupied.
 
-**Causa raíz**: ThingsBoard usa el mismo puerto 5683 tanto para el transporte
-LwM2M como para el transporte CoAP genérico. Al iniciar, el primero que bindea
-el puerto gana, y el otro falla silenciosamente.
+**Root cause**: ThingsBoard uses the same port 5683 for both the LwM2M transport
+and the generic CoAP transport. At startup, the first one to bind the port wins,
+and the other fails silently.
 
-**Solución**: En docker-compose.yml del Edge:
+**Solution**: In Edge docker-compose.yml:
 ```yaml
-LWM2M_BIND_PORT: "5683"        # LwM2M mantiene 5683
-COAP_BIND_PORT: "5690"         # CoAP se mueve a otro puerto
-COAP_ENABLED: "false"          # Mejor aún: deshabilitar CoAP si no se usa
+LWM2M_BIND_PORT: "5683"        # LwM2M keeps 5683
+COAP_BIND_PORT: "5690"         # CoAP moves to another port
+COAP_ENABLED: "false"          # Better: disable CoAP if not used
 ```
 
-**Lección**: Siempre verificar que no hay conflictos de puerto dentro del mismo
-contenedor, especialmente con protocolos que comparten puerto default.
+**Lesson**: Always check for port conflicts within the same container, especially
+with protocols that share a default port.
 
 ---
 
-## 2. Formato defaultObjectIDVer — V vs VER (Sesión 7)
+## 2. defaultObjectIDVer format — V vs VER (Session 7)
 
-**Síntoma**: TB Edge observa los recursos pero nunca recibe Notify. Los Observe
-llegan al nodo pero con paths malformados.
+**Symptom**: TB Edge observes resources but never receives Notify. Observe requests
+reach the node but with malformed paths.
 
-**Causa raíz**: El Device Profile en TB usa `defaultObjectIDVer` para mapear IDs
-de objetos LwM2M. Hay dos formatos internos:
-- **"V"** (correcto): `"3": "1.2"`, `"10242": "1.0"`
-- **"VER"** (incorrecto): `"3_1.2"`, `"10242_1.0"`
+**Root cause**: The Device Profile in TB uses `defaultObjectIDVer` to map LwM2M
+object IDs. There are two internal formats:
+- **"V"** (correct): `"3": "1.2"`, `"10242": "1.0"`
+- **"VER"** (incorrect): `"3_1.2"`, `"10242_1.0"`
 
-Cuando Edge sincroniza con Cloud, el Cloud regenera el perfil y puede
-sobreescribir el formato a VER, rompiendo el mapeo.
+When Edge syncs with Cloud, Cloud regenerates the profile and may overwrite
+the format to VER, breaking the mapping.
 
-**Solución**: Modificar el perfil **siempre via Cloud REST API** (puerto 80),
-nunca directamente en Edge. El Cloud es la fuente de verdad y propaga al Edge.
+**Solution**: Always modify the profile **via Cloud REST API** (port 80),
+never directly on Edge. Cloud is the source of truth and propagates to Edge.
 
 ```python
-# Ejemplo: API call al Cloud
+# Example: API call to Cloud
 PUT http://192.168.1.159:80/api/deviceProfile/{profileId}
 X-Authorization: Bearer {jwt_token}
 ```
 
-**Lección**: En arquitecturas Edge-Cloud, siempre modificar configuraciones en
-el nivel más alto (Cloud) para evitar reversiones por sincronización.
+**Lesson**: In Edge-Cloud architectures, always modify configurations at the
+highest level (Cloud) to avoid reversions due to synchronization.
 
 ---
 
-## 3. ObserveStrategy COMPOSITE vs SINGLE (Sesión 7)
+## 3. ObserveStrategy COMPOSITE vs SINGLE (Session 7)
 
-**Síntoma**: Edge envía Observe Request pero con lista de paths vacía. El nodo
-responde con token desconocido.
+**Symptom**: Edge sends Observe Request but with empty path list. The node
+responds with unknown token.
 
-**Causa raíz**: El perfil usaba `observeStrategy: COMPOSITE_BY_OBJECT`, que
-intenta hacer Composite-Observe (RFC 9175). El cliente LwM2M de Zephyr no
-soporta Composite Observe — responde con error y TB Edge descarta la sesión.
+**Root cause**: The profile used `observeStrategy: COMPOSITE_BY_OBJECT`, which
+attempts Composite-Observe (RFC 9175). The Zephyr LwM2M client does not support
+Composite Observe — it responds with an error and TB Edge drops the session.
 
-**Solución**: Cambiar `observeStrategy` a `SINGLE` en cada atributo del perfil.
-Esto hace que TB Edge observe cada recurso individualmente, que sí es compatible
-con el cliente Zephyr/Wakaama.
+**Solution**: Change `observeStrategy` to `SINGLE` on every profile attribute.
+This makes TB Edge observe each resource individually, which is compatible with
+the Zephyr/Wakaama client.
 
-**Lección**: Verificar capacidades del cliente LwM2M antes de configurar
-estrategias avanzadas de observación. SINGLE es la opción más compatible.
-
----
-
-## 4. Conectividad Cloud — Tailscale vs LAN (Sesión 6)
-
-**Síntoma**: Edge no puede conectar gRPC al Cloud. Timeout en conexión.
-
-**Causa raíz**: Cloud estaba configurado con IP de Tailscale (100.67.60.126)
-que no era accesible desde la RPi4 en la red local. Tailscale no estaba
-instalado ni configurado en el RPi4.
-
-**Solución**: Cambiar `CLOUD_RPC_HOST` a la IP LAN directa `192.168.1.159`.
-Verificar con `nc -w3 -v 192.168.1.159 7070` desde el RPi4.
-
-**Lección**: Para despliegues on-premise, usar IPs LAN directas. Las VPNs
-overlay como Tailscale agregan complejidad innecesaria si todos los componentes
-están en la misma red.
+**Lesson**: Verify LwM2M client capabilities before configuring advanced observe
+strategies. SINGLE is the most compatible option.
 
 ---
 
-## 5. Hardware — XIAO ESP32-C6 defectuoso (Sesiones 3-5)
+## 4. Cloud connectivity — Tailscale vs LAN (Session 6)
 
-**Síntoma**: Señal Thread muy débil (RSSI < -95dBm), desconexiones frecuentes,
-radio inestable.
+**Symptom**: Edge cannot connect gRPC to Cloud. Connection timeout.
 
-**Causa raíz**: El primer XIAO ESP32-C6 tenía un defecto de fábrica en la
-antena o el chip de radio.
+**Root cause**: Cloud was configured with a Tailscale IP (100.67.60.126)
+that was not reachable from the RPi4 on the local network. Tailscale was
+not installed or configured on the RPi4.
 
-**Solución**: Reemplazar por un segundo XIAO ESP32-C6. El nuevo dispositivo
-mantiene RSSI de -86dBm estable con LQI de 66%.
+**Solution**: Change `CLOUD_RPC_HOST` to the direct LAN IP `192.168.1.159`.
+Verify with `nc -w3 -v 192.168.1.159 7070` from the RPi4.
 
-**Lección**: Antes de debug extenso de firmware, considerar reemplazo de
-hardware. Un módulo defectuoso puede desperdiciar días de troubleshooting.
-
----
-
-## 6. Docker Host Networking obligatorio para Thread/IPv6 (Sesión 2)
-
-**Síntoma**: TB Edge no recibe paquetes LwM2M del nodo Thread.
-
-**Causa raíz**: Con Docker bridge networking, los paquetes IPv6 mesh-local
-de Thread no llegan al contenedor. El OTBR escucha en interfaces del host,
-pero Docker bridge crea una red aislada.
-
-**Solución**: Usar `network_mode: host` en docker-compose.yml del Edge.
-
-**Lección**: Para servicios que necesitan acceso a interfaces de red
-específicas del host (Thread, 802.15.4, IPv6 link-local), Docker bridge
-no funciona. Host networking es obligatorio.
+**Lesson**: For on-premise deployments, use direct LAN IPs. Overlay VPNs like
+Tailscale add unnecessary complexity when all components are on the same network.
 
 ---
 
-## 7. PostgreSQL credentials mismatch (Sesión 5)
+## 5. Hardware — Defective XIAO ESP32-C6 (Sessions 3-5)
 
-**Síntoma**: TB Edge falla al iniciar — no puede conectar a PostgreSQL.
+**Symptom**: Very weak Thread signal (RSSI < -95dBm), frequent disconnections,
+unstable radio.
 
-**Causa raíz**: docker-compose.yml tenía `postgres` como usuario pero la
-base de datos se inicializó con `tb_edge`.
+**Root cause**: The first XIAO ESP32-C6 had a factory defect in the antenna
+or radio chip.
 
-**Solución**: Alinear credenciales en docker-compose.yml:
+**Solution**: Replace with a second XIAO ESP32-C6. The new device maintains
+a stable RSSI of -86dBm with 66% LQI.
+
+**Lesson**: Before extensive firmware debugging, consider hardware replacement.
+A defective module can waste days of troubleshooting.
+
+---
+
+## 6. Docker Host Networking required for Thread/IPv6 (Session 2)
+
+**Symptom**: TB Edge does not receive LwM2M packets from the Thread node.
+
+**Root cause**: With Docker bridge networking, Thread mesh-local IPv6 packets
+do not reach the container. OTBR listens on host interfaces, but Docker bridge
+creates an isolated network.
+
+**Solution**: Use `network_mode: host` in Edge docker-compose.yml.
+
+**Lesson**: For services that need access to specific host network interfaces
+(Thread, 802.15.4, IPv6 link-local), Docker bridge does not work.
+Host networking is required.
+
+---
+
+## 7. PostgreSQL credentials mismatch (Session 5)
+
+**Symptom**: TB Edge fails to start — cannot connect to PostgreSQL.
+
+**Root cause**: docker-compose.yml had `postgres` as the user but the database
+was initialized with `tb_edge`.
+
+**Solution**: Align credentials in docker-compose.yml:
 ```yaml
 SPRING_DATASOURCE_USERNAME: "tb_edge"
 SPRING_DATASOURCE_PASSWORD: "tb_edge_pwd"
 ```
-Y en el servicio postgres:
+And in the postgres service:
 ```yaml
 POSTGRES_USER: "tb_edge"
 POSTGRES_PASSWORD: "tb_edge_pwd"
 POSTGRES_DB: "tb_edge"
 ```
 
-**Lección**: Las credenciales de base de datos deben estar consistentes
-entre el servicio que las crea (postgres) y el que las consume (tb-edge).
+**Lesson**: Database credentials must be consistent between the service that
+creates them (postgres) and the one that consumes them (tb-edge).
 
 ---
 
-## Resumen de Herramientas Útiles
+## Useful Tools Summary
 
-| Herramienta | Uso |
-|-------------|-----|
-| `tools/read_no_reset.py` | Monitor serial sin resetear ESP32 (evita RTS toggle) |
-| `tools/quick_diag.py` | Diagnóstico rápido: Thread status + LwM2M registration |
-| `tools/serial_diag.py` | Captura serial con timestamps y filtros |
-| `nc -w3 -v HOST PORT` | Verificar conectividad TCP desde RPi4 |
-| `docker logs tb-edge --tail 100` | Últimos logs del Edge |
-| `ot-ctl state` | Estado del OTBR (leader/router/child) |
-| `ot-ctl neighbor table` | Vecinos Thread visibles |
+| Tool | Use |
+|------|-----|
+| `tools/read_no_reset.py` | Serial monitor without resetting ESP32 (avoids RTS toggle) |
+| `tools/quick_diag.py` | Quick diagnostics: Thread status + LwM2M registration |
+| `tools/serial_diag.py` | Serial capture with timestamps and filters |
+| `nc -w3 -v HOST PORT` | Verify TCP connectivity from RPi4 |
+| `docker logs tb-edge --tail 100` | Last Edge logs |
+| `ot-ctl state` | OTBR status (leader/router/child) |
+| `ot-ctl neighbor table` | Visible Thread neighbors |

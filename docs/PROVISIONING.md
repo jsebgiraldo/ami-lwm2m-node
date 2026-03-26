@@ -1,157 +1,156 @@
-# AMI Node — Guía de Aprovisionamiento de Fábrica
+# AMI Node — Factory Provisioning Guide
 
-> Cómo sincronizar un nodo nuevo (salido de fábrica) con ThingsBoard Edge y Cloud.
+> How to register a new (factory-fresh) node with ThingsBoard Edge and Cloud.
 
 ---
 
-## Contexto del Sistema
+## System Context
 
 ```
-[Medidor]──RS485──[XIAO ESP32-C6]──Thread 802.15.4──[OTBR+TB Edge RPi4]──gRPC──[TB Cloud]
-                   (este nodo)                        192.168.1.111:5683/udp     192.168.1.159
+[Meter]──RS485──[XIAO ESP32-C6]──Thread 802.15.4──[OTBR+TB Edge RPi4]──gRPC──[TB Cloud]
+                 (this node)                        192.168.1.111:5683/udp     192.168.1.159
 ```
 
-Cuando el nodo arranca, hace **LwM2M Registration** hacia el servidor Edge en
+When the node boots, it sends an **LwM2M Registration** to the Edge server at
 `coap://[fdc6:63fd:328d:66df:6a54:12ef:8c67:bd1c]:5683`.  
-**Si el dispositivo no existe en TB Edge, la conexión es rechazada** (o ignorada), y el
-nodo no envía datos.
+**If the device does not exist in TB Edge, the connection is rejected** (or ignored) and
+the node will not send any data.
 
-Por eso, **antes de desplegar cualquier nodo nuevo** hay que registrarlo en ThingsBoard.
+Therefore, **before deploying any new node**, it must be registered in ThingsBoard.
 
 ---
 
-## Concepto: ¿Cómo se identifica un nodo?
+## Concept: How is a node identified?
 
-El nodo construye su identidad LwM2M en el arranque con la función `build_endpoint_name()`
-de `src/main.c`:
+The node builds its LwM2M identity at boot using the `build_endpoint_name()` function
+in `src/main.c`:
 
 ```c
-// src/main.c  líneas 341-353
+// src/main.c  lines 341-353
 snprintf(endpoint_name, sizeof(endpoint_name),
          "ami-esp32c6-%02x%02x",
          link->addr[link->len - 2],   // MAC byte -2
          link->addr[link->len - 1]);  // MAC byte -1
 ```
 
-### Ejemplo real
-| Campo | Valor |
+### Real example
+| Field | Value |
 |-------|-------|
-| MAC completa (etiqueta HW) | `98:A3:16:61:24:34` |
-| Últimos 2 bytes | `0x24`, `0x34` |
-| **Endpoint LwM2M** | **`ami-esp32c6-2434`** |
+| Full MAC (HW label) | `98:A3:16:61:24:34` |
+| Last 2 bytes | `0x24`, `0x34` |
+| **LwM2M Endpoint** | **`ami-esp32c6-2434`** |
 
-> La MAC se puede leer:
-> - De la **etiqueta física** impresa en el módulo (parte inferior del XIAO)
-> - Del **monitor serie** al arrancar: `LOG_INF("Endpoint: %s", endpoint_name)`
-> - Usando `esptool.py flash_id --port COMx` antes de flashear el firmware
-
----
-
-## Lo que contiene el perfil de dispositivo
-
-El nodo usa el perfil **`C2000_Monofasico_v2`** (en TB Edge `b6d55c90-12db-11f1-b535-433a231637c4`).
-
-Este perfil define:
-- **Observe** (16 recursos): voltaje, corriente, potencias, energías, frecuencia, RSSI, LQI
-- **Attributes** (3): manufacturer, modelNumber, serialNumber — se leen una sola vez
-- **Telemetry** (13): los mismos recursos, almacenados como series de tiempo en PostgreSQL
-- **Transporte**: LwM2M NoSec (sin cifrado, sin bootstrap)
-
-El Edge sincroniza automáticamente este perfil con TB Cloud vía gRPC — no hay que
-replicar el perfil manualmente en Cloud.
+> The MAC can be read:
+> - From the **physical label** printed on the module (bottom of the XIAO)
+> - From the **serial monitor** at boot: `LOG_INF("Endpoint: %s", endpoint_name)`
+> - Using `esptool.py flash_id --port COMx` before flashing the firmware
 
 ---
 
-## Estrategias de aprovisionamiento
+## Device Profile Contents
 
-### Opción A — Script REST (recomendada para pilotos ≤ 100 nodos)
+The node uses the **`C2000_Monofasico_v2`** profile (TB Edge UUID `b6d55c90-12db-11f1-b535-433a231637c4`).
 
-**Cuándo usarla**: control total, auditoría de qué nodos están registrados.
+This profile defines:
+- **Observe** (16 resources): voltage, current, powers, energies, frequency, RSSI, LQI
+- **Attributes** (3): manufacturer, modelNumber, serialNumber — read once at registration
+- **Telemetry** (13): the same resources, stored as time-series in PostgreSQL
+- **Transport**: LwM2M NoSec (no encryption, no bootstrap)
+
+The Edge automatically syncs this profile with TB Cloud via gRPC — no manual replication is needed.
+
+---
+
+## Provisioning Strategies
+
+### Option A — REST Script (recommended for pilots ≤ 100 nodes)
+
+**When to use**: full control, audit trail of registered nodes.
 
 ```
                     ┌────────────────────────────────────┐
-Operador            │  python provision_node.py          │
+Operator            │  python provision_node.py          │
   ──[MAC label]──►  │  --mac 98:a3:16:61:24:34           │
                     └──────────────┬─────────────────────┘
                                    │ REST POST /api/device
                                    ▼
                     ┌────────────────────────────────────┐
                     │  ThingsBoard Edge :8090            │
-                    │  Crea device "ami-esp32c6-2434"    │
-                    │  Perfil: C2000_Monofasico_v2       │
+                    │  Creates device "ami-esp32c6-2434" │
+                    │  Profile: C2000_Monofasico_v2      │
                     │  Creds: LWM2M NoSec                │
                     └──────────────┬─────────────────────┘
-                                   │ gRPC sync automático
+                                   │ automatic gRPC sync
                                    ▼
                     ┌────────────────────────────────────┐
                     │  ThingsBoard Cloud :80             │
-                    │  Dispositivo replicado             │
+                    │  Device replicated                 │
                     └────────────────────────────────────┘
 
-Al arrancar el nodo:
-  LwM2M Register → Edge acepta → ACTIVE → datos fluyen
+When the node boots:
+  LwM2M Register → Edge accepts → ACTIVE → data flows
 ```
 
-### Opción B — Auto-provisioning (para despliegues masivos)
+### Option B — Auto-provisioning (for large-scale deployments)
 
-ThingsBoard soporta `ALLOW_CREATE_NEW_DEVICES`, donde **cualquier endpoint nuevo que
-se registre es auto-creado** bajo el perfil que tiene esta opción habilitada.
+ThingsBoard supports `ALLOW_CREATE_NEW_DEVICES`, where **any new endpoint that
+registers is auto-created** under the profile with this option enabled.
 
-> ⚠️  Con LwM2M NoSec sin Bootstrap, esto se habilita en ThingsBoard 4.x configurando
-> `provisionType: ALLOW_CREATE_NEW_DEVICES` + una `provisionDeviceKey` en el perfil.
-> El nodo NO necesita saber la clave — sólo necesita tener el endpoint correcto.
-> **CAVEAT**: cualquier dispositivo con cualquier endpoint puede auto-registrarse si
-> conoce el servidor → sólo usar en redes controladas (Thread mesh lo es).
+> ⚠️  With LwM2M NoSec without Bootstrap, this is enabled in ThingsBoard 4.x by setting
+> `provisionType: ALLOW_CREATE_NEW_DEVICES` + a `provisionDeviceKey` in the profile.
+> The node does NOT need to know the key — it only needs the correct endpoint.
+> **CAVEAT**: any device with any endpoint can auto-register if it knows the server →
+> only use on controlled networks (Thread mesh qualifies).
 
-Habilitación vía REST (ver sección "Administración avanzada").
+Enable via REST (see "Advanced Administration" section).
 
-### Opción C — Manual desde la UI Web
+### Option C — Manual from Web UI
 
-Para un nodo puntual: `TB Edge UI` → Entities → Devices → `+` → nombre=`ami-esp32c6-XXXX`,
-perfil=`C2000_Monofasico_v2`. Luego ir a Credentials y seleccionar tipo LwM2M.
+For a single node: `TB Edge UI` → Entities → Devices → `+` → name=`ami-esp32c6-XXXX`,
+profile=`C2000_Monofasico_v2`. Then go to Credentials and select LwM2M type.
 
 ---
 
-## Pasos detallados — Método A (Script)
+## Step-by-step — Method A (Script)
 
-### Prerrequisitos
+### Prerequisites
 
 ```bash
 pip install requests
 ```
 
-El script está en `tools/provision_node.py`.
+The script is at `tools/provision_node.py`.
 
-### Paso 1 — Obtener la MAC del nodo nuevo
+### Step 1 — Get the MAC of the new node
 
-**Desde etiqueta física** (recomendado en manufactura):
-El módulo XIAO ESP32-C6 tiene la MAC impresa en la parte inferior (`Wi-Fi/BT addr`).
-La MAC del Thread usa los mismos últimos 2 bytes.
+**From the physical label** (recommended in manufacturing):
+The XIAO ESP32-C6 module has the MAC printed on the bottom (`Wi-Fi/BT addr`).
+The Thread MAC uses the same last 2 bytes.
 
-**Desde monitor serie** (si ya está flasheado):
+**From the serial monitor** (if firmware is already flashed):
 ```
-Conectar con minicom/PuTTY a 115200 baud. Salida al arrancar:
+Connect with minicom/PuTTY at 115200 baud. Output at boot:
   *** AMI MAIN ENTRY ***
   *** Firmware: v0.16.0 ***
   ...
   [INF] Thread attached! Role=2 after 8s
-  [INF] Endpoint: ami-esp32c6-2434      ← usar este valor
+  [INF] Endpoint: ami-esp32c6-2434      ← use this value
 ```
 
-**Desde esptool** (antes de flashear):
+**From esptool** (before flashing):
 ```bash
 python -m esptool --port COM11 flash_id
-# Muestra: MAC: 98:a3:16:61:24:34
+# Displays: MAC: 98:a3:16:61:24:34
 ```
 
-### Paso 2 — Ejecutar el script
+### Step 2 — Run the script
 
 ```bash
-# Desde el directorio raíz del repo
+# From the repo root directory
 python tools/provision_node.py --mac 98:a3:16:61:24:34
 ```
 
-Salida esperada:
+Expected output:
 ```
 ============================================================
   AMI Node Provisioner
@@ -173,31 +172,31 @@ Salida esperada:
 ============================================================
 ```
 
-### Paso 3 — Flashear el firmware al nodo
+### Step 3 — Flash the firmware to the node
 
-Si no lo has hecho aún:
+If not done yet:
 ```powershell
 .\build_flash.ps1 -Flash -Port COM11
 ```
 
-El firmware es el mismo para **todos los nodos** — no hay parametrización por dispositivo.
-Las únicas diferencias entre nodos son:
-- Endpoint (derivado de MAC, automático)
-- Dirección IPv6 derivada del EUI-64 del radio Thread (automática)
+The firmware is the same for **all nodes** — no per-device parameterization exists.
+The only differences between nodes are:
+- Endpoint (derived from MAC, automatic)
+- IPv6 address derived from the Thread radio EUI-64 (automatic)
 
-### Paso 4 — Encender y verificar
+### Step 4 — Power on and verify
 
-El nodo tardará ~17 segundos en:
-1. Unirse a la red Thread (credenciales hardcoded en `prj.conf`)
-2. Obtener dirección IPv6 mesh-local
-3. Registrarse con LwM2M en el Edge
+The node will take ~17 seconds to:
+1. Join the Thread network (credentials hardcoded in `prj.conf`)
+2. Obtain a mesh-local IPv6 address
+3. Register with LwM2M on the Edge
 
-Verificar con el script:
+Verify with the script:
 ```bash
 python tools/provision_node.py --mac 98:a3:16:61:24:34 --verify
 ```
 
-Salida esperada:
+Expected output:
 ```
 ──────────────────────────────────────────────────────────
   Endpoint : ami-esp32c6-2434
@@ -211,105 +210,105 @@ Salida esperada:
   Telemetry   : activePower = 0.0
 ```
 
-Si `Active: False` después de 30 segundos, ver sección Troubleshooting.
+If `Active: False` after 30 seconds, see the Troubleshooting section.
 
 ---
 
-## Aprovisionamiento por lotes (CSV)
+## Batch Provisioning (CSV)
 
-Para N nodos al mismo tiempo:
+For N nodes at the same time:
 
-1. Crear archivo `nodos_lote.csv`:
+1. Create file `nodes_batch.csv`:
 ```csv
-mac,ubicacion,instalado_por
-98:a3:16:61:24:34,Apto-101,JSG
-AA:BB:CC:DD:EE:FF,Apto-102,JSG
-11:22:33:44:55:66,Apto-103,JSG
+mac,location,installed_by
+98:a3:16:61:24:34,Apt-101,JSG
+AA:BB:CC:DD:EE:FF,Apt-102,JSG
+11:22:33:44:55:66,Apt-103,JSG
 ```
 
-2. Ejecutar:
+2. Run:
 ```bash
-python tools/provision_node.py --csv nodos_lote.csv
+python tools/provision_node.py --csv nodes_batch.csv
 ```
 
-El script es **idempotente** — si el dispositivo ya existe, lo salta (`[SKIP]`).
+The script is **idempotent** — if the device already exists, it is skipped (`[SKIP]`).
 
 ---
 
-## Estados en ThingsBoard
+## ThingsBoard Device States
 
-| Estado | Descripción | Qué significa |
-|--------|-------------|---------------|
-| `active: false` | No conectado | Dispositivo creado pero sin LwM2M registration activa |
-| `active: true` | Conectado | LwM2M registration vigente (lifetime=300s, renueva cada ~270s) |
-| No aparece | No aprovisionado | El nodo no puede conectar → ejecutar provision_node.py primero |
+| State | Description | Meaning |
+|-------|-------------|--------|
+| `active: false` | Not connected | Device created but no active LwM2M registration |
+| `active: true` | Connected | LwM2M registration valid (lifetime=300s, renews every ~270s) |
+| Not shown | Not provisioned | Node cannot connect → run provision_node.py first |
 
 ---
 
-## Pasos completos de fábrica a producción
+## Factory-to-Production Checklist
 
 ```
-FÁBRICA                          CAMPO/LABORATORIO
+FACTORY                          FIELD / LAB
 ─────────────────────────────    ────────────────────────────────────────────────
-1. Soldar/ensamblar XIAO +       4. Conectar adaptador RS485 al medidor
+1. Solder/assemble XIAO +        4. Connect RS485 adapter to meter
    RS485 expansion board            (A/B/GND, 9600 8N1 half-duplex)
 
-2. Leer MAC del módulo           5. Ejecutar provision_node.py --mac XX:XX...
-   (etiqueta o esptool)             → Registra en TB Edge/Cloud
+2. Read module MAC               5. Run provision_node.py --mac XX:XX...
+   (label or esptool)               → Registers in TB Edge/Cloud
 
-3. Flashear firmware             6. Encender nodo
+3. Flash firmware                6. Power on the node
    build_flash.ps1 -Flash           → OpenThread join (~8s)
    -Port COMx                       → LwM2M register (~17s)
-                                    → TB Edge marca ACTIVE
+                                    → TB Edge marks ACTIVE
 
-                                 7. Verificar datos en dashboard
-                                    o: provision_node.py --verify
+                                 7. Verify data in dashboard
+                                    or: provision_node.py --verify
 
-                                 8. (Opcional) Asignar a cliente/asset en TB Cloud
+                                 8. (Optional) Assign to customer/asset in TB Cloud
 ```
 
 ---
 
-## Parámetros que distinguen un nodo de otro
+## Parameters that distinguish one node from another
 
-> **Todo está en el firmware binario compilado una sola vez** salvo:
+> **Everything is in the firmware binary compiled once** except:
 
-| Parámetro | Dónde se determina | Nota |
-|-----------|-------------------|------|
-| Endpoint LwM2M | En runtime, de la MAC | Único por hardware, automático |
-| Dirección IPv6 Thread | En runtime, de EUI-64 radio | Único por hardware, automático |
-| Thread Network Key | Hardcoded en `prj.conf` | **¡Mismo para todos los nodos del piloto!** |
-| LwM2M Server URI | Hardcoded en `prj.conf` | Mismo para todos |
-| Perfil de datos | Configurado en TB Edge | Aplica igual a todos |
+| Parameter | Where it is determined | Note |
+|-----------|----------------------|------|
+| LwM2M Endpoint | At runtime, from MAC | Unique per hardware, automatic |
+| Thread IPv6 address | At runtime, from radio EUI-64 | Unique per hardware, automatic |
+| Thread Network Key | Hardcoded in `prj.conf` | **Same for all nodes in the pilot!** |
+| LwM2M Server URI | Hardcoded in `prj.conf` | Same for all |
+| Data profile | Configured in TB Edge | Applies equally to all |
 
-> Para producción multi-red o multi-cliente: parametrizar el network key y server URI
-> via NVS (flash settings) o OTA config push. Ver sección "Roadmap".
+> For multi-network or multi-customer production: parameterize the network key and server URI
+> via NVS (flash settings) or OTA config push. See "Roadmap" section.
 
 ---
 
-## Perfil LwM2M — Referencia rápida
+## LwM2M Profile — Quick Reference
 
-### Recursos observados
+### Observed resources
 
-| Path | Key telemetría | Descripción |
+| Path | Telemetry key | Description |
 |------|---------------|-------------|
-| `/10242_1.0/0/4` | `voltage` | Tensión fase R (V) |
-| `/10242_1.0/0/5` | `current` | Corriente fase R (A) |
-| `/10242_1.0/0/6` | `activePower` | Potencia activa R (kW) |
-| `/10242_1.0/0/7` | `reactivePower` | Potencia reactiva R (kvar) |
-| `/10242_1.0/0/10` | `apparentPower` | Potencia aparente R (kVA) |
-| `/10242_1.0/0/11` | `powerFactor` | Factor de potencia R |
-| `/10242_1.0/0/39` | `totalPowerFactor` | FP total |
-| `/10242_1.0/0/41` | `activeEnergy` | Energía activa total (kWh) |
-| `/10242_1.0/0/42` | `reactiveEnergy` | Energía reactiva (kvarh) |
-| `/10242_1.0/0/45` | `apparentEnergy` | Energía aparente (kVAh) |
-| `/10242_1.0/0/49` | `frequency` | Frecuencia (Hz) |
-| `/4_1.3/0/2` | `radioSignalStrength` | RSSI 802.15.4 (dBm) |
-| `/4_1.3/0/3` | `linkQuality` | LQI enlace Thread |
+| `/10242_1.0/0/4` | `voltage` | Phase R voltage (V) |
+| `/10242_1.0/0/5` | `current` | Phase R current (A) |
+| `/10242_1.0/0/6` | `activePower` | Phase R active power (kW) |
+| `/10242_1.0/0/7` | `reactivePower` | Phase R reactive power (kvar) |
+| `/10242_1.0/0/10` | `apparentPower` | Phase R apparent power (kVA) |
+| `/10242_1.0/0/11` | `powerFactor` | Phase R power factor |
+| `/10242_1.0/0/39` | `totalPowerFactor` | Total power factor |
+| `/10242_1.0/0/41` | `activeEnergy` | Total active energy (kWh) |
+| `/10242_1.0/0/42` | `reactiveEnergy` | Reactive energy (kvarh) |
+| `/10242_1.0/0/45` | `apparentEnergy` | Apparent energy (kVAh) |
+| `/10242_1.0/0/49` | `frequency` | Frequency (Hz) |
+| `/4_1.3/0/2` | `radioSignalStrength` | 802.15.4 RSSI (dBm) |
+| `/4_1.3/0/3` | `linkQuality` | Thread link LQI |
 
-### Atributos (sin observe, lectura única)
+### Attributes (no observe, read once)
 
-| Path | Key | Descripción |
+| Path | Key | Description |
 |------|-----|-------------|
 | `/3_1.2/0/0` | `manufacturer` | "Tesis-AMI" |
 | `/3_1.2/0/1` | `modelNumber` | "XIAO-ESP32-C6" |
@@ -317,48 +316,48 @@ FÁBRICA                          CAMPO/LABORATORIO
 
 ---
 
-## Administración avanzada
+## Advanced Administration
 
-### Habilitar auto-provisioning (Opción B)
+### Enable auto-provisioning (Option B)
 
-Si se quiere que cualquier nodo AMI se auto-registre sin pre-provisioning manual:
+To allow any AMI node to self-register without manual pre-provisioning:
 
 ```bash
-# 1. Leer el perfil actual
+# 1. Read the current profile
 curl -s -H "Authorization: Bearer $TOKEN" \
   http://192.168.1.111:8090/api/deviceProfile/b6d55c90-12db-11f1-b535-433a231637c4 \
   > /tmp/profile.json
 
-# 2. Editar: cambiar provisionType y agregar provisionDeviceKey
+# 2. Edit: change provisionType and add provisionDeviceKey
 #    "provisionType": "ALLOW_CREATE_NEW_DEVICES",
 #    "provisionDeviceKey": "ami-lwm2m-provision-key-2025",
 
-# 3. Actualizar vía PUT
+# 3. Update via PUT
 curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d @/tmp/profile_updated.json \
   http://192.168.1.111:8090/api/deviceProfile
 ```
 
-> Con `ALLOW_CREATE_NEW_DEVICES` el nodo se crea automáticamente al primer registro
-> LwM2M. El dispositivo hereda el perfil configurado como DEFAULT (o el primero que
-> tiene provisioning habilitado). Para asegurar el perfil correcto, marcar
-> `C2000_Monofasico_v2` como perfil DEFAULT (`"default": true`).
+> With `ALLOW_CREATE_NEW_DEVICES`, the node is auto-created on its first LwM2M
+> registration. The device inherits the profile configured as DEFAULT (or the first one
+> with provisioning enabled). To ensure the correct profile, mark
+> `C2000_Monofasico_v2` as DEFAULT (`"default": true`).
 
-### Exportar la lista de nodos aprovisionados
+### Export the list of provisioned nodes
 
 ```bash
-python tools/provision_node.py --csv - --verify  # Futura: --list all
+python tools/provision_node.py --csv - --verify  # Future: --list all
 ```
 
-Por ahora, via API:
+For now, via API:
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
   "http://192.168.1.111:8090/api/tenant/deviceInfos?pageSize=100&page=0" \
   | python -c "import sys,json; d=json.load(sys.stdin); [print(x['name'],x.get('active')) for x in d['data']]"
 ```
 
-### Borrar un nodo del sistema (retiro o reemplazo)
+### Delete a node from the system (retirement or replacement)
 
 ```bash
 python tools/provision_node.py --mac 98:a3:16:61:24:34 --delete
@@ -368,23 +367,23 @@ python tools/provision_node.py --mac 98:a3:16:61:24:34 --delete
 
 ## Troubleshooting
 
-| Síntoma | Causa probable | Solución |
-|---------|----------------|---------|
-| `active: false` después de 60s | Nodo no conectó a Thread | Verificar canal/PAN/NetworkKey en prj.conf |
-| `active: false` + Thread OK | LwM2M registration falló | Verificar endpoint en TB; revisar logs serie del nodo |
-| Endpoint aparece pero sin datos | Perfil mal configurado | Verificar profileData → observeAttr en TB |
-| `Timeout` al provisionar | Edge no accesible | Verificar Docker: `docker ps` en RPi4 |
-| `Profile not found` | Perfil borrado o renombrado | Recrear perfil desde `docs/config_backups/c2000_monophase_profile.json` |
-| Datos numéricos = 0 | Meter RS485 no conectado | Verificar cableado A/B/GND y dirección HDLC |
+| Symptom | Probable cause | Solution |
+|---------|---------------|----------|
+| `active: false` after 60s | Node did not join Thread | Check channel/PAN/NetworkKey in prj.conf |
+| `active: false` + Thread OK | LwM2M registration failed | Check endpoint in TB; review node serial logs |
+| Endpoint visible but no data | Profile misconfigured | Check profileData → observeAttr in TB |
+| `Timeout` when provisioning | Edge not reachable | Check Docker: `docker ps` on RPi4 |
+| `Profile not found` | Profile deleted or renamed | Recreate from `docs/config_backups/c2000_monophase_profile.json` |
+| Numeric data = 0 | RS485 meter not connected | Check A/B/GND wiring and HDLC address |
 
-### Ver logs del nodo en tiempo real
+### View node logs in real time
 
 ```powershell
-# En monitor serie (115200, COM11)
+# Serial monitor (115200, COM11)
 python -m serial.tools.miniterm COM11 115200
 ```
 
-Secuencia de arranque normal:
+Normal boot sequence:
 ```
 *** AMI MAIN ENTRY ***
 *** Firmware: v0.16.0 ***
@@ -399,33 +398,33 @@ Secuencia de arranque normal:
 [INF] DLMS meter poll OK: V=124.8 I=0.00 P=0.0W
 ```
 
-### Ver estado del Edge
+### Check Edge status
 
 ```bash
-# SSH al RPi4
+# SSH to RPi4
 ssh root@192.168.1.111
-docker ps  # tb-edge y tb-edge-postgres deben estar UP
+docker ps  # tb-edge and tb-edge-postgres must be UP
 docker logs tb-edge 2>&1 | tail -50
 ```
 
 ---
 
-## Roadmap — Para producción multi-cliente
+## Roadmap — For multi-customer production
 
-Cuando el piloto escale a múltiples redes Thread (diferentes edificios/clientes):
+When the pilot scales to multiple Thread networks (different buildings/customers):
 
-1. **Parametrizar Thread Network Key por instalación**: Usar NVS en flash para
-   almacenar/sobrescribir el dataset Thread sin recompilar el firmware.
+1. **Parameterize Thread Network Key per installation**: Use NVS in flash to
+   store/overwrite the Thread dataset without recompiling the firmware.
 
-2. **Parametrizar LwM2M Server URI**: El servidor Edge puede cambiar per-deployment;
-   leer URI desde NVS en lugar de `prj.conf`.
+2. **Parameterize LwM2M Server URI**: The Edge server may change per deployment;
+   read URI from NVS instead of `prj.conf`.
 
-3. **Mecanismo de comisionamiento Thread**: En lugar de un network key universal,
-   usar Thread Commissioner (otbr-agent + ot-ctl) para comisionar cada nodo
-   individualmente con una credencial temporal.
+3. **Thread commissioning mechanism**: Instead of a universal network key,
+   use Thread Commissioner (otbr-agent + ot-ctl) to commission each node
+   individually with a temporary credential.
 
-4. **TB Cloud multi-tenant**: Cada cliente tiene su propio tenant en TB Cloud;
-   el aprovisionamiento script debe recibir `--tenant` como argumento.
+4. **TB Cloud multi-tenant**: Each customer has their own tenant in TB Cloud;
+   the provisioning script should accept `--tenant` as an argument.
 
-5. **OTA (Object 5)**: El firmware ya soporta Object 5 (Firmware Update). Subir
-   imágenes a TB OTA Package y hacer push desde el perfil del dispositivo.
+5. **OTA (Object 5)**: The firmware already supports Object 5 (Firmware Update). Upload
+   images to TB OTA Package and push from the device profile.

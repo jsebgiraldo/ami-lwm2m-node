@@ -1,216 +1,216 @@
-# Arquitectura del Sistema AMI — Smart Energy Metering
+# AMI System Architecture — Smart Energy Metering
 
-## Visión General
+## Overview
 
-Sistema de medición inteligente (AMI — Advanced Metering Infrastructure) que conecta
-medidores eléctricos industriales a una plataforma IoT cloud usando una red mesh
-inalámbrica Thread 802.15.4 y el protocolo LwM2M.
+Advanced Metering Infrastructure (AMI) system that connects industrial electricity
+meters to a cloud IoT platform using a Thread 802.15.4 wireless mesh network and
+the LwM2M protocol.
 
-## Diagrama de Arquitectura
+## Architecture Diagram
 
 ```
 ┌─────────────────────┐
-│   ThingsBoard Cloud  │   Capa 4: Plataforma Cloud
-│   192.168.1.159:80   │   - Gestión centralizada de dispositivos
-│   (CE 4.2.1.1)       │   - Dashboards, alarmas, analytics
-└──────────┬───────────┘   - REST API para gestión de perfiles
+│   ThingsBoard Cloud  │   Layer 4: Cloud Platform
+│   192.168.1.159:80   │   - Centralized device management
+│   (CE 4.2.1.1)       │   - Dashboards, alarms, analytics
+└──────────┬───────────┘   - REST API for profile management
            │ gRPC:7070
-           │ (bidireccional)
+           │ (bidirectional)
 ┌──────────▼───────────┐
-│   ThingsBoard Edge    │   Capa 3: Gateway Edge
-│   RPi4 (OpenWrt)      │   - Procesamiento local (rule engine)
-│   192.168.1.111:8090  │   - Persistencia PostgreSQL local
-│   LwM2M: 5683/udp    │   - Sync bidireccional con Cloud
-│   Docker containers   │   - LwM2M transport integrado (puerto 5683/udp)
+│   ThingsBoard Edge    │   Layer 3: Edge Gateway
+│   RPi4 (OpenWrt)      │   - Local rule engine processing
+│   192.168.1.111:8090  │   - Local PostgreSQL persistence
+│   LwM2M: 5683/udp    │   - Bidirectional sync with Cloud
+│   Docker containers   │   - Integrated LwM2M transport (port 5683/udp)
 └──────────┬───────────┘
            │ IPv6 mesh-local
            │ CoAP/LwM2M (NoSec)
 ┌──────────▼───────────┐
-│   OTBR (Border Router)│   Capa 2: Border Router
-│   RPi4 (OpenWrt)      │   - Puente IPv6 Thread ↔ LAN
-│   192.168.1.111       │   - Servicio nativo OpenWrt
+│   OTBR (Border Router)│   Layer 2: Border Router
+│   RPi4 (OpenWrt)      │   - IPv6 Thread ↔ LAN bridge
+│   192.168.1.111       │   - Native OpenWrt service
 │   Thread Leader       │   - mesh-local: fdc6:63fd:328d:66df::/64
 └──────────┬───────────┘
            │ IEEE 802.15.4
            │ Thread mesh (Ch25, PAN 0xABCD)
 ┌──────────▼───────────┐
-│   XIAO ESP32-C6       │   Capa 1: Nodo Sensor (este repositorio)
-│   Zephyr RTOS 4.2.0   │   - Cliente LwM2M
-│   OpenThread Router    │   - Driver RS485 half-duplex
-│   ami-esp32c6-XXXX     │   - Parser DLMS/COSEM
+│   XIAO ESP32-C6       │   Layer 1: Sensor Node (this repository)
+│   Zephyr RTOS 4.2.0   │   - LwM2M client
+│   OpenThread Router    │   - Half-duplex RS485 driver
+│   ami-esp32c6-XXXX     │   - DLMS/COSEM parser
 └──────────┬───────────┘
            │ RS485 (9600 8N1)
            │ DLMS/COSEM
 ┌──────────▼───────────┐
-│   Microstar C2000     │   Capa 0: Medidor Eléctrico
-│   Medidor Monofásico  │   - Registros OBIS vía DLMS
-│   RS485 slave         │   - Tensión, corriente, potencia, energía
+│   Microstar C2000     │   Layer 0: Electricity Meter
+│   Single-phase Meter  │   - OBIS registers via DLMS
+│   RS485 slave         │   - Voltage, current, power, energy
 └───────────────────────┘
 ```
 
-## Capas del Sistema
+## System Layers
 
-### Capa 0: Medidor Eléctrico (Microstar C2000)
-- **Comunicación**: RS485 half-duplex, 9600 baud, 8N1
-- **Protocolo**: DLMS/COSEM (IEC 62056)
-- **Datos disponibles**: Tensión, corriente, potencia activa/reactiva/aparente,
-  factor de potencia, energía activa total, frecuencia
-- **Polling**: Cada 30 segundos desde el nodo IoT
+### Layer 0: Electricity Meter (Microstar C2000)
+- **Communication**: RS485 half-duplex, 9600 baud, 8N1
+- **Protocol**: DLMS/COSEM (IEC 62056)
+- **Available data**: Voltage, current, active/reactive/apparent power,
+  power factor, total active energy, frequency
+- **Polling**: Every 30 seconds from the IoT node
 
-### Capa 1: Nodo IoT (ESP32-C6 — este repositorio)
-- **MCU**: Espressif ESP32-C6 (RISC-V, radio 802.15.4 nativa)
-- **Placa**: Seeed XIAO ESP32-C6
-- **SO**: Zephyr RTOS 4.2.0
+### Layer 1: IoT Node (ESP32-C6 — this repository)
+- **MCU**: Espressif ESP32-C6 (RISC-V, native 802.15.4 radio)
+- **Board**: Seeed XIAO ESP32-C6
+- **OS**: Zephyr RTOS 4.2.0
 - **Radio**: IEEE 802.15.4 → Thread mesh → OpenThread Router
-- **Protocolo IoT**: LwM2M client (Eclipse Wakaama via Zephyr)
-- **Objetos LwM2M expuestos**:
-  | Object ID | Nombre | Descripción |
-  |-----------|--------|-------------|
-  | 0 | Security | URI del servidor, modo NoSec |
+- **IoT Protocol**: LwM2M client (Eclipse Wakaama via Zephyr)
+- **Exposed LwM2M Objects**:
+  | Object ID | Name | Description |
+  |-----------|------|-------------|
+  | 0 | Security | Server URI, NoSec mode |
   | 1 | Server | Lifetime, binding |
   | 3 | Device | Manufacturer, model, serial, firmware |
   | 4 | ConnMon | Signal strength, link quality, router |
   | 5 | Firmware | OTA update support |
-  | 10242 | PowerMeter | Medidor monofásico (custom IPSO) |
+  | 10242 | PowerMeter | Single-phase meter (custom IPSO) |
 
-### Capa 2: OTBR (OpenThread Border Router)
-- **Hardware**: Raspberry Pi 4 con OpenWrt
-- **Función**: Puente entre red Thread (802.15.4) y red IPv6/IPv4 LAN
-- **Red Thread**: "AMI-Pilot-2025", Canal 25, PAN ID 0xABCD
+### Layer 2: OTBR (OpenThread Border Router)
+- **Hardware**: Raspberry Pi 4 with OpenWrt
+- **Function**: Bridge between Thread (802.15.4) network and IPv6/IPv4 LAN
+- **Thread network**: "AMI-Pilot-2025", Channel 25, PAN ID 0xABCD
 - **Mesh-local prefix**: fdc6:63fd:328d:66df::/64
-- **EID del OTBR**: fdc6:63fd:328d:66df:6a54:12ef:8c67:bd1c
-- **OTBR es mismo host** que ThingsBoard Edge (RPi4)
+- **OTBR EID**: fdc6:63fd:328d:66df:6a54:12ef:8c67:bd1c
+- **OTBR shares the same host** as ThingsBoard Edge (RPi4)
 
-### Capa 3: ThingsBoard Edge
-- **Imagen**: `thingsboard/tb-edge:4.2.1EDGE` (Docker, host networking)
-- **LwM2M Server**: Transporte LwM2M integrado en TB Edge, puerto 5683/udp
-- **API HTTP**: puerto 8090 (8080 ocupado por dppd OpenWrt)
-- **Base de datos**: PostgreSQL 15 (contenedor `tb-edge-postgres`)
-- **Función**: 
-  - Recibe datos LwM2M del nodo
-  - Aplica reglas de procesamiento locales
-  - Persiste telemetría en PostgreSQL
-  - Sincroniza bidireccionalmente con Cloud via gRPC
+### Layer 3: ThingsBoard Edge
+- **Image**: `thingsboard/tb-edge:4.2.1EDGE` (Docker, host networking)
+- **LwM2M Server**: LwM2M transport built into TB Edge, port 5683/udp
+- **HTTP API**: port 8090 (8080 occupied by OpenWrt dppd)
+- **Database**: PostgreSQL 15 (container `tb-edge-postgres`)
+- **Function**:
+  - Receives LwM2M data from the node
+  - Applies local rule engine processing
+  - Persists telemetry in PostgreSQL
+  - Bidirectionally syncs with Cloud via gRPC
 
-### Capa 4: ThingsBoard Cloud
-- **Host**: 192.168.1.159 (LAN on-premise)
-- **Versión**: ThingsBoard CE 4.2.1.1
-- **API**: Puerto 80
-- **gRPC**: Puerto 7070 (conexión desde Edge)
-- **Función**:
-  - Gestión centralizada de dispositivos y perfiles
-  - Dashboards de visualización
-  - Los cambios de perfil LwM2M deben hacerse aquí (Cloud REST API)
-    para que se propaguen al Edge sin reversión
+### Layer 4: ThingsBoard Cloud
+- **Host**: 192.168.1.159 (on-premise LAN)
+- **Version**: ThingsBoard CE 4.2.1.1
+- **API**: Port 80
+- **gRPC**: Port 7070 (connection from Edge)
+- **Function**:
+  - Centralized device and profile management
+  - Visualization dashboards
+  - LwM2M profile changes must be made here (Cloud REST API)
+    so they propagate to Edge without being reverted
 
-## Protocolo LwM2M — Detalles
+## LwM2M Protocol — Details
 
-### Registro y Observación
-1. Nodo arranca → se une a Thread mesh (~11s)
-2. Envía LwM2M Register a `coap://[OTBR_EID]:5683` (~17s total)
-3. TB Edge acepta registro → marca dispositivo ACTIVE
-4. Edge configura Observe en recursos del perfil `C2000_Monofasico_v2`
-5. Nodo envía Notify periódicamente según pmin/pmax configurados
+### Registration and Observation
+1. Node boots → joins Thread mesh (~11s)
+2. Sends LwM2M Register to `coap://[OTBR_EID]:5683` (~17s total)
+3. TB Edge accepts registration → marks device ACTIVE
+4. Edge configures Observe on resources from the `C2000_Monofasico_v2` profile
+5. Node sends Notify periodically according to configured pmin/pmax
 
-### Modelo de Observación (ObserveStrategy: SINGLE)
-**IMPORTANTE**: NO usar COMPOSITE_BY_OBJECT — causa Observe vacíos en Zephyr.
+### Observe Strategy (ObserveStrategy: SINGLE)
+**IMPORTANT**: Do NOT use COMPOSITE_BY_OBJECT — causes empty Observe in Zephyr.
 
-| Grupo | Recursos | pmin | pmax | Uso |
-|-------|----------|------|------|-----|
-| Telemetría Operacional | TensionR, CorrienteR, PotActivaR, EnergiaTotal | 15s | 30s | Monitoreo en tiempo real |
-| Caracterización de Carga | PotReactiva, PotAparente, FactorPotencia | 60s | 300s | Análisis de calidad |
-| Red y Sistema | Frecuencia, Device info, Connectivity, Firmware | 60s | 300s | Diagnóstico |
+| Group | Resources | pmin | pmax | Use |
+|-------|-----------|------|------|-----|
+| Operational Telemetry | VoltageR, CurrentR, ActivePowerR, TotalEnergy | 15s | 30s | Real-time monitoring |
+| Load Characterization | ReactivePower, ApparentPower, PowerFactor | 60s | 300s | Power quality analysis |
+| Network & System | Frequency, Device info, Connectivity, Firmware | 60s | 300s | Diagnostics |
 
-### Formato de Object Version (defaultObjectIDVer)
-El perfil LwM2M debe usar formato **"V"** (`"1.2"`, `"1.0"`, etc.)  
-**NUNCA** formato "VER" (`"3_1.2"`, `"10242_1.0"`) — causa mismatch en el registro.
+### Object Version Format (defaultObjectIDVer)
+The LwM2M profile must use the **"V"** format (`"1.2"`, `"1.0"`, etc.)  
+**NEVER** the "VER" format (`"3_1.2"`, `"10242_1.0"`) — causes mismatch during registration.
 
-## Comunicación RS485 / DLMS
+## RS485 / DLMS Communication
 
-### Protocolo
-- RS485 half-duplex con control DE/RE via GPIO
-- DLMS/COSEM (IEC 62056) sobre HDLC
-- Slave address: 1 (medidor), Client: 0x10
+### Protocol
+- RS485 half-duplex with DE/RE control via GPIO
+- DLMS/COSEM (IEC 62056) over HDLC
+- Slave address: 1 (meter), Client: 0x10
 
-### Tabla de Referencia Completa: OBIS → LwM2M → Telemetría
+### Complete Reference Table: OBIS → LwM2M → Telemetry
 
-El nodo lee el medidor cada **30 segundos** vía RS485/DLMS. Los valores se
-almacenan en el objeto LwM2M **10242** (PowerMeter, custom IPSO) y el servidor
-TB Edge los observa con dos grupos de frecuencia.
+The node reads the meter every **30 seconds** via RS485/DLMS. Values are stored
+in LwM2M object **10242** (PowerMeter, custom IPSO) and the TB Edge server
+observes them in two frequency groups.
 
-#### Grupo 1 — Telemetría Operacional (pmin=15s, pmax=30s)
+#### Group 1 — Operational Telemetry (pmin=15s, pmax=30s)
 
-| OBIS Code | Magnitud | Unidad | LwM2M Path | RID | Telemetry Key | Tipo |
-|-----------|----------|--------|------------|-----|---------------|------|
-| 1-1:32.7.0 | Tensión fase R | V | /10242/0/4 | 4 | `voltage` | Float |
-| 1-1:31.7.0 | Corriente fase R | A | /10242/0/5 | 5 | `current` | Float |
-| 1-1:21.7.0 | Potencia activa R | kW | /10242/0/6 | 6 | `activePower` | Float |
-| 1-1:1.8.0 | Energía activa total | kWh | /10242/0/41 | 41 | `activeEnergy` | Float |
+| OBIS Code | Quantity | Unit | LwM2M Path | RID | Telemetry Key | Type |
+|-----------|----------|------|------------|-----|---------------|------|
+| 1-1:32.7.0 | Voltage phase R | V | /10242/0/4 | 4 | `voltage` | Float |
+| 1-1:31.7.0 | Current phase R | A | /10242/0/5 | 5 | `current` | Float |
+| 1-1:21.7.0 | Active power R | kW | /10242/0/6 | 6 | `activePower` | Float |
+| 1-1:1.8.0 | Total active energy | kWh | /10242/0/41 | 41 | `activeEnergy` | Float |
 
-#### Grupo 2 — Caracterización de Carga (pmin=60s, pmax=300s)
+#### Group 2 — Load Characterization (pmin=60s, pmax=300s)
 
-| OBIS Code | Magnitud | Unidad | LwM2M Path | RID | Telemetry Key | Tipo |
-|-----------|----------|--------|------------|-----|---------------|------|
-| 1-1:23.7.0 | Potencia reactiva R | kvar | /10242/0/7 | 7 | `reactivePower` | Float |
-| 1-1:29.7.0 | Potencia aparente R | kVA | /10242/0/10 | 10 | `apparentPower` | Float |
-| 1-1:33.7.0 | Factor de potencia R | — | /10242/0/11 | 11 | `powerFactor` | Float |
-| 1-1:1.7.0 | Potencia activa total | kW | /10242/0/34 | 34 | `totalActivePower` | Float |
-| 1-1:3.7.0 | Potencia reactiva total | kvar | /10242/0/35 | 35 | `totalReactivePower` | Float |
-| 1-1:9.7.0 | Potencia aparente total | kVA | /10242/0/38 | 38 | `totalApparentPower` | Float |
-| 1-1:13.7.0 | Factor de potencia total | — | /10242/0/39 | 39 | `totalPowerFactor` | Float |
-| 1-1:1.8.0 | Energía reactiva | kvarh | /10242/0/42 | 42 | `reactiveEnergy` | Float |
-| 1-1:9.8.0 | Energía aparente | kVAh | /10242/0/45 | 45 | `apparentEnergy` | Float |
-| 1-1:14.7.0 | Frecuencia | Hz | /10242/0/49 | 49 | `frequency` | Float |
+| OBIS Code | Quantity | Unit | LwM2M Path | RID | Telemetry Key | Type |
+|-----------|----------|------|------------|-----|---------------|------|
+| 1-1:23.7.0 | Reactive power R | kvar | /10242/0/7 | 7 | `reactivePower` | Float |
+| 1-1:29.7.0 | Apparent power R | kVA | /10242/0/10 | 10 | `apparentPower` | Float |
+| 1-1:33.7.0 | Power factor R | — | /10242/0/11 | 11 | `powerFactor` | Float |
+| 1-1:1.7.0 | Total active power | kW | /10242/0/34 | 34 | `totalActivePower` | Float |
+| 1-1:3.7.0 | Total reactive power | kvar | /10242/0/35 | 35 | `totalReactivePower` | Float |
+| 1-1:9.7.0 | Total apparent power | kVA | /10242/0/38 | 38 | `totalApparentPower` | Float |
+| 1-1:13.7.0 | Total power factor | — | /10242/0/39 | 39 | `totalPowerFactor` | Float |
+| 1-1:1.8.0 | Reactive energy | kvarh | /10242/0/42 | 42 | `reactiveEnergy` | Float |
+| 1-1:9.8.0 | Apparent energy | kVAh | /10242/0/45 | 45 | `apparentEnergy` | Float |
+| 1-1:14.7.0 | Frequency | Hz | /10242/0/49 | 49 | `frequency` | Float |
 
-#### Recursos adicionales observados (Grupo 2 — pmin=60s, pmax=300s)
+#### Additional observed resources (Group 2 — pmin=60s, pmax=300s)
 
-| Objeto | LwM2M Path | RID | Telemetry Key | Descripción |
+| Object | LwM2M Path | RID | Telemetry Key | Description |
 |--------|------------|-----|---------------|-------------|
-| ConnMon (4) | /4/0/2 | 2 | `radioSignalStrength` | RSSI de la radio 802.15.4 |
-| ConnMon (4) | /4/0/3 | 3 | `linkQuality` | Calidad del enlace Thread |
-| Firmware (5) | /5/0/3 | 3 | `fwState` | Estado de actualización OTA |
-| Firmware (5) | /5/0/5 | 5 | `fwUpdateResult` | Resultado de la última OTA |
+| ConnMon (4) | /4/0/2 | 2 | `radioSignalStrength` | 802.15.4 radio RSSI |
+| ConnMon (4) | /4/0/3 | 3 | `linkQuality` | Thread link quality |
+| Firmware (5) | /5/0/3 | 3 | `fwState` | OTA update state |
+| Firmware (5) | /5/0/5 | 5 | `fwUpdateResult` | Last OTA result |
 
-#### Atributos (lectura única al registrar, sin observe)
+#### Attributes (read once at registration, no observe)
 
-| Objeto | LwM2M Path | RID | Attribute Key | Descripción |
+| Object | LwM2M Path | RID | Attribute Key | Description |
 |--------|------------|-----|---------------|-------------|
 | Device (3) | /3/0/0 | 0 | `manufacturer` | Tesis-AMI |
 | Device (3) | /3/0/1 | 1 | `modelNumber` | XIAO-ESP32-C6 |
 | Device (3) | /3/0/2 | 2 | `serialNumber` | AMI-001 |
 
-#### Resumen de Temporización
+#### Timing Summary
 
-| Etapa | Intervalo | Notas |
-|-------|-----------|-------|
-| Lectura DLMS (RS485) | 30s | Polling del medidor vía HDLC/COSEM |
-| Observe Grupo 1 | pmin=15s, pmax=30s | Voltaje, corriente, potencia activa, energía |
-| Observe Grupo 2 | pmin=60s, pmax=300s | Calidad, totales, frecuencia, radio, firmware |
-| LwM2M Registration Update | ~270s | Lifetime=300s, renueva 30s antes de expirar |
-| LwM2M Lifetime | 300s | Si no renueva, servidor marca INACTIVE |
+| Stage | Interval | Notes |
+|-------|----------|-------|
+| DLMS read (RS485) | 30s | Meter polling via HDLC/COSEM |
+| Observe Group 1 | pmin=15s, pmax=30s | Voltage, current, active power, energy |
+| Observe Group 2 | pmin=60s, pmax=300s | Power quality, totals, frequency, radio, firmware |
+| LwM2M Registration Update | ~270s | Lifetime=300s, renews 30s before expiry |
+| LwM2M Lifetime | 300s | If not renewed, server marks device INACTIVE |
 
 ## Deployment — Docker Compose (Edge)
 
-Ver [config_backups/docker-compose.yml](../config_backups/docker-compose.yml) para
-el archivo completo. Variables de entorno críticas:
+See [config_backups/docker-compose.yml](../config_backups/docker-compose.yml) for
+the full file. Critical environment variables:
 
 ```yaml
 environment:
   CLOUD_ROUTING_KEY: "1lg060jcvfp2tylc78mt"
   CLOUD_ROUTING_SECRET: "o1bcx4arcldnkjirru8n"
-  CLOUD_RPC_HOST: "192.168.1.159"     # LAN directo (NO Tailscale)
+  CLOUD_RPC_HOST: "192.168.1.159"     # Direct LAN (NOT Tailscale)
   LWM2M_BIND_PORT: "5683"
   LWM2M_SECURITY_BIND_PORT: "5684"
-  COAP_BIND_PORT: "5690"              # Diferente de LwM2M para evitar conflicto
-  COAP_ENABLED: "false"               # CoAP deshabilitado (solo usamos LwM2M)
+  COAP_BIND_PORT: "5690"              # Different from LwM2M to avoid conflict
+  COAP_ENABLED: "false"               # CoAP disabled (LwM2M only)
   SPRING_DATASOURCE_USERNAME: "tb_edge"
   SPRING_DATASOURCE_PASSWORD: "tb_edge_pwd"
 ```
 
-## Credenciales
+## Credentials
 
-| Componente | Usuario | Contraseña | Notas |
-|------------|---------|------------|-------|
+| Component | Username | Password | Notes |
+|-----------|----------|----------|-------|
 | TB Edge Web | tenant@thingsboard.org | tenant | HTTP 8090 |
 | TB Cloud API | tenant@thingsboard.org | tenant | HTTP 80 |
 | PostgreSQL Edge | tb_edge | tb_edge_pwd | DB: tb_edge |
@@ -218,7 +218,7 @@ environment:
 
 ## Thread Network
 
-| Parámetro | Valor |
+| Parameter | Value |
 |-----------|-------|
 | Network Name | AMI-Pilot-2025 |
 | Channel | 25 |
