@@ -51,12 +51,11 @@
 #define PM_REACTIVE_ENERGY_RID   42  /* kvarh */
 #define PM_APPARENT_ENERGY_RID   45  /* kVAh */
 #define PM_FREQUENCY_RID         49  /* Hz */
-#define PM_NEUTRAL_CURRENT_RID   50  /* A */
 
 /* Number of resources we implement */
-#define PM_NUM_FIELDS            31
+#define PM_NUM_FIELDS            30
 /* Resource instances = fields minus exec resources (0 exec) */
-#define PM_RES_INST_COUNT        31
+#define PM_RES_INST_COUNT        30
 #define PM_MAX_INSTANCES         1
 
 /* String buffer sizes */

@@ -17,14 +17,20 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/logging/log_ctrl.h>
+#include <zephyr/sys/reboot.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/net/lwm2m.h>
 #include <zephyr/net/net_if.h>
 #include <zephyr/random/random.h>
 #include <zephyr/shell/shell.h>
+#include <zephyr/init.h>
 #include <openthread.h>
 #include <openthread/thread.h>
 #include <openthread/instance.h>
+#include <openthread/dataset.h>
+#include <openthread/ip6.h>
+#include <openthread/platform/radio.h>
 
 #include "lwm2m_obj_power_meter.h"
 #include "lwm2m_obj_thread_diag.h"
@@ -44,6 +50,33 @@ extern void init_thread_diag_object(void);
 extern void update_connectivity_metrics(void);
 
 LOG_MODULE_REGISTER(ami_lwm2m, LOG_LEVEL_INF);
+
+/* Early SYS_INIT to confirm kernel is running before main() */
+extern int esp_rom_printf(const char *fmt, ...);
+
+/* PRE_KERNEL_1: fires before any driver init — absolute earliest */
+static int boot_pre_kernel(void)
+{
+	esp_rom_printf("\r\n[AMI] PRE_KERNEL_1 OK\r\n");
+	return 0;
+}
+SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
+
+/* POST_KERNEL: fires after drivers are up */
+static int boot_post_kernel(void)
+{
+	esp_rom_printf("[AMI] POST_KERNEL OK\r\n");
+	return 0;
+}
+SYS_INIT(boot_post_kernel, POST_KERNEL, 0);
+
+/* APPLICATION: fires just before main() */
+static int boot_application(void)
+{
+	esp_rom_printf("[AMI] APPLICATION init OK\r\n");
+	return 0;
+}
+SYS_INIT(boot_application, APPLICATION, 0);
 
 /* ---- Configuration ---- */
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
@@ -95,6 +128,8 @@ static int device_reboot_cb(uint16_t obj_inst_id,
 			    uint8_t *args, uint16_t args_len)
 {
 	LOG_INF("DEVICE: Reboot requested");
+	k_sleep(K_MSEC(100));
+	sys_reboot(SYS_REBOOT_COLD);
 	return 0;
 }
 
@@ -139,17 +174,35 @@ static void rd_client_event(struct lwm2m_ctx *client,
 	}
 }
 
+/* Observe summary: one LOG_INF after 500 ms of quiet instead of one line per resource */
+static int observe_total;
+
+static void observe_summary_work_fn(struct k_work *w)
+{
+	LOG_INF("Observe: %d resource(s) active", observe_total);
+}
+
+static K_WORK_DELAYABLE_DEFINE(observe_summary_work, observe_summary_work_fn);
+
 static void observe_cb(enum lwm2m_observe_event event,
 		       struct lwm2m_obj_path *path, void *user_data)
 {
 	switch (event) {
 	case LWM2M_OBSERVE_EVENT_OBSERVER_ADDED:
-		LOG_INF("Observe started: /%u/%u/%u",
-			path->obj_id, path->obj_inst_id, path->res_id);
+		observe_total++;
+		LOG_DBG("Observe started: /%u/%u/%u (%d active)",
+			path->obj_id, path->obj_inst_id, path->res_id,
+			observe_total);
+		k_work_reschedule(&observe_summary_work, K_MSEC(500));
 		break;
 	case LWM2M_OBSERVE_EVENT_OBSERVER_REMOVED:
-		LOG_INF("Observe stopped: /%u/%u/%u",
-			path->obj_id, path->obj_inst_id, path->res_id);
+		if (observe_total > 0) {
+			observe_total--;
+		}
+		LOG_DBG("Observe stopped: /%u/%u/%u (%d active)",
+			path->obj_id, path->obj_inst_id, path->res_id,
+			observe_total);
+		k_work_reschedule(&observe_summary_work, K_MSEC(500));
 		break;
 	case LWM2M_OBSERVE_EVENT_NOTIFY_ACK:
 		LOG_DBG("Notify ACK: /%u/%u/%u",
@@ -216,7 +269,6 @@ static int lwm2m_setup(void)
 
 	LOG_INF("LwM2M objects configured");
 	LOG_INF("  Server: %s", LWM2M_SERVER_URI);
-	LOG_INF("  Endpoint: %s", endpoint_name);
 	return 0;
 }
 
@@ -246,17 +298,494 @@ SHELL_CMD_ARG_REGISTER(dlms_interval, NULL,
 		       "Set DLMS meter poll interval in seconds (5-300, default 15)",
 		       cmd_dlms_interval, 2, 0);
 
-/* v0.15.0: force_notify_f64() and notify_all_observers() removed.
- * Threshold-based smart notification in meter_push_to_lwm2m() handles
- * all observer notifications directly after each DLMS poll cycle.
- */
-
 /*
  * v0.17.0: Consecutive meter failure tracking.
  * After MAX_CONSEC_FAILURES, suppress data to avoid pushing stale values.
  */
 #define MAX_CONSEC_FAILURES  5
 static int consecutive_meter_failures;
+
+/* ---- Dedicated DLMS poll thread — semaphore and running flag ---- */
+static K_SEM_DEFINE(dlms_poll_sem, 0, 1);
+static volatile bool dlms_thread_running;
+
+/* ================================================================
+ * ami test commands
+ * Usage:
+ *   ami status          — overall node status
+ *   ami test thread     — Thread network connectivity
+ *   ami test lwm2m      — LwM2M registration
+ *   ami test dlms       — trigger DLMS poll and report readings
+ *   ami test all        — run all tests
+ * ================================================================ */
+
+static int cmd_ami_status(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	int64_t uptime_ms = k_uptime_get();
+	int uptime_s = (int)(uptime_ms / 1000);
+
+	shell_print(sh, "=== AMI Node Status (uptime %ds) ===", uptime_s);
+
+	/* Thread role */
+	openthread_mutex_lock();
+	struct otInstance *ot = openthread_get_default_instance();
+	otDeviceRole role = ot ? otThreadGetDeviceRole(ot) : OT_DEVICE_ROLE_DISABLED;
+	int8_t rssi = ot ? otPlatRadioGetRssi(ot) : -127;
+	openthread_mutex_unlock();
+
+	static const char * const role_str[] = {
+		"DISABLED", "DETACHED", "CHILD", "ROUTER", "LEADER"
+	};
+	bool thread_ok = (role >= OT_DEVICE_ROLE_CHILD);
+
+	shell_print(sh, "  Thread : %s  role=%s  RSSI=%ddBm",
+		    thread_ok ? "OK" : "FAIL",
+		    role < ARRAY_SIZE(role_str) ? role_str[role] : "?",
+		    rssi);
+
+	/* LwM2M */
+	shell_print(sh, "  LwM2M  : %s", lwm2m_connected ? "OK  (registered)" : "FAIL (not registered)");
+
+	/* DLMS */
+	shell_print(sh, "  DLMS   : %s  failures=%d  poll_interval=%ds",
+		    meter_initialized ? "OK" : "INIT_PENDING",
+		    consecutive_meter_failures,
+		    dlms_poll_interval_s);
+
+	if (meter_initialized && consecutive_meter_failures == 0) {
+		shell_print(sh, "    Vr=%.2fV  Ir=%.3fA  Ptot=%.3fkW  E=%.3fkWh  f=%.2fHz",
+			    last_readings.voltage_r,
+			    last_readings.current_r,
+			    last_readings.total_active_power,
+			    last_readings.active_energy,
+			    last_readings.frequency);
+	}
+
+	shell_print(sh, "  Result : %s",
+		    (thread_ok && lwm2m_connected) ? "ALL OK" :
+		    (!thread_ok && !lwm2m_connected) ? "THREAD+LWM2M DOWN" :
+		    !thread_ok ? "THREAD DOWN" : "LWM2M DOWN");
+	return 0;
+}
+
+static int cmd_ami_test_thread(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	shell_print(sh, "[TEST] Thread network...");
+
+	openthread_mutex_lock();
+	struct otInstance *ot = openthread_get_default_instance();
+
+	if (!ot) {
+		openthread_mutex_unlock();
+		shell_error(sh, "FAIL: OpenThread instance not available");
+		return -EIO;
+	}
+
+	otDeviceRole role = otThreadGetDeviceRole(ot);
+	int8_t rssi = otPlatRadioGetRssi(ot);
+	uint16_t rloc = otThreadGetRloc16(ot);
+	uint8_t chan = otLinkGetChannel(ot);
+
+	/* Count neighbors */
+	int neighbor_count = 0;
+	otNeighborInfoIterator iter = OT_NEIGHBOR_INFO_ITERATOR_INIT;
+	otNeighborInfo info;
+
+	while (otThreadGetNextNeighborInfo(ot, &iter, &info) == OT_ERROR_NONE) {
+		neighbor_count++;
+	}
+
+	openthread_mutex_unlock();
+
+	static const char * const role_str[] = {
+		"DISABLED", "DETACHED", "CHILD", "ROUTER", "LEADER"
+	};
+
+	shell_print(sh, "  role      : %s",
+		    role < ARRAY_SIZE(role_str) ? role_str[role] : "?");
+	shell_print(sh, "  RLOC16    : 0x%04x", rloc);
+	shell_print(sh, "  channel   : %u", chan);
+	shell_print(sh, "  RSSI      : %d dBm", rssi);
+	shell_print(sh, "  neighbors : %d", neighbor_count);
+
+	if (role >= OT_DEVICE_ROLE_CHILD) {
+		shell_print(sh, "  [PASS] Thread attached");
+		return 0;
+	} else {
+		shell_error(sh, "  [FAIL] Thread not attached (role=%d)", (int)role);
+		return -ENETDOWN;
+	}
+}
+
+static int cmd_ami_test_lwm2m(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	shell_print(sh, "[TEST] LwM2M registration...");
+
+	if (lwm2m_connected) {
+		shell_print(sh, "  endpoint  : %s", endpoint_name);
+		shell_print(sh, "  server    : %s", LWM2M_SERVER_URI);
+		shell_print(sh, "  [PASS] LwM2M registered");
+		return 0;
+	} else {
+		shell_error(sh, "  [FAIL] LwM2M not registered");
+		return -ENOTCONN;
+	}
+}
+
+static int cmd_ami_test_dlms(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	shell_print(sh, "[TEST] DLMS meter poll (max 15s)...");
+
+	/* Trigger a poll if the thread is idle */
+	if (dlms_thread_running) {
+		shell_print(sh, "  DLMS poll already in progress, waiting...");
+	} else {
+		k_sem_give(&dlms_poll_sem);
+	}
+
+	/* Wait up to 15s for the poll to complete */
+	int waited = 0;
+
+	while (dlms_thread_running && waited < 150) {
+		k_sleep(K_MSEC(100));
+		waited++;
+	}
+
+	if (waited >= 150) {
+		shell_error(sh, "  [FAIL] DLMS poll timed out after 15s");
+		return -ETIMEDOUT;
+	}
+
+	if (consecutive_meter_failures > 0) {
+		shell_error(sh, "  [FAIL] meter poll failed (%d consecutive failures)",
+			    consecutive_meter_failures);
+		return -EIO;
+	}
+
+	shell_print(sh, "  voltage_r     : %.2f V",   last_readings.voltage_r);
+	shell_print(sh, "  current_r     : %.3f A",   last_readings.current_r);
+	shell_print(sh, "  total_power   : %.3f kW",  last_readings.total_active_power);
+	shell_print(sh, "  active_energy : %.3f kWh", last_readings.active_energy);
+	shell_print(sh, "  frequency     : %.2f Hz",  last_readings.frequency);
+	shell_print(sh, "  [PASS] DLMS meter reachable");
+	return 0;
+}
+
+static int cmd_ami_test_all(const struct shell *sh, size_t argc, char **argv)
+{
+	int ret, overall = 0;
+
+	shell_print(sh, "=== AMI full test ===");
+
+	ret = cmd_ami_test_thread(sh, argc, argv);
+	if (ret) {
+		overall = ret;
+	}
+
+	ret = cmd_ami_test_lwm2m(sh, argc, argv);
+	if (ret) {
+		overall = ret;
+	}
+
+	ret = cmd_ami_test_dlms(sh, argc, argv);
+	if (ret) {
+		overall = ret;
+	}
+
+	shell_print(sh, "=== %s ===", overall == 0 ? "ALL PASS" : "SOME FAILURES");
+	return overall;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(ami_test_cmds,
+	SHELL_CMD(thread, NULL, "Test Thread network attachment", cmd_ami_test_thread),
+	SHELL_CMD(lwm2m,  NULL, "Test LwM2M server registration", cmd_ami_test_lwm2m),
+	SHELL_CMD(dlms,   NULL, "Trigger DLMS poll and report readings", cmd_ami_test_dlms),
+	SHELL_CMD(all,    NULL, "Run all tests", cmd_ami_test_all),
+	SHELL_SUBCMD_SET_END
+);
+
+/* ================================================================
+ * ami log commands — runtime DLMS/RS485 log verbosity control
+ *   ami log quiet    — suppress all DLMS modules to WRN (no INF)
+ *   ami log verbose  — enable DBG for all DLMS modules
+ *   ami log meter    — enable dlms_meter DBG only
+ *   ami log cosem    — enable dlms_cosem DBG only
+ *   ami log hdlc     — enable dlms_hdlc DBG only
+ *   ami log rs485    — enable rs485 DBG only
+ * ================================================================
+ */
+static const char * const dlms_dbg_modules[] = {
+	"rs485", "dlms_hdlc", "dlms_cosem", "dlms_meter"
+};
+
+static void set_dlms_log_level(uint32_t level)
+{
+	for (int m = 0; m < ARRAY_SIZE(dlms_dbg_modules); m++) {
+		int32_t src_id = log_source_id_get(dlms_dbg_modules[m]);
+
+		if (src_id < 0) {
+			continue;
+		}
+		for (uint32_t b = 0; b < log_backend_count_get(); b++) {
+			log_filter_set(log_backend_get(b), 0,
+				       (uint32_t)src_id, level);
+		}
+	}
+}
+
+/*
+ * Suppress net_lwm2m_registry ERR noise at startup.
+ *
+ * When the device re-registers, Leshan restores observations stored from the
+ * previous session.  If object/resource instance counts changed (e.g. fewer
+ * Thread neighbours), the LwM2M engine logs harmless "res instance X not found"
+ * ERRs while the server re-syncs.  We suppress the module for 25 s — well past
+ * the observe-storm window (~12 s) — then restore it to INF so real errors
+ * remain visible during normal operation.
+ */
+static void restore_lwm2m_registry_fn(struct k_work *w)
+{
+	int32_t src_id = log_source_id_get("net_lwm2m_registry");
+
+	if (src_id < 0) {
+		return;
+	}
+	for (uint32_t b = 0; b < log_backend_count_get(); b++) {
+		log_filter_set(log_backend_get(b), 0,
+			       (uint32_t)src_id, LOG_LEVEL_INF);
+	}
+	LOG_DBG("net_lwm2m_registry log restored to INF");
+}
+
+static K_WORK_DELAYABLE_DEFINE(restore_lwm2m_registry_work,
+			       restore_lwm2m_registry_fn);
+
+static void suppress_lwm2m_registry_startup_noise(void)
+{
+	int32_t src_id = log_source_id_get("net_lwm2m_registry");
+
+	if (src_id < 0) {
+		return; /* module not found — nothing to suppress */
+	}
+	for (uint32_t b = 0; b < log_backend_count_get(); b++) {
+		log_filter_set(log_backend_get(b), 0,
+			       (uint32_t)src_id, LOG_LEVEL_NONE);
+	}
+	k_work_schedule(&restore_lwm2m_registry_work, K_SECONDS(25));
+}
+
+static int cmd_ami_log_quiet(const struct shell *sh, size_t argc, char **argv)
+{
+	set_dlms_log_level(LOG_LEVEL_WRN);
+	shell_print(sh, "DLMS/RS485 log: WRN (quiet) — all INF suppressed. Use 'ami log verbose' or 'ami log <module>' to re-enable");
+	return 0;
+}
+
+static int cmd_ami_log_verbose(const struct shell *sh, size_t argc, char **argv)
+{
+	set_dlms_log_level(LOG_LEVEL_DBG);
+	shell_print(sh, "DLMS/RS485 log: DBG (verbose) — use 'ami log quiet' to suppress all");
+	return 0;
+}
+
+static int set_single_module_dbg(const struct shell *sh, const char *module)
+{
+	int32_t src_id = log_source_id_get(module);
+
+	if (src_id < 0) {
+		shell_error(sh, "Module '%s' not found", module);
+		return -ENOENT;
+	}
+	for (uint32_t b = 0; b < log_backend_count_get(); b++) {
+		log_filter_set(log_backend_get(b), 0, (uint32_t)src_id, LOG_LEVEL_DBG);
+	}
+	shell_print(sh, "%s: DBG enabled — use 'ami log quiet' to suppress all", module);
+	return 0;
+}
+
+static int cmd_ami_log_meter(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc); ARG_UNUSED(argv);
+	return set_single_module_dbg(sh, "dlms_meter");
+}
+
+static int cmd_ami_log_cosem(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc); ARG_UNUSED(argv);
+	return set_single_module_dbg(sh, "dlms_cosem");
+}
+
+static int cmd_ami_log_hdlc(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc); ARG_UNUSED(argv);
+	return set_single_module_dbg(sh, "dlms_hdlc");
+}
+
+static int cmd_ami_log_rs485(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc); ARG_UNUSED(argv);
+	return set_single_module_dbg(sh, "rs485");
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(ami_log_cmds,
+	SHELL_CMD(quiet,   NULL, "Suppress all DLMS/RS485 logging (WRN, no INF)", cmd_ami_log_quiet),
+	SHELL_CMD(verbose, NULL, "Enable all DLMS/RS485 debug logging (DBG)",     cmd_ami_log_verbose),
+	SHELL_CMD(meter,   NULL, "Enable dlms_meter DBG only",                    cmd_ami_log_meter),
+	SHELL_CMD(cosem,   NULL, "Enable dlms_cosem DBG only",                    cmd_ami_log_cosem),
+	SHELL_CMD(hdlc,    NULL, "Enable dlms_hdlc DBG only",                     cmd_ami_log_hdlc),
+	SHELL_CMD(rs485,   NULL, "Enable rs485 DBG only",                         cmd_ami_log_rs485),
+	SHELL_SUBCMD_SET_END
+);
+
+static int cmd_ami_reset(const struct shell *sh, size_t argc, char **argv)
+{
+	shell_print(sh, "Rebooting...");
+	k_sleep(K_MSEC(100));
+	sys_reboot(SYS_REBOOT_COLD);
+	return 0;
+}
+
+static int cmd_ami_diag(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc); ARG_UNUSED(argv);
+
+	shell_print(sh, "=== DLMS OBIS Diagnostics (polls=%u  T_avg=%lldms) ===",
+		    meter_get_poll_count(), meter_get_avg_poll_duration_ms());
+
+	size_t n = meter_get_obis_table_size();
+
+	for (int i = 0; i < (int)n; i++) {
+		uint32_t s, f, r, sk;
+
+		meter_get_obis_diag(i, &s, &f, &r, &sk);
+		const char *name = meter_get_obis_name(i);
+		const char *st;
+
+		if (meter_get_obis_user_skip(i)) {
+			st = "USER";
+		} else if (sk > 0 && s == 0) {
+			st = "AUTO";
+		} else if (f > 0) {
+			st = "ERR ";
+		} else {
+			st = "OK  ";
+		}
+
+		shell_print(sh, "  [%2d] %-22s %s ok=%-4u fail=%-3u retry=%-3u skip=%u",
+			    i, name, st, s, f, r, sk);
+	}
+	return 0;
+}
+
+/* ---- ami obis subcommands ---- */
+static int cmd_ami_obis_list(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc); ARG_UNUSED(argv);
+
+	shell_print(sh, "  Idx  Name                     State");
+	shell_print(sh, "  ---  -----------------------  ---------");
+	size_t n = meter_get_obis_table_size();
+
+	for (int i = 0; i < (int)n; i++) {
+		const char *st;
+
+		if (meter_get_obis_user_skip(i)) {
+			st = "USER-SKIP";
+		} else if (meter_get_obis_skip(i)) {
+			st = "AUTO-SKIP";
+		} else {
+			st = "OK";
+		}
+		shell_print(sh, "  [%2d] %-23s  %s", i, meter_get_obis_name(i), st);
+	}
+	return 0;
+}
+
+static int cmd_ami_obis_skip(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc < 2) {
+		shell_error(sh, "Usage: ami obis skip <index>");
+		return -EINVAL;
+	}
+
+	char *end;
+	long idx = strtol(argv[1], &end, 10);
+
+	if (*end != '\0' || idx < 0 || (size_t)idx >= meter_get_obis_table_size()) {
+		shell_error(sh, "Invalid index '%s' (0..%zu)", argv[1],
+			    meter_get_obis_table_size() - 1);
+		return -EINVAL;
+	}
+
+	int ret = meter_set_obis_user_skip((int)idx, true);
+
+	if (ret == 0) {
+		shell_print(sh, "OBIS [%ld] '%s' -> USER-SKIP", idx,
+			    meter_get_obis_name((int)idx));
+	}
+	return ret;
+}
+
+static int cmd_ami_obis_enable(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc < 2) {
+		shell_error(sh, "Usage: ami obis enable <index>");
+		return -EINVAL;
+	}
+
+	char *end;
+	long idx = strtol(argv[1], &end, 10);
+
+	if (*end != '\0' || idx < 0 || (size_t)idx >= meter_get_obis_table_size()) {
+		shell_error(sh, "Invalid index '%s' (0..%zu)", argv[1],
+			    meter_get_obis_table_size() - 1);
+		return -EINVAL;
+	}
+
+	int ret = meter_set_obis_user_skip((int)idx, false);
+
+	if (ret == 0) {
+		shell_print(sh, "OBIS [%ld] '%s' -> OK (auto-skip also cleared)", idx,
+			    meter_get_obis_name((int)idx));
+	}
+	return ret;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(ami_obis_cmds,
+	SHELL_CMD(list,   NULL, "List OBIS codes and their polling state", cmd_ami_obis_list),
+	SHELL_CMD_ARG(skip,   NULL, "Force-skip an OBIS code: skip <index>",   cmd_ami_obis_skip,   2, 0),
+	SHELL_CMD_ARG(enable, NULL, "Re-enable an OBIS code:  enable <index>", cmd_ami_obis_enable, 2, 0),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_STATIC_SUBCMD_SET_CREATE(ami_cmds,
+	SHELL_CMD(status, NULL, "Show overall node status",             cmd_ami_status),
+	SHELL_CMD(test,   &ami_test_cmds, "Run subsystem tests",        NULL),
+	SHELL_CMD(log,    &ami_log_cmds,  "Control DLMS/RS485 log verbosity", NULL),
+	SHELL_CMD(diag,   NULL,           "Show per-OBIS read diagnostics",   cmd_ami_diag),
+	SHELL_CMD(obis,   &ami_obis_cmds, "OBIS polling control (list/skip/enable)", NULL),
+	SHELL_CMD(reset,  NULL,           "Reboot the node",                  cmd_ami_reset),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_CMD_REGISTER(ami, &ami_cmds, "AMI node test commands", NULL);
+
+/* v0.15.0: force_notify_f64() and notify_all_observers() removed.
+ * Threshold-based smart notification in meter_push_to_lwm2m() handles
+ * all observer notifications directly after each DLMS poll cycle.
+ */
 
 /* ---- Read real meter data via RS485/DLMS ---- */
 static void update_sensors(void)
@@ -303,9 +832,6 @@ static void update_sensors(void)
 }
 
 /* ---- Dedicated DLMS poll thread ---- */
-static K_SEM_DEFINE(dlms_poll_sem, 0, 1);
-static volatile bool dlms_thread_running;
-
 static void dlms_thread_entry(void *p1, void *p2, void *p3)
 {
 	ARG_UNUSED(p1);
@@ -336,6 +862,82 @@ static void update_sensors_fallback(void)
 	LOG_WRN("Meter unavailable — keeping last known values (no zeros sent)");
 }
 
+/*
+ * Apply the exact OTBR active dataset and start Thread.
+ * CONFIG_OPENTHREAD_MANUAL_START=y prevents auto-start, so we set
+ * the dataset first and start Thread exactly once — avoiding the
+ * radio stop/restart that triggers an ESP-IDF interrupt re-alloc bug.
+ *
+ * TLV blob exported from OTBR via: ot-ctl dataset active -x
+ */
+static void apply_otbr_dataset(void)
+{
+	static const uint8_t otbr_tlvs[] = {
+		/* OTBR active dataset — exported via: ot-ctl dataset active -x
+		 * Network: UNAL-Thread, Ch25, PAN 0x23ED
+		 * Mesh-local: fdf5:bffd:0bd6:ef74::/64
+		 */
+		0x0e, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+		0x4a, 0x03, 0x00, 0x00, 0x0f, 0x35, 0x06, 0x00, 0x04, 0x00,
+		0x1f, 0xff, 0xe0, 0x02, 0x08, 0x1a, 0x25, 0x78, 0xdd, 0x6e,
+		0xe3, 0x57, 0x3b, 0x07, 0x08, 0xfd, 0xf5, 0xbf, 0xfd, 0x0b,
+		0xd6, 0xef, 0x74, 0x05, 0x10, 0x5e, 0xde, 0xbe, 0xad, 0x64,
+		0x40, 0x5b, 0x3e, 0x17, 0x19, 0x36, 0x46, 0xc2, 0x94, 0x22,
+		0x85, 0x01, 0x02, 0x23, 0xed, 0x04, 0x10, 0xbb, 0x7e, 0x7a,
+		0xee, 0x56, 0x23, 0x6e, 0xa9, 0x6a, 0xc8, 0xdc, 0x65, 0xbb,
+		0xa1, 0x83, 0x51, 0x0c, 0x04, 0x02, 0xa0, 0xf7, 0xf8, 0x03,
+		0x0b, 0x55, 0x4e, 0x41, 0x4c, 0x2d, 0x54, 0x68, 0x72, 0x65,
+		0x61, 0x64, 0x00, 0x03, 0x00, 0x00, 0x19,
+	};
+
+	openthread_mutex_lock();
+	struct otInstance *ot = openthread_get_default_instance();
+
+	if (!ot) {
+		LOG_ERR("OpenThread instance not available");
+		openthread_mutex_unlock();
+		return;
+	}
+
+	/* Erase any stale persistent Thread state from previous boots */
+	otInstanceErasePersistentInfo(ot);
+	LOG_INF("Persistent info erased");
+
+	/* Set the full OTBR dataset (Thread not yet started due to MANUAL_START) */
+	otOperationalDatasetTlvs dataset;
+
+	memcpy(dataset.mTlvs, otbr_tlvs, sizeof(otbr_tlvs));
+	dataset.mLength = sizeof(otbr_tlvs);
+
+	otError err = otDatasetSetActiveTlvs(ot, &dataset);
+
+	if (err != OT_ERROR_NONE) {
+		LOG_ERR("otDatasetSetActiveTlvs failed: %d", (int)err);
+		openthread_mutex_unlock();
+		return;
+	}
+
+	LOG_INF("OTBR dataset applied (mesh-local fdf5:bffd:0bd6:ef74::/64)");
+	LOG_INF("Dataset commissioned: %s",
+		otDatasetIsCommissioned(ot) ? "yes" : "no");
+
+	/* Set TX power to maximum (20 dBm) before enabling radio */
+	otPlatRadioSetTransmitPower(ot, 20);
+	LOG_INF("TX power set to 20 dBm");
+
+	/* Enable IPv6 (this triggers otPlatRadioEnable → radio SLEEP) */
+	otIp6SetEnabled(ot, true);
+	LOG_INF("IPv6 enabled, radio state: %d",
+		(int)otPlatRadioGetState(ot));
+
+	/* Start Thread (this triggers otPlatRadioReceive → radio RX) */
+	otThreadSetEnabled(ot, true);
+	LOG_INF("Thread started, radio state: %d",
+		(int)otPlatRadioGetState(ot));
+
+	openthread_mutex_unlock();
+}
+
 /* ---- Main ---- */
 static void build_endpoint_name(void)
 {
@@ -357,19 +959,31 @@ int main(void)
 {
 	int ret;
 
-	/* raw printk — bypasses LOG system, goes directly to uart_console */
-	printk("\n\n*** AMI MAIN ENTRY ***\n");
-	printk("*** Firmware: v%s ***\n", CLIENT_FIRMWARE_VER);
+	esp_rom_printf("\r\n[AMI] main() ENTERED\r\n");
+
+	/* Diagnostic: verify main() is executing and console works */
+	k_sleep(K_MSEC(500));
+	esp_rom_printf("[AMI] After 500ms sleep, printk next\r\n");
+	printk("\n\n*** AMI ALIVE v%s ***\n", CLIENT_FIRMWARE_VER);
 
 	LOG_INF("=== AMI LwM2M Node v%s ===", CLIENT_FIRMWARE_VER);
 	LOG_INF("Board: %s", CONFIG_BOARD);
 	LOG_INF("Network: Thread Ch%d PAN 0x%04X",
 		CONFIG_OPENTHREAD_CHANNEL, CONFIG_OPENTHREAD_PANID);
 
+	/* Suppress DLMS/RS485 noise at startup — INF+DBG filtered out. Re-enable via 'ami log verbose' */
+	set_dlms_log_level(LOG_LEVEL_WRN);
+
+	/* Suppress cosmetic LwM2M registry re-sync errors at startup (restored after 25 s) */
+	suppress_lwm2m_registry_startup_noise();
+
 	/* LED init */
 	if (gpio_is_ready_dt(&led0)) {
 		gpio_pin_configure_dt(&led0, GPIO_OUTPUT_INACTIVE);
 	}
+
+	/* Apply OTBR dataset (mesh-local prefix + PSKc) before Thread attaches */
+	apply_otbr_dataset();
 
 	/* Poll OpenThread role until attached (Child/Router/Leader) */
 	LOG_INF("Waiting for Thread network...");

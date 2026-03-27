@@ -1,4 +1,4 @@
-# Zephyr build output
+﻿# Zephyr build output
 build/
 
 # IDE
@@ -18,44 +18,161 @@ Thumbs.db
 
 # ---- Debug / temp files (not part of firmware) ----
 
-# TB Edge deployment & debug scripts (keep edge/docker-compose.yml via force-add if needed)
+# TB Edge deployment & debug scripts
 edge/
-
-# All root-level Python debug/capture/check/fix/test scripts
-_ssh_logs.py
-boot_capture.py
-capture_after_powercycle.py
-check_edge.py
-clean_reset.py
-flash_capture.py
-power_cycle_capture.py
-raw_capture.py
-shell_diag.py
-shell_quick.py
-test_shell.py
 
 # Backup / old config files
 CMakeLists_boottest.txt
 CMakeLists_orig.txt
+CMakeLists_test.txt
+CMakeLists.txt.bak
+CMakeLists.txt.full_bak
+CMakeLists.txt.full_backup
+CMakeLists.txt.main_backup
+prj_bisect.conf
+prj_bisect2.conf
+prj_bisect3.conf
 prj_bisect_thread.conf
 prj_boottest.conf
 prj_full_debug.conf
 prj_orig.conf
+prj_test.conf
+prj.conf.ami_bak
+prj.conf.full_backup
+prj.conf.main_backup
+src/main.c.bak
+src/main_test.c
+tests/run_tests.exe
+boards/esp32c6_devkitc_hpcore.conf
+boards/esp32c6_devkitc_hpcore.overlay
 
-# Debug outputs, logs & binary captures
-*.bin
+# All runtime output / log / capture files
+*.log
 boot_output.txt
 diag_output.txt
 last_capture.bin
+build_log.txt
+build_*.txt
+build_b*.log
+build_fix*.log
+capture_*.txt
+flash_run.txt
+flash_log.txt
+flash_*.log
+flash_*.txt
+erase_log.txt
+wait_result.txt
+test_result.txt
+serial_capture.txt
+serial_diag_result.txt
+monitor_result.txt
+monitor_otbr_last.txt
+state_check.txt
+port_check.txt
+py_running.txt
+python_cmd.txt
+python_procs*.txt
+com11_*.txt
+dtr_rts_test.txt
+cfg_check.txt
+board_cmake*.txt
+ocd_flash.txt
+diag_*.txt
+full_ami_result.txt
+full_capture.txt
+hello_*.txt
+bisect_result.txt
+recover_result.txt
+recover2_result.txt
+ami_long_capture.txt
+atomic_recovery_run.txt
+atomic_recovery_boot.log
+boot_*.log
+boot_*.txt
+preopen_*.log
+hello_autoconf.txt
+hello_chosen.txt
+
+# Results directory (runtime output)
+results/
+
+# Root-level one-off scripts (superseded by tools/)
+check_otbr.py
+erase_nvs_reflash.py
+flash_boot_wait.py
+monitor_and_flash.py
+read_serial.py
+read_com11.py
+flash_now.bat
+do_build.ps1
+do_flash.ps1
+do_flash_slow.ps1
+do_recover.ps1
+
+# Stray directories
+-Host
+
+# Experimental / underscore-prefix tools
+tools/_*.py
+
+# Duplicate/experimental tool variants
+tools/recover2.py
+tools/recover_and_test.py
+tools/recover_and_test2.py
+tools/recover_and_test3.py
+tools/recover_full.py
+tools/do_recover.py
+tools/do_flash.py
+tools/do_flash_capture.py
+tools/flash_and_capture.py
+tools/flash_and_join.py
+tools/flash_on_boot.py
+tools/flash_xiao.py
+tools/force_flash.py
+tools/flash_immediate.py
+tools/wait_and_flash.py
+tools/robust_flash.py
+tools/quick_flash.py
+tools/full_capture.py
+tools/simple_capture.py
+tools/capture_boot.py
+tools/capture_boot_with_reset.py
+tools/capture_clean.py
+tools/capture_only.py
+tools/erase_and_flash.py
+tools/read_serial.py
+tools/read_serial_win32.py
+tools/read_no_reset.py
+tools/serial_monitor_win32.py
+tools/serial_diag2.py
+tools/run_diag.ps1
+tools/atomic_recovery.py
+tools/bisect_build.py
+tools/check_build_state.py
+tools/analyze_failures.py
+tools/analyze_bin.py
+tools/test_dtr_rts.py
+tools/restore_and_test.py
+tools/flash_test.py
+
+# Benchmark / thesis / analysis scripts (dev-only, not part of firmware workflow)
+tools/benchmark_*.py
+tools/analyze_benchmark*.py
+tools/graph_benchmark.py
+tools/generate_thesis_figures.py
+tools/update_dashboard*.py
+tools/ami_watchdog*.py
+tools/ami_watchdog*.ps1
 
 # Test / scratch source
 src/boot_test.c
 
-# Large binaries & PDFs (thesis PDF tracked separately if needed)
+# Large binaries & PDFs
 tesis-rev22.pdf
 *.pdf
+*.bin
 
-# Memory bank (contexto local del agente, no va al repo)
+# Memory bank (contexto local del agente)
 memory-bank/
 
 # Scripts locales de build/flash (rutas absolutas a este PC)

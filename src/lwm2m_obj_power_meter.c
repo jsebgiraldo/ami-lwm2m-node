@@ -65,7 +65,6 @@ static double pm_active_energy[PM_MAX_INSTANCES];
 static double pm_reactive_energy[PM_MAX_INSTANCES];
 static double pm_apparent_energy[PM_MAX_INSTANCES];
 static double pm_frequency[PM_MAX_INSTANCES];
-static double pm_neutral_current[PM_MAX_INSTANCES];
 
 /* ---------- LwM2M engine structures ---------- */
 
@@ -111,7 +110,6 @@ static struct lwm2m_engine_obj_field fields[] = {
 	OBJ_FIELD_DATA(PM_REACTIVE_ENERGY_RID,   R_OPT, FLOAT),
 	OBJ_FIELD_DATA(PM_APPARENT_ENERGY_RID,   R_OPT, FLOAT),
 	OBJ_FIELD_DATA(PM_FREQUENCY_RID,         R_OPT, FLOAT),
-	OBJ_FIELD_DATA(PM_NEUTRAL_CURRENT_RID,   R_OPT, FLOAT),
 };
 
 /* Verify field count matches header */
@@ -297,10 +295,6 @@ power_meter_create(uint16_t obj_inst_id)
 	INIT_OBJ_RES_DATA(PM_FREQUENCY_RID, res[index], i,
 		res_inst[index], j,
 		&pm_frequency[index], sizeof(double));
-
-	INIT_OBJ_RES_DATA(PM_NEUTRAL_CURRENT_RID, res[index], i,
-		res_inst[index], j,
-		&pm_neutral_current[index], sizeof(double));
 
 	inst[index].resources = res[index];
 	inst[index].resource_count = i;

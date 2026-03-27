@@ -71,7 +71,6 @@ struct meter_readings {
 
 	/* Other */
 	double frequency;              /* Hz */
-	double neutral_current;        /* A */
 
 	/* Metadata */
 	bool     valid;                /* True if enough readings succeeded */
@@ -194,5 +193,39 @@ uint32_t meter_get_poll_count(void);
  */
 void meter_get_obis_diag(int index, uint32_t *success, uint32_t *fail,
 			 uint32_t *retries, uint32_t *skip);
+
+/**
+ * @brief Get number of entries in the OBIS table
+ *
+ * @return OBIS_TABLE_SIZE (27 entries)
+ */
+size_t meter_get_obis_table_size(void);
+
+/**
+ * @brief Get display name of an OBIS table entry
+ *
+ * @param index  OBIS table index (0 to meter_get_obis_table_size()-1)
+ * @return Pointer to static name string, or "?" if out of range
+ */
+const char *meter_get_obis_name(int index);
+
+/**
+ * @brief Get combined skip state for an OBIS entry (auto-skip OR user-skip)
+ */
+bool meter_get_obis_skip(int index);
+
+/**
+ * @brief Get user-controlled skip state for an OBIS entry
+ */
+bool meter_get_obis_user_skip(int index);
+
+/**
+ * @brief Set user-controlled skip for an OBIS entry
+ *
+ * @param index  OBIS table index
+ * @param skip   true = force skip, false = re-enable (also clears auto-skip)
+ * @return 0 on success, -EINVAL if index out of range
+ */
+int meter_set_obis_user_skip(int index, bool skip);
 
 #endif /* DLMS_METER_H_ */

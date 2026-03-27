@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
-"""Serial diagnostic with retry logic for ESP32 on COM13."""
-import serial
+"""
+Diagnose serial port communication with ESP32-C6 USB/JTAG on COM11.
+Tests multiple approaches to read data.
+"""
 import time
 import sys
+import os
 
-PORT = "COM13"
-BAUD = 115200
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "serial_diag.txt")
+lines_out = []
 
-print(f"Opening {PORT} at {BAUD}...")
+def log(msg):
+    print(msg, flush=True)
+    lines_out.append(msg)
+
+def save():
+    with open(OUT, "w") as f:
+        f.write("\n".join(lines_out))
+
+log(f"=== Serial Diagnostics {time.strftime('%H:%M:%S')} ===")
 try:
     ser = serial.Serial(PORT, BAUD, timeout=3, write_timeout=3)
 except Exception as e:

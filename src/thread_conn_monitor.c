@@ -151,6 +151,17 @@ void init_connmon_thread(void)
 	lwm2m_set_res_buf(&LWM2M_OBJ(4, 0, 1, 0), &bearer,
 			  sizeof(bearer), sizeof(bearer), 0);
 
+	/* Pre-create IP address resource instances 0-3 (Object 4 RID 4).
+	 * Instance 0 already exists (Zephyr connmon init), others are new.
+	 * Done here once to avoid noisy "already exists" errors every 60s.
+	 */
+	for (int i = 0; i < 4; i++) {
+		lwm2m_create_res_inst(&LWM2M_OBJ(4, 0, 4, i));
+	}
+
+	/* Pre-create router IP instance 0 (Object 4 RID 5) */
+	lwm2m_create_res_inst(&LWM2M_OBJ(4, 0, 5, 0));
+
 	LOG_INF("Object 4 (Connectivity Monitoring) initialized for Thread");
 }
 
@@ -301,25 +312,16 @@ void update_connectivity_metrics(void)
 	lwm2m_set_u32(&LWM2M_OBJ(4, 0, 8), partition_id_val);           /* Cell ID */
 
 	/* ---- Update Object 4 IP addresses (RID 4) from OpenThread ---- */
-	/* OPTDATA resources have no pre-allocated buffer, must use set_res_buf */
-	static int prev_ip_count = 0;
+	/* Instances 0-3 were pre-created in init_connmon_thread() */
 	for (int i = 0; i < ip_count; i++) {
-		if (i >= prev_ip_count) {
-			lwm2m_create_res_inst(&LWM2M_OBJ(4, 0, 4, i));
-		}
 		lwm2m_set_res_buf(&LWM2M_OBJ(4, 0, 4, i),
 				  ip_strs[i], sizeof(ip_strs[i]),
 				  strlen(ip_strs[i]) + 1, 0);
 	}
-	prev_ip_count = ip_count;
 
 	/* ---- Update Object 4 Router IP Addresses (RID 5) ---- */
-	static bool router_ip_created = false;
+	/* Instance 0 was pre-created in init_connmon_thread() */
 	if (router_ip_str[0] != '\0') {
-		if (!router_ip_created) {
-			lwm2m_create_res_inst(&LWM2M_OBJ(4, 0, 5, 0));
-			router_ip_created = true;
-		}
 		lwm2m_set_res_buf(&LWM2M_OBJ(4, 0, 5, 0),
 				  router_ip_str, sizeof(router_ip_str),
 				  strlen(router_ip_str) + 1, 0);

@@ -14,7 +14,7 @@ Tests unitarios portables para las capas de lógica pura del firmware.
 
 ```powershell
 cd tests
-gcc -o run_tests.exe test_main.c test_hdlc.c test_cosem.c test_dlms_logic.c ^
+gcc -o run_tests.exe test_main.c test_hdlc.c test_cosem.c ^
     ../src/dlms_hdlc.c ../src/dlms_cosem.c ^
     -I../src -Istubs -DUNIT_TEST -lm
 .\run_tests.exe

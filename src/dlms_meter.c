@@ -34,7 +34,6 @@
  * │ 1-1:3.8.0   │ Reactive Energy          │ PM_REACTIVE_ENERGY │ 42  │
  * │ 1-1:9.8.0   │ Apparent Energy          │ PM_APPARENT_ENERGY │ 45  │
  * │ 1-1:14.7.0  │ Frequency                │ PM_FREQUENCY       │ 49  │
- * │ 1-1:91.7.0  │ Neutral Current          │ PM_NEUTRAL_CURRENT │ 50  │
  * └─────────────┴──────────────────────────┴────────────────────┴─────┘
  */
 
@@ -135,8 +134,6 @@ static const struct obis_mapping obis_table[] = {
 	/* Other */
 	{ .obis = {1,1,14,7,0,255}, .class_id = 3, .name = "Frequency",
 	  .offset = MR_OFF(frequency) },
-	{ .obis = {1,1,91,7,0,255}, .class_id = 3, .name = "NeutralCurrent",
-	  .offset = MR_OFF(neutral_current) },
 };
 
 #define OBIS_TABLE_SIZE  ARRAY_SIZE(obis_table)
@@ -147,6 +144,7 @@ static struct meter_config cfg;
 static uint8_t hdlc_send_seq;
 static uint8_t hdlc_recv_seq;
 static uint8_t cosem_invoke_id;
+static uint32_t hdlc_parse_errors; /* Cumulative HDLC frame parse failures */
 
 /* Frame buffers */
 static uint8_t tx_buf[HDLC_MAX_FRAME_LEN];
@@ -200,6 +198,14 @@ static int64_t  last_read_cycle_ms;    /* Duration of last meter_read_all() */
  * (indices 12-17) are pre-skipped at init to save ~5s on first poll.
  */
 static bool obis_skip[ARRAY_SIZE(obis_table)];
+
+/*
+ * User-controlled skip: set via CLI 'ami obis skip/enable <idx>'.
+ * These take priority over auto-skip: user can re-enable an auto-skipped
+ * entry (meter may have recovered) or manually disable a noisy one.
+ * Persists across meter reconnects but not across reboots.
+ */
+static bool obis_user_skip[ARRAY_SIZE(obis_table)];
 
 /*
  * LLC header for DLMS/COSEM over HDLC (IEC 62056-46 §6.4.4.4.3.2).
@@ -314,7 +320,9 @@ static int transact(const uint8_t *tx, int tx_len, struct hdlc_frame *resp)
 	/* Parse the frame */
 	rc = hdlc_parse_frame(&rx_buf[fstart], flen, resp);
 	if (rc < 0) {
-		LOG_ERR("HDLC parse failed: %d", rc);
+		hdlc_parse_errors++;
+		LOG_WRN("HDLC parse failed: %d (%zu bytes)", rc, flen);
+		LOG_HEXDUMP_WRN(&rx_buf[fstart], MIN(flen, 64U), "frame");
 		return rc;
 	}
 
@@ -337,6 +345,7 @@ int meter_init(void)
 
 	memset(scaler_cached, 0, sizeof(scaler_cached));
 	memset(obis_skip, 0, sizeof(obis_skip));
+	/* Do NOT reset obis_user_skip — user preferences survive meter reinit */
 
 #if IS_ENABLED(CONFIG_AMI_SINGLE_PHASE)
 	/* Pre-skip Phase S (indices 6-11) and Phase T (indices 12-17)
@@ -709,20 +718,28 @@ int meter_read_all(struct meter_readings *readings)
 	 * Phase 2: Read all values
 	 */
 	int skip_count = 0;
+	int user_skip_count = 0;
 	for (size_t i = 0; i < OBIS_TABLE_SIZE; i++) {
 		if (obis_skip[i]) {
 			skip_count++;
+		} else if (obis_user_skip[i]) {
+			user_skip_count++;
 		}
 	}
-	int read_target = (int)OBIS_TABLE_SIZE - skip_count;
-	LOG_INF("Reading %d OBIS codes from meter (skipping %d unsupported)...",
-		read_target, skip_count);
+	int read_target = (int)OBIS_TABLE_SIZE - skip_count - user_skip_count;
+	LOG_INF("Reading %d OBIS codes (auto-skip=%d user-skip=%d)...",
+		read_target, skip_count, user_skip_count);
 
 	int64_t t_start = k_uptime_get();
 
 	for (size_t i = 0; i < OBIS_TABLE_SIZE; i++) {
 		if (obis_skip[i]) {
 			obis_diag[i].skip++;
+			continue;
+		}
+
+		/* User-forced skip: honour it but don't increment skip counter */
+		if (obis_user_skip[i]) {
 			continue;
 		}
 
@@ -842,6 +859,7 @@ int meter_read_all(struct meter_readings *readings)
 				obis_diag[i].retries, obis_diag[i].skip,
 				pct, avg_ms);
 		}
+		LOG_INF("  HDLC parse errors (total): %u", hdlc_parse_errors);
 	}
 
 	LOG_INF("Meter read complete: %d/%d successful (%d skipped, mask=0x%08X)%s",
@@ -1033,12 +1051,11 @@ void meter_push_to_lwm2m(const struct meter_readings *readings)
 
 	/* ---- Other (obis indices 25-26) ---- */
 	PUSH_FIELD(frequency,       PM_FREQUENCY_RID,       25);
-	PUSH_FIELD(neutral_current, PM_NEUTRAL_CURRENT_RID, 26);
 
 #ifdef CONFIG_AMI_SINGLE_PHASE
-	#define TOTAL_RESOURCES 15   /* Phase R(6) + Totals(4) + Energy(3) + Freq + Neutral */
+	#define TOTAL_RESOURCES 14   /* Phase R(6) + Totals(4) + Energy(3) + Freq */
 #else
-	#define TOTAL_RESOURCES 27
+	#define TOTAL_RESOURCES 26
 #endif
 
 	LOG_INF("LwM2M push: %d/%d pushed, %d skipped (not read) "
@@ -1085,4 +1102,49 @@ void meter_get_obis_diag(int index, uint32_t *success, uint32_t *fail,
 	if (fail)    *fail    = obis_diag[index].fail;
 	if (retries) *retries = obis_diag[index].retries;
 	if (skip)    *skip    = obis_diag[index].skip;
+}
+
+size_t meter_get_obis_table_size(void)
+{
+	return OBIS_TABLE_SIZE;
+}
+
+const char *meter_get_obis_name(int index)
+{
+	if (index < 0 || (size_t)index >= OBIS_TABLE_SIZE) {
+		return "?";
+	}
+	return obis_table[index].name;
+}
+
+bool meter_get_obis_skip(int index)
+{
+	if (index < 0 || (size_t)index >= OBIS_TABLE_SIZE) {
+		return false;
+	}
+	return obis_skip[index] || obis_user_skip[index];
+}
+
+bool meter_get_obis_user_skip(int index)
+{
+	if (index < 0 || (size_t)index >= OBIS_TABLE_SIZE) {
+		return false;
+	}
+	return obis_user_skip[index];
+}
+
+int meter_set_obis_user_skip(int index, bool skip)
+{
+	if (index < 0 || (size_t)index >= OBIS_TABLE_SIZE) {
+		return -EINVAL;
+	}
+	obis_user_skip[index] = skip;
+	/* When re-enabling: also clear the auto-skip flag so the meter
+	 * gets a fresh chance (useful if the meter was rebooted/fixed). */
+	if (!skip) {
+		obis_skip[index] = false;
+		/* Invalidate scaler cache so it re-reads on next poll */
+		scaler_cached[index] = false;
+	}
+	return 0;
 }

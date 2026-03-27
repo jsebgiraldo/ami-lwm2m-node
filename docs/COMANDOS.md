@@ -30,13 +30,13 @@ west build -p always -b xiao_esp32c6/esp32c6/hpcore $ami
 & ".venv\Scripts\python.exe" "$ami\tools\flash_jtag.py"
 ```
 
-## Serial monitor (60 seconds)
+## Serial monitor
 
 ```powershell
-Set-Location "C:\Users\User\Documents\FW\ESP32C6-XIAO\DLMS-COSEM"
-$ami = "C:\Users\User\Documents\UNAL\ami-lwm2m-node"
-& ".venv\Scripts\python.exe" "$ami\tools\monitor.py" --seconds 60
+& "C:\Program Files\PuTTY\plink.exe" -serial COM11 -sercfg 115200,8,n,1,N
 ```
+
+> `Ctrl+C` para salir. No toca RTS/DTR — no resetea el dispositivo.
 
 ## Flash + monitor
 
@@ -60,6 +60,10 @@ $ami = "C:\Users\User\Documents\UNAL\ami-lwm2m-node"
 | `ami test lwm2m`       | Test LwM2M registration                              |
 | `ami test dlms`        | Trigger DLMS poll and print readings                 |
 | `ami test all`         | Run all tests                                        |
+| `ami diag`             | Show per-OBIS read diagnostics (OK/AUTO/USER/ERR)    |
+| `ami obis list`        | List all OBIS codes with their polling state         |
+| `ami obis skip <idx>`  | Force-skip an OBIS code by index (USER-SKIP)         |
+| `ami obis enable <idx>`| Re-enable an OBIS code (clears auto-skip too)        |
 | `dlms_interval <s>`    | Change DLMS poll interval (5–300 s)                  |
 
 ---
