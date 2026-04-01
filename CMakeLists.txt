@@ -10,6 +10,7 @@ project(ami-lwm2m-client
 # Source files
 target_sources(app PRIVATE
     src/main.c
+    src/rgb_led.c
     src/lwm2m_obj_power_meter.c
     src/firmware_update.c
     src/thread_conn_monitor.c

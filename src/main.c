@@ -26,6 +26,7 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/init.h>
 #include <zephyr/sys/atomic.h>
+#include <string.h>
 #include <openthread.h>
 #include <openthread/thread.h>
 #include <openthread/instance.h>
@@ -41,6 +42,7 @@
 #include "lwm2m_obj_thread_cli.h"
 #include "lwm2m_observation.h"
 #include "dlms_meter.h"
+#include "rgb_led.h"
 
 /* Firmware update (Object 5) */
 extern void init_firmware_update(void);
@@ -116,6 +118,61 @@ static int dlms_poll_interval_s = DLMS_POLL_INTERVAL_DEFAULT;
 static int64_t last_dlms_poll_ms;
 static const struct gpio_dt_spec led0 =
 	GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios, {0});
+/* WS2812 RGB brightness (0-255). Keep low to avoid blinding. */
+#define AMI_RGB_BRIGHTNESS 40
+
+enum ami_rgb_color {
+	AMI_RGB_OFF,
+	AMI_RGB_RED,
+	AMI_RGB_GREEN,
+	AMI_RGB_BLUE,
+	AMI_RGB_YELLOW,
+	AMI_RGB_CYAN,
+	AMI_RGB_MAGENTA,
+	AMI_RGB_WHITE,
+};
+
+static void ami_set_rgb(enum ami_rgb_color color)
+{
+	const uint8_t br = AMI_RGB_BRIGHTNESS;
+
+	if (rgb_led_is_ready()) {
+		switch (color) {
+		case AMI_RGB_RED:     rgb_led_set(br, 0, 0);   break;
+		case AMI_RGB_GREEN:   rgb_led_set(0, br, 0);   break;
+		case AMI_RGB_BLUE:    rgb_led_set(0, 0, br);   break;
+		case AMI_RGB_YELLOW:  rgb_led_set(br, br, 0);  break;
+		case AMI_RGB_CYAN:    rgb_led_set(0, br, br);  break;
+		case AMI_RGB_MAGENTA: rgb_led_set(br, 0, br);  break;
+		case AMI_RGB_WHITE:   rgb_led_set(br, br, br); break;
+		case AMI_RGB_OFF:
+		default:              rgb_led_off();           break;
+		}
+		return;
+	}
+
+	/* Fallback for boards that only expose led0. */
+	if (gpio_is_ready_dt(&led0)) {
+		bool on = (color != AMI_RGB_OFF);
+		gpio_pin_set_dt(&led0, on ? 1 : 0);
+	}
+}
+
+static void ami_led_init(void)
+{
+	/* led0 fallback */
+	if (gpio_is_ready_dt(&led0)) {
+		gpio_pin_configure_dt(&led0, GPIO_OUTPUT_INACTIVE);
+	}
+
+	/* WS2812 on GPIO8 (ESP32-C6 Super Mini) */
+	int ret = rgb_led_init();
+	if (ret == 0) {
+		LOG_INF("WS2812 RGB LED initialized on GPIO8");
+	} else {
+		LOG_WRN("WS2812 init failed (%d) - using led0 fallback", ret);
+	}
+}
 
 /* ---- DLMS Meter readings ---- */
 static struct meter_readings last_readings;
@@ -220,13 +277,12 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		lwm2m_connected = true;
 		lwm2m_reg_failures = 0;
 		k_work_cancel_delayable(&lwm2m_recover_work);
-		if (gpio_is_ready_dt(&led0)) {
-			gpio_pin_set_dt(&led0, 1);
-		}
+		ami_set_rgb(AMI_RGB_GREEN);
 		break;
 	case LWM2M_RD_CLIENT_EVENT_REGISTRATION_FAILURE:
 		LOG_ERR("LwM2M Registration FAILED");
 		lwm2m_connected = false;
+		ami_set_rgb(AMI_RGB_RED);
 		lwm2m_reg_failures++;
 		maybe_switch_lwm2m_server();
 		if (!atomic_get(&lwm2m_recovering)) {
@@ -236,6 +292,7 @@ static void rd_client_event(struct lwm2m_ctx *client,
 	case LWM2M_RD_CLIENT_EVENT_REG_TIMEOUT:
 		LOG_WRN("LwM2M Registration timeout");
 		lwm2m_connected = false;
+		ami_set_rgb(AMI_RGB_RED);
 		lwm2m_reg_failures++;
 		maybe_switch_lwm2m_server();
 		if (!atomic_get(&lwm2m_recovering)) {
@@ -248,16 +305,15 @@ static void rd_client_event(struct lwm2m_ctx *client,
 	case LWM2M_RD_CLIENT_EVENT_DISCONNECT:
 		LOG_WRN("LwM2M Disconnected");
 		lwm2m_connected = false;
+		ami_set_rgb(AMI_RGB_YELLOW);
 		if (!atomic_get(&lwm2m_recovering)) {
 			k_work_reschedule(&lwm2m_recover_work, K_SECONDS(10));
-		}
-		if (gpio_is_ready_dt(&led0)) {
-			gpio_pin_set_dt(&led0, 0);
 		}
 		break;
 	case LWM2M_RD_CLIENT_EVENT_NETWORK_ERROR:
 		LOG_ERR("LwM2M network error — will retry");
 		lwm2m_connected = false;
+		ami_set_rgb(AMI_RGB_RED);
 		lwm2m_reg_failures++;
 		maybe_switch_lwm2m_server();
 		if (!atomic_get(&lwm2m_recovering)) {
@@ -781,6 +837,42 @@ static int cmd_ami_reset(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+static int cmd_ami_rgb(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc < 2) {
+		shell_error(sh, "Usage: ami rgb <off|red|green|blue|yellow|cyan|magenta|white>");
+		return -EINVAL;
+	}
+
+	const char *name = argv[1];
+	enum ami_rgb_color color = AMI_RGB_OFF;
+
+	if (!strcmp(name, "off")) {
+		color = AMI_RGB_OFF;
+	} else if (!strcmp(name, "red")) {
+		color = AMI_RGB_RED;
+	} else if (!strcmp(name, "green")) {
+		color = AMI_RGB_GREEN;
+	} else if (!strcmp(name, "blue")) {
+		color = AMI_RGB_BLUE;
+	} else if (!strcmp(name, "yellow")) {
+		color = AMI_RGB_YELLOW;
+	} else if (!strcmp(name, "cyan")) {
+		color = AMI_RGB_CYAN;
+	} else if (!strcmp(name, "magenta")) {
+		color = AMI_RGB_MAGENTA;
+	} else if (!strcmp(name, "white")) {
+		color = AMI_RGB_WHITE;
+	} else {
+		shell_error(sh, "Unknown color '%s'", name);
+		return -EINVAL;
+	}
+
+	ami_set_rgb(color);
+	shell_print(sh, "RGB set to %s (%s)", name, rgb_led_is_ready() ? "WS2812" : "led0 fallback");
+	return 0;
+}
+
 static int cmd_ami_diag(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc); ARG_UNUSED(argv);
@@ -898,6 +990,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(ami_cmds,
 	SHELL_CMD(status, NULL, "Show overall node status",             cmd_ami_status),
 	SHELL_CMD(test,   &ami_test_cmds, "Run subsystem tests",        NULL),
 	SHELL_CMD(log,    &ami_log_cmds,  "Control DLMS/RS485 log verbosity", NULL),
+	SHELL_CMD_ARG(rgb, NULL, "Set status color: rgb <off|red|green|blue|yellow|cyan|magenta|white>", cmd_ami_rgb, 2, 0),
 	SHELL_CMD(diag,   NULL,           "Show per-OBIS read diagnostics",   cmd_ami_diag),
 	SHELL_CMD(obis,   &ami_obis_cmds, "OBIS polling control (list/skip/enable)", NULL),
 	SHELL_CMD(reset,  NULL,           "Reboot the node",                  cmd_ami_reset),
@@ -1212,9 +1305,8 @@ int main(void)
 	init_lwm2m_server_uris();
 
 	/* LED init */
-	if (gpio_is_ready_dt(&led0)) {
-		gpio_pin_configure_dt(&led0, GPIO_OUTPUT_INACTIVE);
-	}
+	ami_led_init();
+	ami_set_rgb(AMI_RGB_BLUE);
 
 	/* Apply OTBR dataset (mesh-local prefix + PSKc) before Thread attaches */
 	apply_otbr_dataset();
@@ -1222,6 +1314,8 @@ int main(void)
 	/* Poll OpenThread role until attached (Child/Router/Leader) */
 	LOG_INF("Waiting for Thread network...");
 	for (int i = 0; i < 120; i++) {
+		static bool wait_blink;
+
 		openthread_mutex_lock();
 		struct otInstance *instance = openthread_get_default_instance();
 		otDeviceRole role = OT_DEVICE_ROLE_DISABLED;
@@ -1233,11 +1327,11 @@ int main(void)
 		if (role >= OT_DEVICE_ROLE_CHILD) {
 			LOG_INF("Thread attached! Role=%d after %ds",
 				(int)role, i * 2);
+			ami_set_rgb(AMI_RGB_CYAN);
 			break;
 		}
-		if (gpio_is_ready_dt(&led0)) {
-			gpio_pin_toggle_dt(&led0);
-		}
+		wait_blink = !wait_blink;
+		ami_set_rgb(wait_blink ? AMI_RGB_BLUE : AMI_RGB_OFF);
 		k_sleep(K_SECONDS(2));
 	}
 

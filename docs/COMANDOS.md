@@ -100,6 +100,7 @@ $ami = "C:\Users\User\Documents\UNAL\ami-lwm2m-node"
 | `ami log quiet`        | Suppress RS485/DLMS DBG logs (default at startup)    |
 | `ami log verbose`      | Enable RS485/DLMS DBG logs (hex dumps)               |
 | `ami log lwm2m`        | Enable LwM2M debug logs (rd_client/engine/registry)  |
+| `ami rgb <color>`      | Set interaction color (`off/red/green/blue/...`)     |
 | `ami test thread`      | Test Thread connectivity                             |
 | `ami test lwm2m`       | Test LwM2M registration                              |
 | `ami test dlms`        | Trigger DLMS poll and print readings                 |
