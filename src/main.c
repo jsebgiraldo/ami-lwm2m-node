@@ -1,5 +1,5 @@
 /*
- * AMI LwM2M Node — Thread + LwM2M on XIAO ESP32-C6
+ * AMI LwM2M Node — Thread + LwM2M on ESP32-C6 Super Mini
  *
  * LwM2M client that registers with ThingsBoard Edge via
  * Thread mesh network (OpenThread). Reports DLMS meter
@@ -10,9 +10,6 @@
  * 2. Wait for L4 connectivity (IPv6 up via Thread)
  * 3. Register LwM2M client with ThingsBoard Edge (built-in LwM2M transport)
  * 4. Periodically poll DLMS meter and push via LwM2M objects
- *
- * Aligned with working Windows build — single file, no MCUboot,
- * no dataset injection, no FOTA.
  */
 
 #include <zephyr/kernel.h>
@@ -57,7 +54,7 @@ LOG_MODULE_REGISTER(ami_lwm2m, LOG_LEVEL_INF);
 /* Early SYS_INIT to confirm kernel is running before main() */
 extern int esp_rom_printf(const char *fmt, ...);
 
-/* PRE_KERNEL_1: fires before any driver init — absolute earliest */
+/* PRE_KERNEL_1: earliest boot marker — confirms ROM → Zephyr handoff */
 static int boot_pre_kernel(void)
 {
 	esp_rom_printf("\r\n[AMI] PRE_KERNEL_1 OK\r\n");
@@ -65,27 +62,11 @@ static int boot_pre_kernel(void)
 }
 SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 
-/* POST_KERNEL: fires after drivers are up */
-static int boot_post_kernel(void)
-{
-	esp_rom_printf("[AMI] POST_KERNEL OK\r\n");
-	return 0;
-}
-SYS_INIT(boot_post_kernel, POST_KERNEL, 0);
-
-/* APPLICATION: fires just before main() */
-static int boot_application(void)
-{
-	esp_rom_printf("[AMI] APPLICATION init OK\r\n");
-	return 0;
-}
-SYS_INIT(boot_application, APPLICATION, 0);
-
 /* ---- Configuration ---- */
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
-#define CLIENT_MODEL_NUMBER     "XIAO-ESP32-C6"
+#define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.16.0"
+#define CLIENT_FIRMWARE_VER     "0.17.0"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -132,9 +113,19 @@ enum ami_rgb_color {
 	AMI_RGB_WHITE,
 };
 
+static const char *rgb_color_name(enum ami_rgb_color c)
+{
+	static const char *names[] = {
+		"OFF","RED","GREEN","BLUE","YELLOW","CYAN","MAGENTA","WHITE"
+	};
+	return (c <= AMI_RGB_WHITE) ? names[c] : "?";
+}
+
 static void ami_set_rgb(enum ami_rgb_color color)
 {
 	const uint8_t br = AMI_RGB_BRIGHTNESS;
+
+	LOG_INF("LED -> %s", rgb_color_name(color));
 
 	if (rgb_led_is_ready()) {
 		switch (color) {
@@ -1284,13 +1275,6 @@ static void build_endpoint_name(void)
 int main(void)
 {
 	int ret;
-
-	esp_rom_printf("\r\n[AMI] main() ENTERED\r\n");
-
-	/* Diagnostic: verify main() is executing and console works */
-	k_sleep(K_MSEC(500));
-	esp_rom_printf("[AMI] After 500ms sleep, printk next\r\n");
-	printk("\n\n*** AMI ALIVE v%s ***\n", CLIENT_FIRMWARE_VER);
 
 	LOG_INF("=== AMI LwM2M Node v%s ===", CLIENT_FIRMWARE_VER);
 	LOG_INF("Board: %s", CONFIG_BOARD);

@@ -1,16 +1,23 @@
 /*
  * RGB LED - WS2812 single-pixel driver (GPIO bit-bang)
  *
- * Sends 24 bits (GRB order, MSB-first) over a single GPIO pin using
- * Zephyr's cycle counter for tight timing.  Interrupts are locked for
- * the duration of the 24-bit frame (~30 us) to avoid jitter.
+ * Sends 24 bits (GRB order, MSB-first) over GPIO8 using the ESP32-C6
+ * RISC-V performance counter (CSR 0x7E2, 160 MHz CPU clock) for timing.
+ * Direct GPIO register writes (W1TS/W1TC) for sub-µs pin toggling.
+ * Interrupts are locked for the 24-bit frame (~30 us).
  *
  * WS2812B timing (+/-150 ns tolerance):
  *   0-bit : HIGH 400 ns, LOW 850 ns
  *   1-bit : HIGH 800 ns, LOW 450 ns
  *   Reset : LOW  >= 50 us
  *
- * Target: ESP32-C6 Super Mini - WS2812B on GPIO 8
+ * ESP32-C6 RISC-V performance counter CSRs:
+ *   0x7E0 = PCER  (event enable — bit 0 = cycle counter)
+ *   0x7E1 = PCMR  (mode — bit 0 = enable counting, MUST be 1)
+ *   0x7E2 = PCCR  (count register — reads CPU cycles at 160 MHz)
+ *   NOTE: standard mcycle (0xB00) is NOT available on ESP32-C6.
+ *
+ * Target: ESP32-C6 (WROOM DevKitC / Super Mini) - WS2812B on GPIO 8
  *
  * Reference: IoT-UNal/Unal-Flash-tool firmware/zephyr-rgb
  */
@@ -18,6 +25,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
+#include <soc.h>
 
 #include "rgb_led.h"
 
@@ -26,41 +34,56 @@ LOG_MODULE_REGISTER(rgb_led, LOG_LEVEL_INF);
 /* ---- hardware constants ------------------------------------------------ */
 
 #define WS2812_GPIO_NODE  DT_NODELABEL(gpio0)
-#define WS2812_GPIO_PIN   8          /* ESP32-C6 Super Mini onboard LED */
+#define WS2812_GPIO_PIN   8          /* ESP32-C6 onboard WS2812 LED */
+#define WS2812_GPIO_MASK  (1U << WS2812_GPIO_PIN)
 
-/* Nanosecond timing targets */
-#define T0H_NS   400
-#define T0L_NS   850
-#define T1H_NS   800
-#define T1L_NS   450
+/* ESP32-C6 GPIO registers (direct register access for speed)
+ * DR_REG_GPIO_BASE = 0x60091000 (from soc/gpio_reg.h)
+ * GPIO_OUT_W1TS_REG = base + 0x08
+ * GPIO_OUT_W1TC_REG = base + 0x0C
+ */
+#define GPIO_OUT_W1TS_REG  (*(volatile uint32_t *)0x60091008)
+#define GPIO_OUT_W1TC_REG  (*(volatile uint32_t *)0x6009100C)
+
+/* ESP32-C6 CPU frequency: 160 MHz */
+#define CPU_FREQ_MHZ  160
+
+/* Nanosecond timing targets → CPU cycle counts at 160 MHz */
+#define T0H_CYC  ((400 * CPU_FREQ_MHZ) / 1000)   /* 64 cycles = 400 ns */
+#define T0L_CYC  ((850 * CPU_FREQ_MHZ) / 1000)   /* 136 cycles = 850 ns */
+#define T1H_CYC  ((800 * CPU_FREQ_MHZ) / 1000)   /* 128 cycles = 800 ns */
+#define T1L_CYC  ((450 * CPU_FREQ_MHZ) / 1000)   /* 72 cycles = 450 ns */
 
 /* ---- module state ------------------------------------------------------ */
 
 static const struct device *gpio_dev;
 static bool initialised;
 
-/* Pre-computed cycle counts (filled in rgb_led_init) */
-static uint32_t t0h_cyc;
-static uint32_t t0l_cyc;
-static uint32_t t1h_cyc;
-static uint32_t t1l_cyc;
-
 /* ---- helpers ----------------------------------------------------------- */
 
-static inline uint32_t ns_to_cycles(uint32_t ns)
+/*
+ * ESP32-C6 RISC-V performance counter.
+ * PCER (0x7E0) bit 0 = enable cycle-count event.
+ * PCMR (0x7E1) bit 0 = enable counter increment (CRITICAL: must be 1).
+ * PCCR (0x7E2) = cycle count (160 MHz).
+ */
+static inline void cpu_perf_counter_init(void)
 {
-	uint64_t freq = sys_clock_hw_cycles_per_sec();
-	return (uint32_t)((uint64_t)ns * freq / 1000000000ULL);
+	/* Enable cycle-count event + enable counting mode */
+	__asm__ volatile("csrw 0x7E0, %0" :: "r"(1));
+	__asm__ volatile("csrw 0x7E1, %0" :: "r"(1));  /* was 0 → hung! */
 }
 
-static inline uint32_t cycles_now(void)
+static inline uint32_t cpu_cycle(void)
 {
-	return k_cycle_get_32();
+	uint32_t val;
+	__asm__ volatile("csrr %0, 0x7E2" : "=r"(val));
+	return val;
 }
 
 static inline void spin_until(uint32_t start, uint32_t cycles)
 {
-	while ((cycles_now() - start) < cycles) {
+	while ((cpu_cycle() - start) < cycles) {
 		/* busy-wait */
 	}
 }
@@ -70,13 +93,13 @@ static inline void send_bit(int bit)
 {
 	uint32_t t;
 
-	gpio_pin_set_raw(gpio_dev, WS2812_GPIO_PIN, 1);
-	t = cycles_now();
-	spin_until(t, bit ? t1h_cyc : t0h_cyc);
+	GPIO_OUT_W1TS_REG = WS2812_GPIO_MASK;     /* HIGH */
+	t = cpu_cycle();
+	spin_until(t, bit ? T1H_CYC : T0H_CYC);
 
-	gpio_pin_set_raw(gpio_dev, WS2812_GPIO_PIN, 0);
-	t = cycles_now();
-	spin_until(t, bit ? t1l_cyc : t0l_cyc);
+	GPIO_OUT_W1TC_REG = WS2812_GPIO_MASK;     /* LOW */
+	t = cpu_cycle();
+	spin_until(t, bit ? T1L_CYC : T0L_CYC);
 }
 
 /* Send one byte, MSB first */
@@ -104,17 +127,11 @@ int rgb_led_init(void)
 		return ret;
 	}
 
-	/* Pre-compute cycle counts for the current clock speed */
-	t0h_cyc = ns_to_cycles(T0H_NS);
-	t0l_cyc = ns_to_cycles(T0L_NS);
-	t1h_cyc = ns_to_cycles(T1H_NS);
-	t1l_cyc = ns_to_cycles(T1L_NS);
+	/* Enable RISC-V performance cycle counter (PCER=1, PCMR=1) */
+	cpu_perf_counter_init();
 
-	uint32_t freq = sys_clock_hw_cycles_per_sec();
-	LOG_INF("WS2812 on GPIO%d - hw_cycles/sec: %u "
-		"t0h:%u t0l:%u t1h:%u t1l:%u",
-		WS2812_GPIO_PIN, freq,
-		t0h_cyc, t0l_cyc, t1h_cyc, t1l_cyc);
+	LOG_INF("WS2812 on GPIO%d ready (CPU %d MHz)",
+		WS2812_GPIO_PIN, CPU_FREQ_MHZ);
 
 	initialised = true;
 	return 0;
