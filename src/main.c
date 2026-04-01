@@ -25,6 +25,7 @@
 #include <zephyr/random/random.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/init.h>
+#include <zephyr/sys/atomic.h>
 #include <openthread.h>
 #include <openthread/thread.h>
 #include <openthread/instance.h>
@@ -88,8 +89,12 @@ SYS_INIT(boot_application, APPLICATION, 0);
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
 static char endpoint_name[32];
 
-/* LwM2M Server URI — ThingsBoard Edge on OTBR mesh-local address */
-#define LWM2M_SERVER_URI        "coap://[" CONFIG_NET_CONFIG_PEER_IPV6_ADDR "]:5683"
+/* LwM2M server URI runtime selection (primary + secondary fallback). */
+static char lwm2m_server_uri_primary[96];
+static char lwm2m_server_uri_secondary[96];
+static const char *lwm2m_server_uris[2];
+static int lwm2m_server_index;
+static uint8_t lwm2m_reg_failures;
 
 /* Sensor update intervals */
 #define DLMS_POLL_INTERVAL_DEFAULT  15   /* seconds — default DLMS meter poll */
@@ -115,13 +120,84 @@ static const struct gpio_dt_spec led0 =
 /* ---- DLMS Meter readings ---- */
 static struct meter_readings last_readings;
 static bool meter_initialized;
+static int64_t demo_last_update_ms;
+static double demo_energy_kwh = 61100.0;
 
 /* Forward declarations */
 static void update_sensors_fallback(void);
+static void fill_demo_readings(struct meter_readings *r);
+static const char *active_lwm2m_server_uri(void);
+static void rd_client_event(struct lwm2m_ctx *client,
+			enum lwm2m_rd_client_event client_event);
+static void observe_cb(enum lwm2m_observe_event event,
+		      struct lwm2m_obj_path *path, void *user_data);
 
 /* ---- LwM2M context ---- */
 static struct lwm2m_ctx client_ctx;
 static bool lwm2m_connected;
+static atomic_t lwm2m_recovering;
+
+static void init_lwm2m_server_uris(void)
+{
+	snprintk(lwm2m_server_uri_primary, sizeof(lwm2m_server_uri_primary),
+		 "coap://[%s]:5683", CONFIG_AMI_LWM2M_SERVER_IPV6_PRIMARY);
+	snprintk(lwm2m_server_uri_secondary, sizeof(lwm2m_server_uri_secondary),
+		 "coap://[%s]:5683", CONFIG_AMI_LWM2M_SERVER_IPV6_SECONDARY);
+
+	lwm2m_server_uris[0] = lwm2m_server_uri_primary;
+	if (strlen(CONFIG_AMI_LWM2M_SERVER_IPV6_SECONDARY) > 0) {
+		lwm2m_server_uris[1] = lwm2m_server_uri_secondary;
+	} else {
+		lwm2m_server_uris[1] = lwm2m_server_uri_primary;
+	}
+	lwm2m_server_index = 0;
+}
+
+static const char *active_lwm2m_server_uri(void)
+{
+	return lwm2m_server_uris[lwm2m_server_index];
+}
+
+static void maybe_switch_lwm2m_server(void)
+{
+	if (lwm2m_server_uris[0] == lwm2m_server_uris[1]) {
+		return;
+	}
+
+	if (lwm2m_reg_failures < 2) {
+		return;
+	}
+
+	lwm2m_server_index ^= 1;
+	lwm2m_reg_failures = 0;
+	lwm2m_set_string(&LWM2M_OBJ(0, 0, 0), active_lwm2m_server_uri());
+	LOG_WRN("LwM2M server failover -> %s", active_lwm2m_server_uri());
+}
+
+static void lwm2m_recover_work_fn(struct k_work *w)
+{
+	ARG_UNUSED(w);
+
+	atomic_set(&lwm2m_recovering, 1);
+	LOG_WRN("LwM2M recovery: restarting RD client (server=%s)",
+		active_lwm2m_server_uri());
+
+	/* Force-close current session, then start clean registration. */
+	(void)lwm2m_rd_client_stop(&client_ctx, rd_client_event, false);
+	memset(&client_ctx, 0, sizeof(client_ctx));
+
+	int ret = lwm2m_rd_client_start(&client_ctx, endpoint_name, 0,
+				      rd_client_event, observe_cb);
+	if (ret == 0 || ret == -EINPROGRESS) {
+		LOG_INF("LwM2M recovery: RD client restart requested");
+	} else {
+		LOG_ERR("LwM2M recovery: RD start failed (%d)", ret);
+	}
+
+	atomic_set(&lwm2m_recovering, 0);
+}
+
+static K_WORK_DELAYABLE_DEFINE(lwm2m_recover_work, lwm2m_recover_work_fn);
 
 /* ---- LwM2M callbacks ---- */
 static int device_reboot_cb(uint16_t obj_inst_id,
@@ -142,6 +218,8 @@ static void rd_client_event(struct lwm2m_ctx *client,
 	case LWM2M_RD_CLIENT_EVENT_REGISTRATION_COMPLETE:
 		LOG_INF("LwM2M Registration complete!");
 		lwm2m_connected = true;
+		lwm2m_reg_failures = 0;
+		k_work_cancel_delayable(&lwm2m_recover_work);
 		if (gpio_is_ready_dt(&led0)) {
 			gpio_pin_set_dt(&led0, 1);
 		}
@@ -149,10 +227,20 @@ static void rd_client_event(struct lwm2m_ctx *client,
 	case LWM2M_RD_CLIENT_EVENT_REGISTRATION_FAILURE:
 		LOG_ERR("LwM2M Registration FAILED");
 		lwm2m_connected = false;
+		lwm2m_reg_failures++;
+		maybe_switch_lwm2m_server();
+		if (!atomic_get(&lwm2m_recovering)) {
+			k_work_reschedule(&lwm2m_recover_work, K_SECONDS(10));
+		}
 		break;
 	case LWM2M_RD_CLIENT_EVENT_REG_TIMEOUT:
 		LOG_WRN("LwM2M Registration timeout");
 		lwm2m_connected = false;
+		lwm2m_reg_failures++;
+		maybe_switch_lwm2m_server();
+		if (!atomic_get(&lwm2m_recovering)) {
+			k_work_reschedule(&lwm2m_recover_work, K_SECONDS(10));
+		}
 		break;
 	case LWM2M_RD_CLIENT_EVENT_REG_UPDATE_COMPLETE:
 		LOG_DBG("LwM2M Registration update complete");
@@ -160,6 +248,9 @@ static void rd_client_event(struct lwm2m_ctx *client,
 	case LWM2M_RD_CLIENT_EVENT_DISCONNECT:
 		LOG_WRN("LwM2M Disconnected");
 		lwm2m_connected = false;
+		if (!atomic_get(&lwm2m_recovering)) {
+			k_work_reschedule(&lwm2m_recover_work, K_SECONDS(10));
+		}
 		if (gpio_is_ready_dt(&led0)) {
 			gpio_pin_set_dt(&led0, 0);
 		}
@@ -167,6 +258,11 @@ static void rd_client_event(struct lwm2m_ctx *client,
 	case LWM2M_RD_CLIENT_EVENT_NETWORK_ERROR:
 		LOG_ERR("LwM2M network error — will retry");
 		lwm2m_connected = false;
+		lwm2m_reg_failures++;
+		maybe_switch_lwm2m_server();
+		if (!atomic_get(&lwm2m_recovering)) {
+			k_work_reschedule(&lwm2m_recover_work, K_SECONDS(10));
+		}
 		break;
 	default:
 		LOG_DBG("LwM2M event: %d", client_event);
@@ -219,7 +315,7 @@ static int lwm2m_setup(void)
 	int ret;
 
 	/* Security Object (0) */
-	lwm2m_set_string(&LWM2M_OBJ(0, 0, 0), LWM2M_SERVER_URI);
+	lwm2m_set_string(&LWM2M_OBJ(0, 0, 0), active_lwm2m_server_uri());
 	lwm2m_set_u8(&LWM2M_OBJ(0, 0, 2), 3); /* NoSec mode */
 	lwm2m_set_u16(&LWM2M_OBJ(0, 0, 10), 101); /* Short Server ID */
 
@@ -268,7 +364,9 @@ static int lwm2m_setup(void)
 	init_thread_cli_object();
 
 	LOG_INF("LwM2M objects configured");
-	LOG_INF("  Server: %s", LWM2M_SERVER_URI);
+	LOG_INF("  Server(primary):   %s", lwm2m_server_uris[0]);
+	LOG_INF("  Server(secondary): %s", lwm2m_server_uris[1]);
+	LOG_INF("  Server(active):    %s", active_lwm2m_server_uri());
 	return 0;
 }
 
@@ -348,6 +446,7 @@ static int cmd_ami_status(const struct shell *sh, size_t argc, char **argv)
 
 	/* LwM2M */
 	shell_print(sh, "  LwM2M  : %s", lwm2m_connected ? "OK  (registered)" : "FAIL (not registered)");
+	shell_print(sh, "    server=%s", active_lwm2m_server_uri());
 
 	/* DLMS */
 	shell_print(sh, "  DLMS   : %s  failures=%d  poll_interval=%ds",
@@ -432,7 +531,7 @@ static int cmd_ami_test_lwm2m(const struct shell *sh, size_t argc, char **argv)
 
 	if (lwm2m_connected) {
 		shell_print(sh, "  endpoint  : %s", endpoint_name);
-		shell_print(sh, "  server    : %s", LWM2M_SERVER_URI);
+		shell_print(sh, "  server    : %s", active_lwm2m_server_uri());
 		shell_print(sh, "  [PASS] LwM2M registered");
 		return 0;
 	} else {
@@ -528,6 +627,10 @@ SHELL_STATIC_SUBCMD_SET_CREATE(ami_test_cmds,
  */
 static const char * const dlms_dbg_modules[] = {
 	"rs485", "dlms_hdlc", "dlms_cosem", "dlms_meter"
+};
+
+static const char * const lwm2m_dbg_modules[] = {
+	"net_lwm2m_rd_client", "net_lwm2m_engine", "net_lwm2m_registry"
 };
 
 static void set_dlms_log_level(uint32_t level)
@@ -639,6 +742,26 @@ static int cmd_ami_log_rs485(const struct shell *sh, size_t argc, char **argv)
 	return set_single_module_dbg(sh, "rs485");
 }
 
+static int cmd_ami_log_lwm2m(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc); ARG_UNUSED(argv);
+
+	for (int m = 0; m < ARRAY_SIZE(lwm2m_dbg_modules); m++) {
+		int32_t src_id = log_source_id_get(lwm2m_dbg_modules[m]);
+
+		if (src_id < 0) {
+			continue;
+		}
+		for (uint32_t b = 0; b < log_backend_count_get(); b++) {
+			log_filter_set(log_backend_get(b), 0,
+				       (uint32_t)src_id, LOG_LEVEL_DBG);
+		}
+	}
+
+	shell_print(sh, "LwM2M log: DBG enabled (rd_client/engine/registry)");
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(ami_log_cmds,
 	SHELL_CMD(quiet,   NULL, "Suppress all DLMS/RS485 logging (WRN, no INF)", cmd_ami_log_quiet),
 	SHELL_CMD(verbose, NULL, "Enable all DLMS/RS485 debug logging (DBG)",     cmd_ami_log_verbose),
@@ -646,6 +769,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(ami_log_cmds,
 	SHELL_CMD(cosem,   NULL, "Enable dlms_cosem DBG only",                    cmd_ami_log_cosem),
 	SHELL_CMD(hdlc,    NULL, "Enable dlms_hdlc DBG only",                     cmd_ami_log_hdlc),
 	SHELL_CMD(rs485,   NULL, "Enable rs485 DBG only",                         cmd_ami_log_rs485),
+	SHELL_CMD(lwm2m,   NULL, "Enable LwM2M debug logs (rd_client/engine/registry)", cmd_ami_log_lwm2m),
 	SHELL_SUBCMD_SET_END
 );
 
@@ -792,6 +916,14 @@ static void update_sensors(void)
 {
 	int ret;
 
+#ifdef CONFIG_AMI_DEMO_MODE
+	fill_demo_readings(&last_readings);
+	meter_initialized = true;
+	consecutive_meter_failures = 0;
+	meter_push_to_lwm2m(&last_readings);
+	return;
+#endif
+
 	if (!meter_initialized) {
 		ret = meter_init();
 		if (ret < 0) {
@@ -863,6 +995,106 @@ static void update_sensors_fallback(void)
 }
 
 /*
+ * Demo mode: generate deterministic synthetic readings so the node can be
+ * validated end-to-end (Thread + LwM2M + ThingsBoard) without a physical meter.
+ */
+static void fill_demo_readings(struct meter_readings *r)
+{
+	int64_t now_ms = k_uptime_get();
+	uint32_t t = (uint32_t)(now_ms / 1000);
+	double dt_h = 0.0;
+	uint32_t mask = 0;
+
+	if (demo_last_update_ms > 0 && now_ms > demo_last_update_ms) {
+		dt_h = (double)(now_ms - demo_last_update_ms) / 3600000.0;
+	}
+	demo_last_update_ms = now_ms;
+
+	memset(r, 0, sizeof(*r));
+
+	/* Smooth bounded waveforms (no random jumps) */
+	double v_r = 121.6 + ((double)((int)(t % 20) - 10) * 0.08);
+	double i_r = 0.22 + ((double)((t / 3) % 8) * 0.012);
+	double pf_r = 0.93 + ((double)((t / 7) % 5) * 0.004);
+	double f_hz = 59.95 + ((double)((int)(t % 6) - 3) * 0.01);
+
+	double p_r = (v_r * i_r * pf_r) / 1000.0;
+	double q_r = p_r * 0.38;
+	double s_r = p_r / pf_r;
+
+	r->voltage_r = v_r;
+	r->current_r = i_r;
+	r->active_power_r = p_r;
+	r->reactive_power_r = q_r;
+	r->apparent_power_r = s_r;
+	r->power_factor_r = pf_r;
+
+	mask |= (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4) | (1u << 5);
+
+#ifndef CONFIG_AMI_SINGLE_PHASE
+	/* Add synthetic phase offsets for 3-phase demo */
+	double v_s = v_r - 0.6;
+	double v_t = v_r + 0.7;
+	double i_s = i_r * 0.97;
+	double i_t = i_r * 1.03;
+	double pf_s = pf_r - 0.01;
+	double pf_t = pf_r + 0.005;
+
+	double p_s = (v_s * i_s * pf_s) / 1000.0;
+	double p_t = (v_t * i_t * pf_t) / 1000.0;
+	double q_s = p_s * 0.36;
+	double q_t = p_t * 0.40;
+	double s_s = p_s / pf_s;
+	double s_t = p_t / pf_t;
+
+	r->voltage_s = v_s;
+	r->current_s = i_s;
+	r->active_power_s = p_s;
+	r->reactive_power_s = q_s;
+	r->apparent_power_s = s_s;
+	r->power_factor_s = pf_s;
+
+	r->voltage_t = v_t;
+	r->current_t = i_t;
+	r->active_power_t = p_t;
+	r->reactive_power_t = q_t;
+	r->apparent_power_t = s_t;
+	r->power_factor_t = pf_t;
+
+	r->total_active_power = p_r + p_s + p_t;
+	r->total_reactive_power = q_r + q_s + q_t;
+	r->total_apparent_power = s_r + s_s + s_t;
+	r->total_power_factor = r->total_active_power / r->total_apparent_power;
+
+	for (int i = 6; i <= 17; i++) {
+		mask |= (1u << i);
+	}
+#else
+	r->total_active_power = p_r;
+	r->total_reactive_power = q_r;
+	r->total_apparent_power = s_r;
+	r->total_power_factor = pf_r;
+#endif
+
+	demo_energy_kwh += (r->total_active_power * dt_h);
+
+	r->active_energy = demo_energy_kwh;
+	r->reactive_energy = demo_energy_kwh * 0.40;
+	r->apparent_energy = demo_energy_kwh * 1.08;
+	r->frequency = f_hz;
+
+	mask |= (1u << 18) | (1u << 19) | (1u << 20) | (1u << 21);
+	mask |= (1u << 22) | (1u << 23) | (1u << 24) | (1u << 25);
+
+	r->valid = true;
+	r->field_mask = mask;
+	r->read_target = __builtin_popcount(mask);
+	r->read_count = r->read_target;
+	r->error_count = 0;
+	r->timestamp_ms = now_ms;
+}
+
+/*
  * Apply the exact OTBR active dataset and start Thread.
  * CONFIG_OPENTHREAD_MANUAL_START=y prevents auto-start, so we set
  * the dataset first and start Thread exactly once — avoiding the
@@ -870,6 +1102,7 @@ static void update_sensors_fallback(void)
  *
  * TLV blob exported from OTBR via: ot-ctl dataset active -x
  */
+
 static void apply_otbr_dataset(void)
 {
 	static const uint8_t otbr_tlvs[] = {
@@ -976,6 +1209,7 @@ int main(void)
 
 	/* Suppress cosmetic LwM2M registry re-sync errors at startup (restored after 25 s) */
 	suppress_lwm2m_registry_startup_noise();
+	init_lwm2m_server_uris();
 
 	/* LED init */
 	if (gpio_is_ready_dt(&led0)) {

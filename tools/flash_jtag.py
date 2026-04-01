@@ -27,7 +27,23 @@ import time
 
 OPENOCD = r"C:\Users\User\.espressif\tools\openocd-esp32\v0.12.0-esp32-20250707\openocd-esp32\bin\openocd.exe"
 SCRIPTS  = r"C:\Users\User\.espressif\tools\openocd-esp32\v0.12.0-esp32-20250707\openocd-esp32\share\openocd\scripts"
-DEFAULT_BIN = r"C:\Users\User\Documents\UNAL\ami-lwm2m-node\build\zephyr\zephyr.bin"
+
+# Binary resolution: prefer the freshest build between the west workspace and
+# the app-local build directory so a stale cache never sneaks in.
+_CANDIDATES = [
+    r"C:\Users\User\Documents\FW\ESP32C6-XIAO\DLMS-COSEM\build\zephyr\zephyr.bin",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 "build", "zephyr", "zephyr.bin"),
+]
+
+def _latest_bin():
+    found = [(p, os.path.getmtime(p)) for p in _CANDIDATES if os.path.exists(p)]
+    if not found:
+        return _CANDIDATES[0]  # will trigger "not found" error downstream
+    best = max(found, key=lambda x: x[1])
+    return best[0]
+
+DEFAULT_BIN = _latest_bin()
 
 
 def _run_openocd(bin_fwd):

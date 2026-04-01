@@ -11,6 +11,30 @@ config AMI_SINGLE_PHASE
 	  avoid wasting ~5 seconds polling unsupported registers.
 	  When disabled (3-phase mode), all 28 OBIS codes are polled.
 
+config AMI_DEMO_MODE
+	bool "Demo mode (simulated meter data)"
+	default n
+	help
+	  Run without a physical DLMS/RS485 meter.
+	  The node generates realistic synthetic readings and publishes
+	  them through LwM2M Object 10242 so end-to-end Thread +
+	  ThingsBoard validation can be performed in lab demos.
+
+config AMI_LWM2M_SERVER_IPV6_PRIMARY
+	string "Primary LwM2M server IPv6"
+	default "fd7d:f3c4:1736:1:89c1:9628:a3e4:f477"
+	help
+	  Primary IPv6 address for the LwM2M server URI used in Object 0.
+	  Format: full IPv6 literal without brackets.
+
+config AMI_LWM2M_SERVER_IPV6_SECONDARY
+	string "Secondary LwM2M server IPv6"
+	default "fdf5:bffd:bd6:ef74:b080:b8c3:367f:147f"
+	help
+	  Optional fallback IPv6 address. If repeated registration failures occur,
+	  the client switches to this address and retries automatically.
+	  Leave empty to disable failover.
+
 endmenu
 
 source "Kconfig.zephyr"

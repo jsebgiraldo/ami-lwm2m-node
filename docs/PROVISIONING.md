@@ -20,6 +20,41 @@ Therefore, **before deploying any new node**, it must be registered in ThingsBoa
 
 ---
 
+## Quickstart (WROOM C6, UART nativo, modo DEMO)
+
+Use this flow to standardize bring-up of every new node without a physical meter.
+
+1. Build firmware for WROOM/DevKitC:
+```powershell
+Set-Location "C:\Users\User\Documents\FW\ESP32C6-XIAO\DLMS-COSEM"
+$ami = "C:\Users\User\Documents\UNAL\ami-lwm2m-node"
+west build -p always -b esp32c6_devkitc/esp32c6/hpcore $ami
+```
+2. Flash over native UART:
+```powershell
+west flash --esp-device COM7 --esp-baud-rate 460800
+```
+3. Open serial and capture endpoint printed at boot:
+```powershell
+& "C:\Program Files\PuTTY\plink.exe" -serial COM7 -sercfg 115200,8,n,1,N
+```
+4. Provision the endpoint in TB Edge:
+```powershell
+Set-Location "C:\Users\User\Documents\UNAL\ami-lwm2m-node"
+python .\tools\provision_node.py --endpoint ami-esp32c6-XXXX --host 192.168.1.111 --port 8090
+```
+5. Validate connectivity from node shell:
+```text
+ami log lwm2m
+ami status
+ami test lwm2m
+```
+
+In demo mode (`CONFIG_AMI_DEMO_MODE=y`), meter values are simulated and pushed to
+Object 10242 so telemetry flow can be validated end-to-end.
+
+---
+
 ## Concept: How is a node identified?
 
 The node builds its LwM2M identity at boot using the `build_endpoint_name()` function
@@ -261,7 +296,7 @@ FACTORY                          FIELD / LAB
    -Port COMx                       → LwM2M register (~17s)
                                     → TB Edge marks ACTIVE
 
-                                 7. Verify data in dashboard
+                                 7. Verify data in Edge / telemetry
                                     or: provision_node.py --verify
 
                                  8. (Optional) Assign to customer/asset in TB Cloud

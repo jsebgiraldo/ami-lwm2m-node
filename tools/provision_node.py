@@ -168,7 +168,9 @@ class TBClient:
             "credentialsId": endpoint,
             "credentialsValue": creds_value,
         }
-        return self._put("/api/device/credentials", body)
+        # TB Edge in this deployment expects POST (not PUT) for updating
+        # existing credentials by id.
+        return self._post("/api/device/credentials", body)
 
     def delete_device(self, device_id: str) -> None:
         self._delete(f"/api/device/{device_id}")
