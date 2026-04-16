@@ -155,6 +155,10 @@ tools/test_dtr_rts.py
 tools/restore_and_test.py
 tools/flash_test.py
 
+# Required E2E automation scripts (keep versioned)
+!tools/read_no_reset.py
+!tools/restore_and_test.py
+
 # Benchmark / thesis / analysis scripts (dev-only, not part of firmware workflow)
 tools/benchmark_*.py
 tools/analyze_benchmark*.py
