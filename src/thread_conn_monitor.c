@@ -187,7 +187,15 @@ void init_thread_diag_object(void)
 
 	thread_diag_obj.obj_id = THREAD_DIAG_OBJECT_ID;
 	thread_diag_obj.version_major = 2;
-	thread_diag_obj.version_minor = 3;
+	/* version_minor stays at 2 even though we expose RIDs 21-22 (v2.3 schema).
+	 * Reason: TB Edge has the v2.2 XML loaded; if we report ver=2.3 the server
+	 * accepts the REGISTER but later breaks the LwM2M session keepalive when
+	 * it sees objectLink advertising RIDs it doesn't know about. Until the
+	 * server-side XML is bumped to v2.3, we keep ver=2.2 in the REGISTER
+	 * and let RIDs 21-22 surface as OPAQUE (same path the schema migration
+	 * 2.1 -> 2.2 followed). Bump back to 3 in v0.6.2 once edge-agent loads
+	 * the new XML. */
+	thread_diag_obj.version_minor = 2;
 	thread_diag_obj.is_core = false;
 	thread_diag_obj.fields = thread_diag_fields;
 	thread_diag_obj.field_count = ARRAY_SIZE(thread_diag_fields);
