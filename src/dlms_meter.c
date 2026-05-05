@@ -911,39 +911,112 @@ int meter_poll(struct meter_readings *readings)
 }
 
 /*
- * Periodic push with server-controlled rate (v0.18.0)
+ * Periodic push with per-resource firmware-side throttle (v0.20.0)
  *
- * v0.15.0–v0.17.0 used threshold-based notification (THRESH_CHECK) that
- * compared each reading against the last-notified value. While elegant,
- * the low thresholds (e.g. THRESH_POWER=0.01) caused almost every reading
- * to trigger a notify — defeating the purpose and flooding the Thread mesh.
+ * History:
+ *   v0.15.0–v0.17.0: threshold-based notification (per-value delta check).
+ *     Defeated by the low thresholds (e.g. THRESH_POWER=0.01) — almost
+ *     every reading triggered a notify, flooding the Thread mesh.
+ *   v0.18.0–v0.19.x: removed throttling, delegated rate control to the
+ *     server via LwM2M Observe pmin/pmax. Standard in theory but TB Edge
+ *     was not reliably honoring server-side pmin in our deployment.
+ *   v0.20.0: defense-in-depth firmware throttle. Per-resource time-based
+ *     gate (one timestamp + counter per resource slot) — independent of
+ *     whatever the server requests. Standard pattern in industrial
+ *     deployments (Apple HomeKit, Nordic nRF Cloud).
  *
- * v0.18.0 simplifies: the firmware just sets the LwM2M resource value and
- * calls lwm2m_notify_observer() every DLMS poll (15s). The actual CoAP
- * notification rate is controlled by the server's observe attributes
- * (pmin/pmax) — this is the standard LwM2M approach.
+ * Design choice (Option A from spec): intercept at the PUSH_FIELD macro
+ * inside meter_push_to_lwm2m(), skipping the lwm2m_set_*+notify call when
+ * inside the throttle window. Pro: avoids waking up the LwM2M engine for
+ * suppressed updates → saves CPU + Thread radio. Con: the "old" value
+ * stays in the engine until the next allowed slot — but our data is
+ * monotonic-ish enough (15s DLMS cycle) that this is acceptable.
  *
- * Safety validation (voltage/frequency range check) is preserved via
- * readings_sanity_check() to prevent obviously invalid data.
- *
- * The field_mask guard remains: only fields actually read from the meter
- * in this cycle are pushed — no stale/zero data reaches the server.
+ * Server pmin/pmax compatibility: Zephyr's LwM2M engine independently
+ * honors Observe Write-Attributes set by the server. Our local floor is
+ * MAX(server_pmin, CONFIG_AMI_LWM2M_NOTIFY_MIN_INTERVAL_MS) by emergence:
+ * we always block within our window, and Zephyr won't notify before its
+ * own pmin elapses either. So whichever is larger is the effective rate.
  */
 
-/*
- * Helper macro: push a field to LwM2M if it was read this cycle.
- * The LwM2M observe engine (pmin/pmax) controls the actual CoAP rate.
+/* Slot indices match the bit_idx used by the field_mask in struct
+ * meter_readings (bits 0-25). All resources, single- or three-phase.
+ */
+#define NUM_PM_NOTIFY_SLOTS 26
+
+static int64_t pm_last_notify_ms[NUM_PM_NOTIFY_SLOTS];
+static uint32_t pm_notify_send_count[NUM_PM_NOTIFY_SLOTS];
+static uint32_t pm_notify_skip_count[NUM_PM_NOTIFY_SLOTS];
+
+/* Optional liveness hook for the external watchdog (PRIO 5). Declared as
+ * weak via the header in case the watchdog module isn't compiled in. */
+extern void lwm2m_watchdog_emit_event(void);
+
+/* Helper macro: push a field to LwM2M if it was read this cycle AND the
+ * per-resource throttle window has elapsed. `bit_idx` doubles as the slot
+ * index into the throttle bookkeeping arrays. Each successful emit also
+ * pings the watchdog (liveness signal — proves Updates/Notifies are
+ * actually leaving the engine, not just being queued).
  */
 #define PUSH_FIELD(field, rid, bit_idx) do {                                  \
 	if (!(readings->field_mask & (1u << (bit_idx)))) {                    \
 		skipped++;                                                    \
 		break;                                                        \
 	}                                                                     \
-	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, rid),            \
+	int64_t _since = now_ms - pm_last_notify_ms[bit_idx];                 \
+	if (pm_last_notify_ms[bit_idx] != 0 && _since < min_interval_ms) {    \
+		LOG_DBG("Throttle: skip /10242/0/%d (%lldms ago, min %lldms)",\
+			rid, _since, min_interval_ms);                        \
+		pm_notify_skip_count[bit_idx]++;                              \
+		throttled++;                                                  \
+		break;                                                        \
+	}                                                                     \
+	lwm2m_set_f64(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, rid),              \
 		      readings->field);                                       \
-	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, rid);                \
+	lwm2m_notify_observer(POWER_METER_OBJECT_ID, 0, rid);                 \
+	pm_last_notify_ms[bit_idx] = now_ms;                                  \
+	pm_notify_send_count[bit_idx]++;                                      \
 	pushed++;                                                             \
+	lwm2m_watchdog_emit_event();   /* PRIO 5 liveness signal */           \
 } while (0)
+
+/* Public: aggregate notify counters across all 26 resource slots.
+ * Used by Object 33000 RIDs 13/14 (notify_emitted/notify_throttled).
+ */
+uint32_t meter_get_notify_emitted_total(void)
+{
+	uint32_t total = 0;
+	for (int i = 0; i < NUM_PM_NOTIFY_SLOTS; i++) {
+		total += pm_notify_send_count[i];
+	}
+	return total;
+}
+
+uint32_t meter_get_notify_throttled_total(void)
+{
+	uint32_t total = 0;
+	for (int i = 0; i < NUM_PM_NOTIFY_SLOTS; i++) {
+		total += pm_notify_skip_count[i];
+	}
+	return total;
+}
+
+/* Public: dump aggregate throttle stats. Called periodically from main loop. */
+void meter_dump_throttle_stats(void)
+{
+	uint32_t total_send = 0, total_skip = 0;
+	for (int i = 0; i < NUM_PM_NOTIFY_SLOTS; i++) {
+		total_send += pm_notify_send_count[i];
+		total_skip += pm_notify_skip_count[i];
+	}
+	uint32_t total = total_send + total_skip;
+	if (total == 0) {
+		return;
+	}
+	LOG_INF("LwM2M notify stats: sent=%u skipped=%u (%u%% suppressed by throttle)",
+		total_send, total_skip,
+		(total_skip * 100u) / total);
+}
 
 /*
  * Sanity check: reject readings that are obviously invalid.
@@ -1009,8 +1082,16 @@ void meter_push_to_lwm2m(const struct meter_readings *readings)
 		return;
 	}
 
+	/* Per-resource throttle bookkeeping. PUSH_FIELD checks each bit_idx
+	 * slot against pm_last_notify_ms[] before letting the notify through.
+	 */
+	const int64_t min_interval_ms =
+		(int64_t)CONFIG_AMI_LWM2M_NOTIFY_MIN_INTERVAL_MS;
+	int64_t now_ms = k_uptime_get();
+
 	int pushed = 0;
-	int skipped = 0;   /* Fields not read from meter this cycle */
+	int skipped = 0;     /* Fields not read from meter this cycle */
+	int throttled = 0;   /* Fields read but throttled by per-resource gate */
 
 	/* ---- Phase R (obis indices 0-5) ---- */
 	PUSH_FIELD(voltage_r,        PM_TENSION_R_RID,         0);
@@ -1058,9 +1139,9 @@ void meter_push_to_lwm2m(const struct meter_readings *readings)
 	#define TOTAL_RESOURCES 26
 #endif
 
-	LOG_INF("LwM2M push: %d/%d pushed, %d skipped (not read) "
+	LOG_INF("LwM2M push: %d/%d pushed, %d throttled, %d not-read "
 		"(V=%.1f I=%.2f P=%.2fkW E=%.1fkWh f=%.1fHz)",
-		pushed, TOTAL_RESOURCES, skipped,
+		pushed, TOTAL_RESOURCES, throttled, skipped,
 		readings->voltage_r, readings->current_r,
 		readings->total_active_power, readings->active_energy,
 		readings->frequency);

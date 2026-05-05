@@ -146,10 +146,36 @@ int meter_poll(struct meter_readings *readings);
  * @brief Push meter readings to LwM2M Object 10242 resources
  *
  * Maps the meter_readings structure to LwM2M resources and notifies observers.
+ * Each resource is throttled per CONFIG_AMI_LWM2M_NOTIFY_MIN_INTERVAL_MS so
+ * that high-rate DLMS polls don't translate into a notify storm into the
+ * Thread mesh.
  *
  * @param readings  Meter readings to push
  */
 void meter_push_to_lwm2m(const struct meter_readings *readings);
+
+/**
+ * @brief Dump per-resource Notify throttle stats at LOG_INF level
+ *
+ * Aggregates pm_notify_send_count[] vs pm_notify_skip_count[] counters and
+ * prints a single line. Intended to be called periodically from the main
+ * loop (e.g. every 60 s) for fleet-wide observability.
+ */
+void meter_dump_throttle_stats(void);
+
+/**
+ * @brief Sum of pm_notify_send_count[] across all Object 10242 slots
+ *
+ * Backs Object 33000 RID 13 (LwM2M notify_emitted total).
+ */
+uint32_t meter_get_notify_emitted_total(void);
+
+/**
+ * @brief Sum of pm_notify_skip_count[] across all Object 10242 slots
+ *
+ * Backs Object 33000 RID 14 (LwM2M notify_throttled total).
+ */
+uint32_t meter_get_notify_throttled_total(void);
 
 /**
  * @brief Get current meter state

@@ -20,20 +20,124 @@ config AMI_DEMO_MODE
 	  them through LwM2M Object 10242 so end-to-end Thread +
 	  ThingsBoard validation can be performed in lab demos.
 
+config AMI_LWM2M_RECOVER_BACKOFF_MIN_S
+	int "Initial backoff between LwM2M recovery attempts (seconds)"
+	default 60
+	help
+	  Base of the exponential backoff applied by lwm2m_recover_work_fn
+	  when the LwM2M RD client cannot re-register. Doubles each failed
+	  attempt up to RECOVER_BACKOFF_MAX_S.
+
+	  60s is conservative enough to give the server time to recover from
+	  a GC pause, restart, or temporary network blip without hammering it.
+
+config AMI_LWM2M_RECOVER_BACKOFF_MAX_S
+	int "Maximum backoff between LwM2M recovery attempts (seconds)"
+	default 300
+	help
+	  Cap on the exponential backoff. After 60s → 120s → 240s → 300s
+	  (capped). Beyond MAX_ATTEMPTS, the node escalates to sys_reboot.
+
+config AMI_LWM2M_RECOVER_MAX_ATTEMPTS
+	int "Max LwM2M recovery attempts before sys_reboot (warm)"
+	default 5
+	help
+	  After this many consecutive failed attempts to re-register the
+	  LwM2M client, the node performs a SYS_REBOOT_WARM. The Thread
+	  session is preserved (warm reboot keeps NVS) so re-attach is fast,
+	  but the LwM2M engine state is fully reset. Typical safety net for
+	  pathological zombie states (Thread OK but LwM2M wedged).
+
+	  Counter resets ONLY on LWM2M_RD_CLIENT_EVENT_REGISTRATION_COMPLETE
+	  — UPDATE_COMPLETE does NOT reset it. This is the most conservative
+	  policy: if the client repeatedly registers and falls back into
+	  failure, escalation still happens.
+
+config AMI_LWM2M_NOTIFY_MIN_INTERVAL_MS
+	int "Per-resource minimum interval between LwM2M Notifies (milliseconds)"
+	default 30000
+	help
+	  Firmware-side defense-in-depth throttle: each LwM2M resource of the
+	  3-Phase Power Meter Object (10242) emits at most one Notify every
+	  this-many milliseconds, regardless of how fast the DLMS poll updates
+	  values or whether the server has configured pmin via Write-Attributes.
+
+	  Standard pattern in industrial deployments (Apple HomeKit, Nordic
+	  nRF Cloud) — independent of any server-side rate control.
+
+	  Sane values:
+	    30000  default. ~1 notify per resource per 30s. With 14 resources
+	           and 30 nodes ≈ 14/min/node × 30 = 420/min total to TB Edge.
+	    60000  more conservative for very large fleets (>60 nodes).
+	    < 5000 aggressive — can saturate the Thread mesh with >20 nodes.
+	    0      disable throttle (NOT recommended for production).
+
+	  When the server eventually sends Write-Attributes with pmin, the
+	  effective rate is MAX(server_pmin, this_local_minimum). Our path
+	  always checks this minimum first; Zephyr's LwM2M engine independently
+	  honors any pmin attribute set on the resource. So this Kconfig acts
+	  as a hard floor.
+
+	  Per-mesh override: set in overlays/<mesh>.conf if needed.
+
 config AMI_LWM2M_SERVER_IPV6_PRIMARY
-	string "Primary LwM2M server IPv6"
-	default "fd7d:f3c4:1736:1:89c1:9628:a3e4:f477"
+	string "Primary LwM2M server IPv6 (fallback if DNS-SD discovery fails)"
+	default "fdf5:bffd:bd6:ef74:eb7b:f1d1:874e:2b91"
 	help
 	  Primary IPv6 address for the LwM2M server URI used in Object 0.
+	  Used only if OpenThread DNS-SD discovery of the SRP service
+	  ThingsBoard-Edge._lwm2m._udp.default.service.arpa. (or the host
+	  thingsboard-edge.default.service.arpa.) fails at boot.
 	  Format: full IPv6 literal without brackets.
 
 config AMI_LWM2M_SERVER_IPV6_SECONDARY
 	string "Secondary LwM2M server IPv6"
-	default "fdf5:bffd:bd6:ef74:b080:b8c3:367f:147f"
+	default ""
 	help
 	  Optional fallback IPv6 address. If repeated registration failures occur,
 	  the client switches to this address and retries automatically.
 	  Leave empty to disable failover.
+
+choice AMI_MESH
+	prompt "Target Thread mesh"
+	default AMI_MESH_R1000
+	help
+	  Selects which OTBR/Thread network this firmware will join.
+	  The dataset TLV is hardcoded in src/main.c (apply_otbr_dataset)
+	  to bypass NVS persistence — switching here selects which TLV is
+	  compiled in.
+
+	  Use overlays to combine with the device-role variant:
+	    west build ... -- -DEXTRA_CONF_FILE="overlays/med.conf;overlays/r1000.conf"
+	  or via tools/build_firmware.py:
+	    python tools/build_firmware.py --variant med --mesh r1000
+
+config AMI_MESH_R1000
+	bool "UNAL-R1000 on Seeed R1000 (192.168.1.175, channel 21) — production default"
+	help
+	  Production deployment — clean channel, lessons learned applied.
+	    Channel:        21
+	    PAN ID:         0x41ae
+	    Network Name:   UNAL-R1000
+	    Mesh-local:     fdf1:a391:6243:2a67::/64
+	    LwM2M server:   fdf1:a391:6243:2a67:2478:c089:bf5a:2554 (mleid R1000)
+	    LwM2M lifetime: 120s (set in overlays/r1000.conf)
+	  See docs/architecture/edge-r1000.md for full spec.
+
+config AMI_MESH_PI4
+	bool "UNAL-Thread on Pi4 EKH01 (192.168.1.111, channel 25) — legacy"
+	help
+	  Legacy deployment — kept for migration of existing nodes.
+	    Channel:        25
+	    PAN ID:         0x23ed
+	    Network Name:   UNAL-Thread
+	    Mesh-local:     fdf5:bffd:0bd6:ef74::/64
+	    LwM2M server:   fdf5:bffd:bd6:ef74:eb7b:f1d1:874e:2b91 (mleid Pi4)
+	    LwM2M lifetime: 300s (prj.conf default, no per-mesh override)
+	  Note: this network has documented contention with rogue PAN 0xe702
+	  on channel 25 — see docs/architecture/edge-thingsboard.md.
+
+endchoice
 
 endmenu
 

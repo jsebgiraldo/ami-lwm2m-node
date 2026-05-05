@@ -23,6 +23,7 @@
 #include <zephyr/net/lwm2m.h>
 #include <zephyr/net/net_if.h>
 #include <openthread.h>
+#include "dlms_meter.h"   /* meter_get_notify_*_total() for v2.1 golden */
 #include <openthread/thread.h>
 #include <openthread/link.h>
 #include <openthread/instance.h>
@@ -43,7 +44,7 @@ LOG_MODULE_REGISTER(thread_conn, LOG_LEVEL_INF);
  * Object 33000 — Thread MAC Diagnostics (Reduced v2.0)
  * ================================================================ */
 
-#define THREAD_DIAG_MAX_ID    10  /* resource IDs 0..9 */
+#define THREAD_DIAG_MAX_ID    21  /* resource IDs 0..20 (v2.2 production hardening) */
 #define THREAD_DIAG_MAX_INST  1
 
 /* Static data buffers — reduced: only Role, Partition ID, MAC counters */
@@ -57,6 +58,23 @@ static uint32_t tx_broadcast;
 static uint32_t rx_broadcast;
 static uint32_t tx_err_abort;
 static uint32_t rx_err_no_frame;
+
+/* === v2.1 golden subset: LwM2M client counters (RIDs 10-16) === */
+/* Storage backing the LwM2M resources. Updated by update_thread_diag()
+ * from atomic counters maintained in main.c (lwm2m_diag_*).
+ */
+static uint32_t lwm2m_uptime_s;
+static uint32_t lwm2m_reg_attempts;
+static uint32_t lwm2m_reg_success;
+static uint32_t lwm2m_notify_emitted;
+static uint32_t lwm2m_notify_throttled;
+static uint32_t lwm2m_recover_count_val;
+static uint32_t lwm2m_restart_success;
+/* v2.2 — production hardening counters */
+static int32_t  lwm2m_last_error_code;
+static uint32_t lwm2m_last_error_uptime;
+static uint32_t lwm2m_watchdog_count;
+static uint32_t lwm2m_storm_backoff;
 
 /* LwM2M object structures */
 static struct lwm2m_engine_obj thread_diag_obj;
@@ -72,6 +90,19 @@ static struct lwm2m_engine_obj_field thread_diag_fields[] = {
 	OBJ_FIELD_DATA(TD_RX_BROADCAST_RID, R, U32),
 	OBJ_FIELD_DATA(TD_TX_ERR_ABORT_RID, R, U32),
 	OBJ_FIELD_DATA(TD_RX_ERR_NOFRAME_RID, R, U32),
+	/* v2.1 golden — LwM2M client counters */
+	OBJ_FIELD_DATA(TD_UPTIME_S_RID, R, U32),
+	OBJ_FIELD_DATA(TD_LWM2M_REG_ATTEMPTS_RID, R, U32),
+	OBJ_FIELD_DATA(TD_LWM2M_REG_SUCCESS_RID, R, U32),
+	OBJ_FIELD_DATA(TD_LWM2M_NOTIFY_EMITTED_RID, R, U32),
+	OBJ_FIELD_DATA(TD_LWM2M_NOTIFY_THROTTLED_RID, R, U32),
+	OBJ_FIELD_DATA(TD_LWM2M_RECOVER_COUNT_RID, R, U32),
+	OBJ_FIELD_DATA(TD_LWM2M_RESTART_SUCCESS_RID, R, U32),
+	/* v2.2 — production hardening: diagnostics + watchdog + jitter */
+	OBJ_FIELD_DATA(TD_LWM2M_LAST_ERROR_CODE_RID, R, S32),
+	OBJ_FIELD_DATA(TD_LWM2M_LAST_ERROR_UPTIME_RID, R, U32),
+	OBJ_FIELD_DATA(TD_LWM2M_WATCHDOG_COUNT_RID, R, U32),
+	OBJ_FIELD_DATA(TD_LWM2M_STORM_BACKOFF_RID, R, U32),
 };
 
 static struct lwm2m_engine_obj_inst thread_diag_inst;
@@ -105,6 +136,32 @@ static struct lwm2m_engine_obj_inst *thread_diag_create(uint16_t obj_inst_id)
 	INIT_OBJ_RES_DATA(TD_RX_ERR_NOFRAME_RID, thread_diag_res, i, thread_diag_ri, j,
 			  &rx_err_no_frame, sizeof(rx_err_no_frame));
 
+	/* v2.1 golden — LwM2M client counters */
+	INIT_OBJ_RES_DATA(TD_UPTIME_S_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &lwm2m_uptime_s, sizeof(lwm2m_uptime_s));
+	INIT_OBJ_RES_DATA(TD_LWM2M_REG_ATTEMPTS_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &lwm2m_reg_attempts, sizeof(lwm2m_reg_attempts));
+	INIT_OBJ_RES_DATA(TD_LWM2M_REG_SUCCESS_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &lwm2m_reg_success, sizeof(lwm2m_reg_success));
+	INIT_OBJ_RES_DATA(TD_LWM2M_NOTIFY_EMITTED_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &lwm2m_notify_emitted, sizeof(lwm2m_notify_emitted));
+	INIT_OBJ_RES_DATA(TD_LWM2M_NOTIFY_THROTTLED_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &lwm2m_notify_throttled, sizeof(lwm2m_notify_throttled));
+	INIT_OBJ_RES_DATA(TD_LWM2M_RECOVER_COUNT_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &lwm2m_recover_count_val, sizeof(lwm2m_recover_count_val));
+	INIT_OBJ_RES_DATA(TD_LWM2M_RESTART_SUCCESS_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &lwm2m_restart_success, sizeof(lwm2m_restart_success));
+
+	/* v2.2 — production hardening counters */
+	INIT_OBJ_RES_DATA(TD_LWM2M_LAST_ERROR_CODE_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &lwm2m_last_error_code, sizeof(lwm2m_last_error_code));
+	INIT_OBJ_RES_DATA(TD_LWM2M_LAST_ERROR_UPTIME_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &lwm2m_last_error_uptime, sizeof(lwm2m_last_error_uptime));
+	INIT_OBJ_RES_DATA(TD_LWM2M_WATCHDOG_COUNT_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &lwm2m_watchdog_count, sizeof(lwm2m_watchdog_count));
+	INIT_OBJ_RES_DATA(TD_LWM2M_STORM_BACKOFF_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &lwm2m_storm_backoff, sizeof(lwm2m_storm_backoff));
+
 	thread_diag_inst.resources = thread_diag_res;
 	thread_diag_inst.resource_count = i;
 
@@ -118,7 +175,7 @@ void init_thread_diag_object(void)
 
 	thread_diag_obj.obj_id = THREAD_DIAG_OBJECT_ID;
 	thread_diag_obj.version_major = 2;
-	thread_diag_obj.version_minor = 0;
+	thread_diag_obj.version_minor = 2;
 	thread_diag_obj.is_core = false;
 	thread_diag_obj.fields = thread_diag_fields;
 	thread_diag_obj.field_count = ARRAY_SIZE(thread_diag_fields);
@@ -351,8 +408,51 @@ void update_connectivity_metrics(void)
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_TX_TOTAL_RID);
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_RX_TOTAL_RID);
 
+	/* === v2.1 golden: snapshot LwM2M client counters from main.c =====
+	 * The atomic counters live in main.c (lwm2m_diag_*); we copy them
+	 * into the static u32 backings the LwM2M engine sees, then notify
+	 * any observers. Engine pmin/pmax controls actual emission rate.
+	 */
+	extern uint32_t lwm2m_diag_get_reg_attempts(void);
+	extern uint32_t lwm2m_diag_get_reg_success(void);
+	extern uint32_t lwm2m_diag_get_recover_count(void);
+	extern uint32_t lwm2m_diag_get_restart_success(void);
+	extern int32_t  lwm2m_diag_get_last_error_code(void);
+	extern uint32_t lwm2m_diag_get_last_error_uptime(void);
+	extern uint32_t lwm2m_diag_get_watchdog_count(void);
+	extern uint32_t lwm2m_diag_get_storm_backoff(void);
+
+	lwm2m_uptime_s         = (uint32_t)(k_uptime_get() / 1000);
+	lwm2m_reg_attempts     = lwm2m_diag_get_reg_attempts();
+	lwm2m_reg_success      = lwm2m_diag_get_reg_success();
+	lwm2m_notify_emitted   = meter_get_notify_emitted_total();
+	lwm2m_notify_throttled = meter_get_notify_throttled_total();
+	lwm2m_recover_count_val = lwm2m_diag_get_recover_count();
+	lwm2m_restart_success  = lwm2m_diag_get_restart_success();
+	lwm2m_last_error_code  = lwm2m_diag_get_last_error_code();
+	lwm2m_last_error_uptime = lwm2m_diag_get_last_error_uptime();
+	lwm2m_watchdog_count   = lwm2m_diag_get_watchdog_count();
+	lwm2m_storm_backoff    = lwm2m_diag_get_storm_backoff();
+
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_UPTIME_S_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_REG_ATTEMPTS_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_REG_SUCCESS_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_NOTIFY_EMITTED_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_NOTIFY_THROTTLED_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_RECOVER_COUNT_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_RESTART_SUCCESS_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_LAST_ERROR_CODE_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_LAST_ERROR_UPTIME_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_WATCHDOG_COUNT_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_STORM_BACKOFF_RID);
+
 	LOG_INF("Obj4: RSSI=%ddBm LQI=%u%% IPs=%d router=%s",
 		best_rssi, lqi_to_percent(best_lqi), ip_count, router_ip_str);
 	LOG_INF("Obj33000: role=%s part=%u TX=%u RX=%u",
 		role_str, partition_id_val, tx_total, rx_total);
+	LOG_INF("Obj33000(diag): up=%us reg=%u/%u notify=%u/%u recover=%u/%u",
+		lwm2m_uptime_s,
+		lwm2m_reg_success, lwm2m_reg_attempts,
+		lwm2m_notify_emitted, lwm2m_notify_emitted + lwm2m_notify_throttled,
+		lwm2m_restart_success, lwm2m_recover_count_val);
 }

@@ -31,6 +31,8 @@
 #include <openthread/ip6.h>
 #include <openthread/platform/radio.h>
 
+#include "lwm2m_discover.h"
+#include "lwm2m_watchdog.h"
 #include "lwm2m_obj_power_meter.h"
 #include "lwm2m_obj_thread_diag.h"
 #include "lwm2m_obj_thread_net.h"
@@ -66,7 +68,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.17.0"
+#define CLIENT_FIRMWARE_VER     "0.5.0"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -78,6 +80,82 @@ static char lwm2m_server_uri_secondary[96];
 static const char *lwm2m_server_uris[2];
 static int lwm2m_server_index;
 static uint8_t lwm2m_reg_failures;
+
+/* === v0.20.0 production observability counters (Object 33000 RIDs 11-20) ===
+ * Monotonic from boot. Snapshot read by thread_conn_monitor.c via the
+ * getters below. atomic_t for safety with the work queue contexts.
+ */
+static atomic_t lwm2m_diag_reg_attempts     = ATOMIC_INIT(0);
+static atomic_t lwm2m_diag_reg_success      = ATOMIC_INIT(0);
+static atomic_t lwm2m_diag_recover_count    = ATOMIC_INIT(0);
+static atomic_t lwm2m_diag_restart_success  = ATOMIC_INIT(0);
+/* v2.2 — populated from PRIO 1.5 (diagnostics), PRIO 5 (watchdog), PRIO 6 (jitter) */
+static atomic_t lwm2m_diag_last_error_code  = ATOMIC_INIT(0);   /* signed; stored as int */
+static atomic_t lwm2m_diag_last_error_uptime = ATOMIC_INIT(0);
+static atomic_t lwm2m_diag_watchdog_count   = ATOMIC_INIT(0);
+static atomic_t lwm2m_diag_storm_backoff    = ATOMIC_INIT(0);
+/* Set true while lwm2m_recover_work_fn is in flight; the next
+ * REGISTRATION_COMPLETE counts as a successful restart. */
+static atomic_t lwm2m_diag_in_recovery = ATOMIC_INIT(0);
+
+uint32_t lwm2m_diag_get_reg_attempts(void)
+{ return (uint32_t)atomic_get(&lwm2m_diag_reg_attempts); }
+uint32_t lwm2m_diag_get_reg_success(void)
+{ return (uint32_t)atomic_get(&lwm2m_diag_reg_success); }
+uint32_t lwm2m_diag_get_recover_count(void)
+{ return (uint32_t)atomic_get(&lwm2m_diag_recover_count); }
+uint32_t lwm2m_diag_get_restart_success(void)
+{ return (uint32_t)atomic_get(&lwm2m_diag_restart_success); }
+int32_t  lwm2m_diag_get_last_error_code(void)
+{ return (int32_t)atomic_get(&lwm2m_diag_last_error_code); }
+uint32_t lwm2m_diag_get_last_error_uptime(void)
+{ return (uint32_t)atomic_get(&lwm2m_diag_last_error_uptime); }
+uint32_t lwm2m_diag_get_watchdog_count(void)
+{ return (uint32_t)atomic_get(&lwm2m_diag_watchdog_count); }
+uint32_t lwm2m_diag_get_storm_backoff(void)
+{ return (uint32_t)atomic_get(&lwm2m_diag_storm_backoff); }
+
+/* Helper: record an error with timestamp. Public for watchdog/event paths. */
+void lwm2m_diag_record_error(int err)
+{
+	atomic_set(&lwm2m_diag_last_error_code, err);
+	atomic_set(&lwm2m_diag_last_error_uptime, (uint32_t)(k_uptime_get() / 1000));
+}
+
+/* Helper: invoked by lwm2m_watchdog when it forces a recover. */
+void lwm2m_diag_inc_watchdog_count(void)
+{
+	atomic_inc(&lwm2m_diag_watchdog_count);
+}
+
+/* Helper: invoked by recover/event paths when a registration storm is
+ * detected (5.03/5.00 / NETWORK_ERROR proxy). Doubles backoff externally. */
+void lwm2m_diag_inc_storm_backoff(void)
+{
+	atomic_inc(&lwm2m_diag_storm_backoff);
+}
+
+/* Helper: invoked from any event handler that schedules lwm2m_recover_work
+ * in response to an engine-side error. Bug B fix: previously recover_count
+ * only incremented inside lwm2m_recover_work_fn, so events that triggered
+ * a fresh REGISTER without going through the work_fn (e.g. NETWORK_ERROR
+ * → engine internal restart) left recover_count=0 and zombie events
+ * invisible to the operator. */
+void lwm2m_diag_inc_recover_count(void)
+{
+	atomic_inc(&lwm2m_diag_recover_count);
+}
+
+/* Helper: increment reg_attempts at every call site that invokes
+ * lwm2m_rd_client_start(). Bug C fix: previously reg_attempts only
+ * incremented from boot path + recover_work_fn, so engine-initiated
+ * REGISTERs (e.g. after lifetime expiry via REG_UPDATE failure path) left
+ * reg_success > reg_attempts which broke the "success rate = success/attempts"
+ * intuition. Always pair with the actual rd_client_start call. */
+void lwm2m_diag_inc_reg_attempts(void)
+{
+	atomic_inc(&lwm2m_diag_reg_attempts);
+}
 
 /* Sensor update intervals */
 #define DLMS_POLL_INTERVAL_DEFAULT  15   /* seconds — default DLMS meter poll */
@@ -222,30 +300,195 @@ static void maybe_switch_lwm2m_server(void)
 	LOG_WRN("LwM2M server failover -> %s", active_lwm2m_server_uri());
 }
 
+/* Forward declarations so lwm2m_recover_work_fn can reschedule itself
+ * (recovery on start() failure path).
+ */
+static void lwm2m_recover_work_fn(struct k_work *w);
+static void lwm2m_recover_probe_fn(struct k_work *w);
+/* Non-static: lwm2m_watchdog.c references this symbol via extern. */
+K_WORK_DELAYABLE_DEFINE(lwm2m_recover_work, lwm2m_recover_work_fn);
+/* Post-restart health probe — fires N seconds after start() returns OK to
+ * verify the engine actually produced a REGISTRATION_COMPLETE. If not,
+ * treats the restart as silently failed and reschedules recover_work.
+ */
+static K_WORK_DELAYABLE_DEFINE(lwm2m_recover_probe, lwm2m_recover_probe_fn);
+/* Snapshot of reg_success at the moment we scheduled the probe; the probe
+ * compares this to the current value to decide if a fresh REGISTRATION
+ * happened during the probe window. */
+static atomic_t lwm2m_probe_baseline_success = ATOMIC_INIT(0);
+#define LWM2M_RECOVER_PROBE_S  30   /* health probe window after start() */
+
+/* ---- Recovery state machine (production hardening) ----
+ *
+ * Original design called lwm2m_rd_client_stop+start once per failure event
+ * and gave up if start() returned an error. Field testing with 30 nodes
+ * revealed ~80% zombie rate after server hiccups (GC pause / restart /
+ * network blip): a single failed start() left the engine wedged.
+ *
+ * v0.20.0 redesign:
+ *   - Exponential backoff (60s → 120s → 240s → 300s cap)
+ *   - Retry on start() failure (not just on next external event)
+ *   - After MAX_ATTEMPTS, sys_reboot(WARM) preserves Thread session
+ *   - Counter resets ONLY on REGISTRATION_COMPLETE (most conservative —
+ *     repeated REGISTER→fail cycles still escalate).
+ *
+ * Tunables in Kconfig: AMI_LWM2M_RECOVER_BACKOFF_{MIN,MAX}_S,
+ *                       AMI_LWM2M_RECOVER_MAX_ATTEMPTS.
+ *
+ * Reproduction of the original bug for regression testing:
+ *   1. Bring 5+ nodes registered against the Edge.
+ *   2. systemctl stop tb-edge   (or docker stop tb-edge-v2)
+ *   3. Wait ≥ lifetime + grace.
+ *   4. systemctl start tb-edge.
+ *   5. Without this fix: ~80% nodes silent, only power-cycle recovers.
+ *      With this fix: 100% nodes back inside ~5 min via recovery work.
+ */
+static uint8_t lwm2m_recover_attempt;
+
+/*
+ * PRIO 6 — exponential backoff with ±25% decorrelated jitter.
+ *
+ * Original (PRIO 1) was deterministic: 60s, 120s, 240s, 300s. With 30 nodes
+ * in a mesh-cascade event, all 30 retry at the same wall-clock second →
+ * server avalanche → many fail again. Standard fix (AWS guidance):
+ * randomize ±25% so retries spread over a 50%-wide window.
+ *
+ * Range per attempt: [0.75 × base, 1.25 × base]
+ * Examples (base=60): attempt 1 → 45..75 s, attempt 2 → 90..150 s, etc.
+ */
+static uint32_t lwm2m_recover_backoff_s(uint8_t attempt)
+{
+	uint32_t base = CONFIG_AMI_LWM2M_RECOVER_BACKOFF_MIN_S;
+	for (uint8_t i = 1; i < attempt; i++) {
+		base *= 2;
+		if (base >= (uint32_t)CONFIG_AMI_LWM2M_RECOVER_BACKOFF_MAX_S) {
+			base = CONFIG_AMI_LWM2M_RECOVER_BACKOFF_MAX_S;
+			break;
+		}
+	}
+	/* ±25% jitter: window width = base/2, centered at base.
+	 * lower bound = base * 3/4 ; upper bound = base * 5/4
+	 */
+	uint32_t window = base / 2;
+	uint32_t r = window ? (sys_rand32_get() % (window + 1)) : 0;
+	uint32_t lower = (base * 3) / 4;
+	return lower + r;
+}
+
 static void lwm2m_recover_work_fn(struct k_work *w)
 {
 	ARG_UNUSED(w);
 
 	atomic_set(&lwm2m_recovering, 1);
-	LOG_WRN("LwM2M recovery: restarting RD client (server=%s)",
-		active_lwm2m_server_uri());
+	atomic_set(&lwm2m_diag_in_recovery, 1);
+	/* recover_count (RID 15) NOT incremented here. It's now incremented
+	 * from the event handlers that detect the failure (Bug B fix). The
+	 * event is the canonical signal of "a recovery cycle started"; the
+	 * work_fn is just the executor and may not always run before the
+	 * engine self-recovers. */
+	lwm2m_recover_attempt++;
 
-	/* Force-close current session, then start clean registration. */
-	(void)lwm2m_rd_client_stop(&client_ctx, rd_client_event, false);
-	memset(&client_ctx, 0, sizeof(client_ctx));
+	LOG_INF("recover_work_fn entry: attempt=%u total_recover=%u uptime=%llds",
+		lwm2m_recover_attempt,
+		lwm2m_diag_get_recover_count(),
+		k_uptime_get() / 1000);
 
-	int ret = lwm2m_rd_client_start(&client_ctx, endpoint_name, 0,
-				      rd_client_event, observe_cb);
-	if (ret == 0 || ret == -EINPROGRESS) {
-		LOG_INF("LwM2M recovery: RD client restart requested");
-	} else {
-		LOG_ERR("LwM2M recovery: RD start failed (%d)", ret);
+	if (lwm2m_recover_attempt > CONFIG_AMI_LWM2M_RECOVER_MAX_ATTEMPTS) {
+		LOG_ERR("LwM2M engine: max restart attempts (%d) reached, "
+			"scheduling soft (warm) reboot to preserve Thread session",
+			CONFIG_AMI_LWM2M_RECOVER_MAX_ATTEMPTS);
+		lwm2m_diag_record_error(-ETIMEDOUT);
+		k_sleep(K_SECONDS(2));   /* let log thread flush */
+		sys_reboot(SYS_REBOOT_WARM);
+		/* unreachable */
 	}
 
+	LOG_INF("LwM2M engine: restart attempt %d/%d (server=%s)",
+		lwm2m_recover_attempt,
+		CONFIG_AMI_LWM2M_RECOVER_MAX_ATTEMPTS,
+		active_lwm2m_server_uri());
+
+	LOG_INF("calling lwm2m_rd_client_stop");
+	int ret_stop = lwm2m_rd_client_stop(&client_ctx, rd_client_event, false);
+	LOG_INF("stop returned %d", ret_stop);
+
+	memset(&client_ctx, 0, sizeof(client_ctx));
+
+	atomic_inc(&lwm2m_diag_reg_attempts);   /* Object 33000 RID 11 */
+	LOG_INF("calling lwm2m_rd_client_start (attempt %d)", lwm2m_recover_attempt);
+	int ret = lwm2m_rd_client_start(&client_ctx, endpoint_name, 0,
+				      rd_client_event, observe_cb);
+	LOG_INF("start returned %d (recover_count=%u)",
+		ret, lwm2m_diag_get_recover_count());
+
+	if (ret == 0 || ret == -EINPROGRESS) {
+		LOG_INF("LwM2M engine: restart requested (attempt %d), "
+			"scheduling health probe in %ds",
+			lwm2m_recover_attempt, LWM2M_RECOVER_PROBE_S);
+		/* PRIO 1.5: snapshot reg_success counter; probe will compare
+		 * this value to detect "silent" failures where start() said OK
+		 * but no REGISTRATION_COMPLETE event ever arrived.
+		 */
+		atomic_set(&lwm2m_probe_baseline_success,
+			   atomic_get(&lwm2m_diag_reg_success));
+		k_work_reschedule(&lwm2m_recover_probe,
+				  K_SECONDS(LWM2M_RECOVER_PROBE_S));
+		atomic_set(&lwm2m_recovering, 0);
+		return;
+	}
+
+	/* start() returned an error inline — record it and schedule retry */
+	lwm2m_diag_record_error(ret);
+	uint32_t next_s = lwm2m_recover_backoff_s(lwm2m_recover_attempt + 1);
+	LOG_ERR("LwM2M engine: restart failed (err=%d), "
+		"next attempt %d/%d in %us",
+		ret,
+		lwm2m_recover_attempt + 1,
+		CONFIG_AMI_LWM2M_RECOVER_MAX_ATTEMPTS,
+		next_s);
+
 	atomic_set(&lwm2m_recovering, 0);
+	k_work_reschedule(&lwm2m_recover_work, K_SECONDS(next_s));
 }
 
-static K_WORK_DELAYABLE_DEFINE(lwm2m_recover_work, lwm2m_recover_work_fn);
+/*
+ * PRIO 1.5 — Post-restart health probe.
+ *
+ * Fires LWM2M_RECOVER_PROBE_S seconds after a successful start() call.
+ * Compares the snapshot of reg_success taken at restart time to the
+ * current value. If unchanged, the restart silently failed (engine in
+ * "alive but never registered" state) and we reschedule recover_work.
+ *
+ * This is the fix for the 73% non-active rate observed at field validation:
+ * lwm2m_rd_client_start() can return 0 but get stuck internally without
+ * emitting REGISTRATION_COMPLETE, leaving the node zombie until external
+ * reset. The probe rescues those cases.
+ */
+static void lwm2m_recover_probe_fn(struct k_work *w)
+{
+	ARG_UNUSED(w);
+
+	uint32_t baseline = (uint32_t)atomic_get(&lwm2m_probe_baseline_success);
+	uint32_t current  = lwm2m_diag_get_reg_success();
+
+	if (current > baseline) {
+		LOG_INF("recover_probe: REGISTRATION_COMPLETE seen "
+			"(reg_success %u→%u). Restart truly succeeded.",
+			baseline, current);
+		/* Counter reset already happened in REGISTRATION_COMPLETE path. */
+		return;
+	}
+
+	/* Silent failure: start() said OK but no REGISTER produced.
+	 * Treat as failed restart, reschedule with backoff.
+	 */
+	lwm2m_diag_record_error(-ENETUNREACH);
+	uint32_t next_s = lwm2m_recover_backoff_s(lwm2m_recover_attempt + 1);
+	LOG_WRN("recover_probe: SILENT FAILURE — reg_success unchanged at %u "
+		"after %ds since start(). Re-scheduling recover in %us",
+		current, LWM2M_RECOVER_PROBE_S, next_s);
+	k_work_reschedule(&lwm2m_recover_work, K_SECONDS(next_s));
+}
 
 /* ---- LwM2M callbacks ---- */
 static int device_reboot_cb(uint16_t obj_inst_id,
@@ -260,13 +503,20 @@ static int device_reboot_cb(uint16_t obj_inst_id,
 static void rd_client_event(struct lwm2m_ctx *client,
 			    enum lwm2m_rd_client_event client_event)
 {
+	uint32_t backoff_s;
+
 	switch (client_event) {
 	case LWM2M_RD_CLIENT_EVENT_NONE:
 		break;
 	case LWM2M_RD_CLIENT_EVENT_REGISTRATION_COMPLETE:
-		LOG_INF("LwM2M Registration complete!");
+		LOG_INF("LwM2M Registration complete (recovery attempts reset 0)");
 		lwm2m_connected = true;
 		lwm2m_reg_failures = 0;
+		lwm2m_recover_attempt = 0;   /* confirmed sane state — reset escalation */
+		atomic_inc(&lwm2m_diag_reg_success);   /* Object 33000 RID 12 */
+		if (atomic_cas(&lwm2m_diag_in_recovery, 1, 0)) {
+			atomic_inc(&lwm2m_diag_restart_success);   /* Object 33000 RID 16 */
+		}
 		k_work_cancel_delayable(&lwm2m_recover_work);
 		ami_set_rgb(AMI_RGB_GREEN);
 		break;
@@ -275,41 +525,81 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		lwm2m_connected = false;
 		ami_set_rgb(AMI_RGB_RED);
 		lwm2m_reg_failures++;
+		lwm2m_diag_record_error(-ECONNRESET);
+		lwm2m_diag_inc_recover_count();   /* Bug B: surface recovery cycle */
 		maybe_switch_lwm2m_server();
-		if (!atomic_get(&lwm2m_recovering)) {
-			k_work_reschedule(&lwm2m_recover_work, K_SECONDS(10));
-		}
+		backoff_s = lwm2m_recover_backoff_s(lwm2m_recover_attempt + 1);
+		LOG_INF("LwM2M engine error: scheduling restart attempt %d/%d in %us",
+			lwm2m_recover_attempt + 1,
+			CONFIG_AMI_LWM2M_RECOVER_MAX_ATTEMPTS, backoff_s);
+		/* Always reschedule (even if currently recovering): k_work_reschedule
+		 * handles the running case by re-firing after the current invocation.
+		 * This avoids losing events that arrive during recovery work execution.
+		 */
+		k_work_reschedule(&lwm2m_recover_work, K_SECONDS(backoff_s));
 		break;
 	case LWM2M_RD_CLIENT_EVENT_REG_TIMEOUT:
 		LOG_WRN("LwM2M Registration timeout");
 		lwm2m_connected = false;
 		ami_set_rgb(AMI_RGB_RED);
 		lwm2m_reg_failures++;
+		lwm2m_diag_record_error(-ETIMEDOUT);
+		lwm2m_diag_inc_recover_count();   /* Bug B */
 		maybe_switch_lwm2m_server();
-		if (!atomic_get(&lwm2m_recovering)) {
-			k_work_reschedule(&lwm2m_recover_work, K_SECONDS(10));
-		}
+		backoff_s = lwm2m_recover_backoff_s(lwm2m_recover_attempt + 1);
+		LOG_INF("LwM2M engine error: scheduling restart attempt %d/%d in %us",
+			lwm2m_recover_attempt + 1,
+			CONFIG_AMI_LWM2M_RECOVER_MAX_ATTEMPTS, backoff_s);
+		k_work_reschedule(&lwm2m_recover_work, K_SECONDS(backoff_s));
 		break;
 	case LWM2M_RD_CLIENT_EVENT_REG_UPDATE_COMPLETE:
 		LOG_DBG("LwM2M Registration update complete");
+		/* Note: per design (most-conservative), we do NOT reset
+		 * lwm2m_recover_attempt here. Only REGISTRATION_COMPLETE
+		 * resets it. This keeps escalation tight if the engine is
+		 * looping REGISTER→UPDATE-fail→REGISTER cycles.
+		 *
+		 * BUT we DO ping the watchdog: a successful UPDATE proves the
+		 * engine is alive end-to-end, even if no Notify went out
+		 * recently (e.g. all 14 resources throttled).
+		 */
+		lwm2m_watchdog_emit_event();
 		break;
 	case LWM2M_RD_CLIENT_EVENT_DISCONNECT:
 		LOG_WRN("LwM2M Disconnected");
 		lwm2m_connected = false;
 		ami_set_rgb(AMI_RGB_YELLOW);
-		if (!atomic_get(&lwm2m_recovering)) {
-			k_work_reschedule(&lwm2m_recover_work, K_SECONDS(10));
-		}
+		lwm2m_diag_record_error(-ENOTCONN);
+		lwm2m_diag_inc_recover_count();   /* Bug B */
+		backoff_s = lwm2m_recover_backoff_s(lwm2m_recover_attempt + 1);
+		LOG_INF("LwM2M engine error: scheduling restart attempt %d/%d in %us",
+			lwm2m_recover_attempt + 1,
+			CONFIG_AMI_LWM2M_RECOVER_MAX_ATTEMPTS, backoff_s);
+		k_work_reschedule(&lwm2m_recover_work, K_SECONDS(backoff_s));
 		break;
 	case LWM2M_RD_CLIENT_EVENT_NETWORK_ERROR:
-		LOG_ERR("LwM2M network error — will retry");
+		/* NETWORK_ERROR is our best proxy for "server is overloaded
+		 * or unreachable" (5.03 / 5.00 / timeout) since Zephyr LwM2M
+		 * doesn't surface CoAP response codes to the app event API.
+		 * PRIO 6: double the backoff to back off aggressively when
+		 * the server is hot. */
+		LOG_ERR("LwM2M network error — applying storm-backoff (2x)");
 		lwm2m_connected = false;
 		ami_set_rgb(AMI_RGB_RED);
 		lwm2m_reg_failures++;
+		lwm2m_diag_record_error(-ECONNREFUSED);
+		lwm2m_diag_inc_recover_count();   /* Bug B */
+		lwm2m_diag_inc_storm_backoff();
 		maybe_switch_lwm2m_server();
-		if (!atomic_get(&lwm2m_recovering)) {
-			k_work_reschedule(&lwm2m_recover_work, K_SECONDS(10));
+		backoff_s = lwm2m_recover_backoff_s(lwm2m_recover_attempt + 1) * 2u;
+		if (backoff_s > (uint32_t)CONFIG_AMI_LWM2M_RECOVER_BACKOFF_MAX_S) {
+			backoff_s = CONFIG_AMI_LWM2M_RECOVER_BACKOFF_MAX_S;
 		}
+		LOG_INF("LwM2M engine error: scheduling restart attempt %d/%d in %us "
+			"(storm-backoff applied)",
+			lwm2m_recover_attempt + 1,
+			CONFIG_AMI_LWM2M_RECOVER_MAX_ATTEMPTS, backoff_s);
+		k_work_reschedule(&lwm2m_recover_work, K_SECONDS(backoff_s));
 		break;
 	default:
 		LOG_DBG("LwM2M event: %d", client_event);
@@ -368,7 +658,29 @@ static int lwm2m_setup(void)
 
 	/* Server Object (1) */
 	lwm2m_set_u16(&LWM2M_OBJ(1, 0, 0), 101); /* Short Server ID */
-	lwm2m_set_u32(&LWM2M_OBJ(1, 0, 1), 300); /* Lifetime = 300s */
+	/* Lifetime taken from Kconfig (per-mesh overlay can override).
+	 * pi4 default = 300s, r1000 = 120s — see overlays/<mesh>.conf.
+	 */
+	lwm2m_set_u32(&LWM2M_OBJ(1, 0, 1), CONFIG_LWM2M_ENGINE_DEFAULT_LIFETIME);
+	/* Default Min Period (pmin) and Max Period (pmax) for Observe.
+	 *
+	 * These are the per-server defaults applied to any Observed resource
+	 * that does NOT have its own pmin/pmax set via Write-Attributes from
+	 * the server. Zephyr's lwm2m_observation engine reads them via
+	 * lwm2m_server_get_pmin/pmax (lwm2m_observation.c:361-362).
+	 *
+	 * We align /1/0/2 with our local throttle floor so behavior is
+	 * consistent whether or not the server sends Write-Attributes:
+	 *   - server pmin set → MAX(server, local) wins (Zephyr enforces server,
+	 *     PUSH_FIELD enforces local — whichever is larger)
+	 *   - server pmin unset → /1/0/2 default applies, == local floor
+	 * /1/0/3 = 0 → no forced periodic Notify (no heartbeat). The
+	 * registration UPDATE every (lifetime - UPDATE_EARLY) keeps the
+	 * server aware of liveness independently.
+	 */
+	lwm2m_set_u32(&LWM2M_OBJ(1, 0, 2),
+		      CONFIG_AMI_LWM2M_NOTIFY_MIN_INTERVAL_MS / 1000);
+	lwm2m_set_u32(&LWM2M_OBJ(1, 0, 3), 0);
 
 	/* Device Object (3) */
 	lwm2m_set_res_buf(&LWM2M_OBJ(3, 0, 0),
@@ -1189,10 +1501,11 @@ static void fill_demo_readings(struct meter_readings *r)
 
 static void apply_otbr_dataset(void)
 {
+#if defined(CONFIG_AMI_MESH_PI4)
 	static const uint8_t otbr_tlvs[] = {
-		/* OTBR active dataset — exported via: ot-ctl dataset active -x
-		 * Network: UNAL-Thread, Ch25, PAN 0x23ED
+		/* UNAL-Thread on Pi4 EKH01 — Ch25, PAN 0x23ED
 		 * Mesh-local: fdf5:bffd:0bd6:ef74::/64
+		 * Exported via: ssh root@192.168.1.111 'ot-ctl dataset active -x'
 		 */
 		0x0e, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
 		0x4a, 0x03, 0x00, 0x00, 0x0f, 0x35, 0x06, 0x00, 0x04, 0x00,
@@ -1206,6 +1519,31 @@ static void apply_otbr_dataset(void)
 		0x0b, 0x55, 0x4e, 0x41, 0x4c, 0x2d, 0x54, 0x68, 0x72, 0x65,
 		0x61, 0x64, 0x00, 0x03, 0x00, 0x00, 0x19,
 	};
+	const char *mesh_label = "UNAL-Thread (Pi4 EKH01, Ch25)";
+	const char *mesh_local_str = "fdf5:bffd:0bd6:ef74::/64";
+#elif defined(CONFIG_AMI_MESH_R1000)
+	static const uint8_t otbr_tlvs[] = {
+		/* UNAL-R1000 on Seeed R1000 — Ch21, PAN 0x41AE
+		 * Mesh-local: fdf1:a391:6243:2a67::/64
+		 * Exported via: ssh root@192.168.1.175 'ot-ctl dataset active -x'
+		 */
+		0x0e, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+		0x4a, 0x03, 0x00, 0x00, 0x1a, 0x35, 0x06, 0x00, 0x04, 0x00,
+		0x1f, 0xff, 0xe0, 0x02, 0x08, 0xb6, 0x83, 0x33, 0xbc, 0x10,
+		0x1c, 0x7c, 0x53, 0x07, 0x08, 0xfd, 0xf1, 0xa3, 0x91, 0x62,
+		0x43, 0x2a, 0x67, 0x05, 0x10, 0xb3, 0x1c, 0x15, 0x88, 0xa1,
+		0xb2, 0xf6, 0x8c, 0x62, 0x24, 0x01, 0x71, 0x1f, 0x73, 0xaf,
+		0xd0, 0x01, 0x02, 0x41, 0xae, 0x04, 0x10, 0x6c, 0x9b, 0x91,
+		0xf7, 0x1e, 0x59, 0x36, 0x02, 0x2a, 0x86, 0xaf, 0x24, 0xb3,
+		0xc9, 0x2c, 0xd3, 0x00, 0x03, 0x00, 0x00, 0x15, 0x03, 0x0a,
+		0x55, 0x4e, 0x41, 0x4c, 0x2d, 0x52, 0x31, 0x30, 0x30, 0x30,
+		0x0c, 0x04, 0x02, 0xa0, 0xf7, 0x78,
+	};
+	const char *mesh_label = "UNAL-R1000 (Seeed R1000, Ch21)";
+	const char *mesh_local_str = "fdf1:a391:6243:2a67::/64";
+#else
+#error "No AMI_MESH target selected (set CONFIG_AMI_MESH_PI4=y or CONFIG_AMI_MESH_R1000=y via overlay)"
+#endif
 
 	openthread_mutex_lock();
 	struct otInstance *ot = openthread_get_default_instance();
@@ -1234,7 +1572,8 @@ static void apply_otbr_dataset(void)
 		return;
 	}
 
-	LOG_INF("OTBR dataset applied (mesh-local fdf5:bffd:0bd6:ef74::/64)");
+	LOG_INF("OTBR dataset applied: %s", mesh_label);
+	LOG_INF("Mesh-local: %s", mesh_local_str);
 	LOG_INF("Dataset commissioned: %s",
 		otDatasetIsCommissioned(ot) ? "yes" : "no");
 
@@ -1327,6 +1666,26 @@ int main(void)
 	build_endpoint_name();
 	LOG_INF("Endpoint: %s", endpoint_name);
 
+	/* Try DNS-SD discovery of LwM2M server via OTBR's SRP/Advertising Proxy.
+	 * On success, overwrites the primary URI; on failure, the Kconfig
+	 * default loaded by init_lwm2m_server_uris() is kept.
+	 */
+	{
+		char discovered[sizeof(lwm2m_server_uri_primary)];
+		if (lwm2m_discover_resolve(discovered, sizeof(discovered), 7000) == 0) {
+			strncpy(lwm2m_server_uri_primary, discovered,
+				sizeof(lwm2m_server_uri_primary) - 1);
+			lwm2m_server_uri_primary[sizeof(lwm2m_server_uri_primary) - 1] = '\0';
+			lwm2m_server_uris[0] = lwm2m_server_uri_primary;
+			lwm2m_server_index = 0;
+			LOG_INF("LwM2M server URI (discovered): %s",
+				lwm2m_server_uri_primary);
+		} else {
+			LOG_WRN("LwM2M server URI (Kconfig fallback): %s",
+				lwm2m_server_uri_primary);
+		}
+	}
+
 	/* Setup LwM2M objects */
 	ret = lwm2m_setup();
 	if (ret < 0) {
@@ -1336,8 +1695,27 @@ int main(void)
 
 	/* Start LwM2M RD client */
 	memset(&client_ctx, 0, sizeof(client_ctx));
+
+	/* PRIO 6: initial-register jitter [0..30 s].
+	 * Without this, 30 boards power-cycled by an OTBR restart would all
+	 * REGISTER within the same ~5 s window → server avalanche. The
+	 * jitter spreads them over ~30 s → 1 REGISTER/sec sustained,
+	 * which the TB Edge Leshan stack handles cleanly.
+	 */
+	uint32_t initial_jitter_ms = sys_rand32_get() % 30000U;
+	LOG_INF("LwM2M initial REGISTER jitter: %u ms (anti boot-storm)",
+		initial_jitter_ms);
+	k_sleep(K_MSEC(initial_jitter_ms));
+
+	atomic_inc(&lwm2m_diag_reg_attempts);   /* Object 33000 RID 11 */
 	lwm2m_rd_client_start(&client_ctx, endpoint_name, 0,
 			      rd_client_event, observe_cb);
+
+	/* Watchdog (PRIO 5): start the system_workq-based liveness check
+	 * AFTER initial REGISTER is in flight. Boot grace inside the watchdog
+	 * prevents false positives during the first attach + register cycle.
+	 */
+	lwm2m_watchdog_init();
 
 	/* Main loop — DLMS poll at configurable interval with smart threshold notify */
 	LOG_INF("Entering sensor loop (DLMS=%ds, conn=%ds, threshold-notify)",
@@ -1369,6 +1747,7 @@ int main(void)
 			update_connectivity_metrics();
 			update_thread_network();
 			update_thread_neighbors();
+			meter_dump_throttle_stats();   /* v0.20.0 — visibility on suppression rate */
 			last_conn_update_ms = now;
 		}
 	}

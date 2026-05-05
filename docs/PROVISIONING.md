@@ -1,22 +1,131 @@
 # AMI Node — Factory Provisioning Guide
 
-> How to register a new (factory-fresh) node with ThingsBoard Edge and Cloud.
+> How to register a new (factory-fresh) node with ThingsBoard Edge.
+
+> ✅ **Production default (since 2026-04-29)**: mesh `r1000` (Seeed R1000 OTBR
+> at `192.168.1.175`, channel 21, network UNAL-R1000). Variant `med`
+> (Minimal End Device).
+>
+> The legacy `pi4` mesh (Pi 4 EKH01 at `192.168.1.111`, channel 25, network
+> UNAL-Thread) remains supported for migration of existing nodes via
+> `--mesh pi4`. See [`MESH_SWITCHING.md`](MESH_SWITCHING.md) for the build
+> cookbook.
 
 ---
 
 ## System Context
 
 ```
-[Meter]──RS485──[XIAO ESP32-C6]──Thread 802.15.4──[OTBR+TB Edge RPi4]──gRPC──[TB Cloud]
-                 (this node)                        192.168.1.111:5683/udp     192.168.1.159
+[Meter]──RS485──[XIAO ESP32-C6]──Thread 802.15.4──[OTBR+TB Edge]──gRPC──[TB Central]
+                 (this node)                       Seeed R1000 (default)    192.168.1.170
+
+  Seeed R1000:   192.168.1.175  channel 21  network UNAL-R1000   (default)
+  Pi 4 EKH01:    192.168.1.111  channel 25  network UNAL-Thread  (legacy, --mesh pi4)
 ```
 
-When the node boots, it sends an **LwM2M Registration** to the Edge server at
-`coap://[fdc6:63fd:328d:66df:6a54:12ef:8c67:bd1c]:5683`.  
+When the node boots, it discovers the LwM2M server URI dynamically via OpenThread
+DNS-SD (resolving `thingsboard-edge.default.service.arpa.` against the OTBR's
+SRP server) and sends an **LwM2M Registration**.
 **If the device does not exist in TB Edge, the connection is rejected** (or ignored) and
 the node will not send any data.
 
 Therefore, **before deploying any new node**, it must be registered in ThingsBoard.
+
+---
+
+## OTBR Host Setup (one-time per Edge)
+
+> **Required on every new OTBR Linux host before any node will exchange CoAP
+> traffic with TB Edge.** Symptoms when missing: REGISTER succeeds and the
+> device appears `Active`, but every `ObserveRequest` from TB times out and no
+> sensor telemetry ever arrives.
+
+### Why this is needed
+
+`otbr-agent` assigns the Thread mesh-local addresses on `wpan0` with
+`preferred_lft 0` (deprecated). Per RFC 6724 rule 3, the Linux kernel then
+avoids those addresses when picking a source for outbound packets — even when
+the destination is in the mesh-local prefix — and falls back to the OMR address
+on `wpan0` instead. The Zephyr LwM2M client `connect()`s its UDP socket to the
+mesh-local server EID, so replies arriving with an OMR source are dropped by
+the socket as a peer mismatch. Result: silent unidirectional traffic loss after
+REGISTER.
+
+### Manual fix (runtime, lost on `otbr-agent` restart)
+
+```bash
+ssh root@<otbr-ip>     # 192.168.1.175 for r1000, 192.168.1.111 for pi4
+EID=$(ot-ctl ipaddr mleid | head -1)
+ip -6 addr change ${EID}/64 dev wpan0 preferred_lft forever valid_lft forever
+```
+
+Verify: `ip -6 route get <node-mesh-local-IP>` must show
+`src <mesh-local-EID>` (not `src <OMR-addr>`).
+
+### Persistent fix (REQUIRED — hotplug + timer)
+
+⚠️ Hotplug `ifup` alone is NOT enough — confirmed in r1000 deployment:
+otbr-agent sets `valid_lft`/`preferred_lft` on the EID and after some time
+the kernel marks it deprecated again, breaking src/dst symmetry and
+triggering Zephyr LwM2M `do_update_timeout_cb` → Re-REGISTER cycles every
+~3 minutes (Bug #1).
+
+The OTBR needs a persistent mechanism that re-applies `preferred_lft forever`
+periodically. Options:
+
+**Option A — systemd timer (recommended)**:
+
+```bash
+# /etc/systemd/system/wpan0-undeprecate.service
+[Service]
+Type=oneshot
+ExecStart=/etc/hotplug.d/iface/99-wpan0-undeprecate
+
+# /etc/systemd/system/wpan0-undeprecate.timer
+[Unit]
+Description=Re-apply wpan0 mesh-local EID preferred lifetime
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+Unit=wpan0-undeprecate.service
+[Install]
+WantedBy=timers.target
+
+# Enable
+systemctl enable --now wpan0-undeprecate.timer
+```
+
+**Option B — OpenWrt cron** (simpler on OpenWrt-based OTBRs):
+
+```bash
+# /etc/crontabs/root
+* * * * * /etc/hotplug.d/iface/99-wpan0-undeprecate
+```
+
+**Option C — patch otbr-agent** to never deprecate the mesh-local EID
+(definitive but invasive).
+
+The hotplug script itself goes in:
+
+```bash
+scp tools/otbr/wpan0_undeprecate.sh root@<otbr-ip>:/etc/hotplug.d/iface/99-wpan0-undeprecate
+ssh root@<otbr-ip> 'chmod +x /etc/hotplug.d/iface/99-wpan0-undeprecate'
+```
+
+### Validation (sustained 15-min check)
+
+```bash
+EID=$(ssh root@<otbr-ip> 'ot-ctl ipaddr mleid | head -1' | tr -d '\r')
+for i in $(seq 1 30); do
+  ssh root@<otbr-ip> "ip -6 addr show wpan0 | grep -F $EID; \
+                      ip -6 route get fdf1:a391:6243:2a67:1:2:3:4 | head -1"
+  sleep 30
+done
+```
+
+PASS if all 30 samples show:
+- EID line WITHOUT the word `deprecated`
+- Route `src` = `<EID>`, never `<OMR-addr>`
 
 ---
 

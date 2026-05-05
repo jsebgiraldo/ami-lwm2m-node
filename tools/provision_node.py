@@ -48,7 +48,7 @@ DEFAULT_USER = "tenant@thingsboard.org"
 DEFAULT_PASS = "tenant"
 
 # ── Profile name that ALL AMI LwM2M nodes must use ───────────────────────────
-TARGET_PROFILE_NAME = "C2000_Monofasico_v2"
+TARGET_PROFILE_NAME = "AMI_LwM2M_Node"
 
 # ── Endpoint prefix (must match firmware build_endpoint_name()) ───────────────
 ENDPOINT_PREFIX = "ami-esp32c6"
@@ -125,12 +125,33 @@ class TBClient:
 
     # ── Device CRUD ──────────────────────────────────────────────────────────
     def find_device_by_name(self, name: str) -> dict | None:
-        """Return device dict if it exists, None otherwise."""
+        """Return device dict if it exists, None otherwise.
+
+        Tolerates TB Edge instances that mangle the device name with random
+        prefix/suffix (observed on r1000) by falling back to a
+        credentials_id match. The script's intent is to identify the device
+        by its LwM2M endpoint (== credentials_id), so even if `name` was
+        renamed (e.g. `ami-esp32c6-1494_cMjzzqObaRguGPL`), the device that
+        owns `credentialsId="ami-esp32c6-1494"` is the one we want.
+        """
         try:
             data = self._get("/api/tenant/deviceInfos", {"pageSize": 100, "page": 0, "textSearch": name})
-            for d in data.get("data", []):
+            candidates = data.get("data", [])
+            # Pass 1: exact name match (works on Edges that don't rename)
+            for d in candidates:
                 if d["name"] == name:
                     return d
+            # Pass 2: tolerate rename — match by credentialsId on candidates whose
+            # name CONTAINS the requested name (TB Edge `textSearch` is substring).
+            for d in candidates:
+                if name not in d.get("name", ""):
+                    continue
+                try:
+                    creds = self.get_device_credentials(d["id"]["id"])
+                    if creds.get("credentialsId") == name:
+                        return d
+                except Exception:
+                    continue
         except requests.HTTPError:
             pass
         return None

@@ -185,3 +185,9 @@ setup_env.ps1
 
 # Local scratch inputs
 plink_in.txt
+
+# Claude Code agent local state
+.claude/
+
+# Deployment ledger (operator-specific runtime state, not firmware code)
+tools/deployment_ledger.csv

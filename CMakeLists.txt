@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(ami-lwm2m-client
-    VERSION 0.4.0
+    VERSION 0.5.0
     DESCRIPTION "AMI Node: LwM2M client over Thread (ESP32-C6)"
     LANGUAGES C
 )
@@ -10,6 +10,8 @@ project(ami-lwm2m-client
 # Source files
 target_sources(app PRIVATE
     src/main.c
+    src/lwm2m_discover.c
+    src/lwm2m_watchdog.c
     src/rgb_led.c
     src/lwm2m_obj_power_meter.c
     src/firmware_update.c
