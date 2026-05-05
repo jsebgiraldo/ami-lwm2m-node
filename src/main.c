@@ -17,11 +17,13 @@
 #include <zephyr/logging/log_ctrl.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/hwinfo.h>           /* PRIO 7: reset cause */
 #include <zephyr/net/lwm2m.h>
 #include <zephyr/net/net_if.h>
 #include <zephyr/random/random.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/init.h>
+#include <zephyr/settings/settings.h>        /* PRIO 7: persist total_resets */
 #include <zephyr/sys/atomic.h>
 #include <string.h>
 #include <openthread.h>
@@ -68,7 +70,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.0"
+#define CLIENT_FIRMWARE_VER     "0.6.1"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -157,6 +159,112 @@ void lwm2m_diag_inc_recover_count(void)
 void lwm2m_diag_inc_reg_attempts(void)
 {
 	atomic_inc(&lwm2m_diag_reg_attempts);
+}
+
+/* === v2.3 boot reliability counters (Object 33000 RIDs 21-22) ===
+ *
+ * last_reset_reason: hwinfo_get_reset_cause() bitmap captured at boot.
+ *                    Bit values (zephyr/drivers/hwinfo.h): RESET_PIN=BIT(0),
+ *                    RESET_SOFTWARE=BIT(1), RESET_BROWNOUT=BIT(2),
+ *                    RESET_POR=BIT(3), RESET_WATCHDOG=BIT(4),
+ *                    RESET_LOW_POWER_WAKE=BIT(7), RESET_CPU_LOCKUP=BIT(8).
+ *                    -1 if hwinfo failed to read.
+ *
+ * total_resets:      Monotonic counter persisted in NVS via the settings
+ *                    subsystem under "ami/total_resets". Survives reboots.
+ *                    Survives crashes too because it's incremented EARLY
+ *                    in main() before any LwM2M / Thread code runs.
+ */
+static atomic_t lwm2m_diag_last_reset_reason = ATOMIC_INIT(-1);
+static atomic_t lwm2m_diag_total_resets      = ATOMIC_INIT(0);
+
+int32_t  lwm2m_diag_get_last_reset_reason(void)
+{ return (int32_t)atomic_get(&lwm2m_diag_last_reset_reason); }
+uint32_t lwm2m_diag_get_total_resets(void)
+{ return (uint32_t)atomic_get(&lwm2m_diag_total_resets); }
+
+/* === Boot watchdog atomic (PRIO 8) ===
+ * Set to 1 on the FIRST LWM2M_RD_CLIENT_EVENT_REGISTRATION_COMPLETE.
+ * The boot watchdog work fires CONFIG_AMI_BOOT_REGISTER_DEADLINE_S
+ * seconds after main() reaches the watchdog init point; if the atomic
+ * is still 0, the boot path has failed to register and we sys_reboot.
+ */
+static atomic_t lwm2m_first_register_complete = ATOMIC_INIT(0);
+
+/* === Drain-and-reboot helper (USB-friendly) ===
+ *
+ * The ESP32-C6 native USB Serial/JTAG driver leaves the host-side device
+ * in a "enumerated but cannot open" state if sys_reboot() races with an
+ * active console. Sleeping before the reboot lets the host detect link
+ * drop, clean its USB stack, and re-enumerate cleanly post-reset.
+ *
+ * Use this helper for EVERY sys_reboot() in the firmware.
+ */
+static void ami_reboot_drain(int reboot_type, const char *reason)
+{
+	LOG_WRN("REBOOT (%s): drain USB %dms then sys_reboot(%s)",
+		reason, CONFIG_AMI_REBOOT_USB_DRAIN_MS,
+		reboot_type == SYS_REBOOT_WARM ? "WARM" : "COLD");
+	/* Flush log buffer + give USB host time to detect link drop. */
+	if (CONFIG_AMI_REBOOT_USB_DRAIN_MS > 0) {
+		k_sleep(K_MSEC(CONFIG_AMI_REBOOT_USB_DRAIN_MS));
+	}
+	sys_reboot(reboot_type);
+}
+
+/* === Settings subsystem hooks for total_resets persistence ===
+ *
+ * Storage key: "ami/total_resets" (uint32_t little-endian).
+ * Loaded once at boot; saved once after capture_reset_reason() bumps it.
+ */
+#define AMI_RESETS_KEY "ami/total_resets"
+
+static int ami_settings_load_cb(const char *name, size_t len,
+				settings_read_cb read_cb, void *cb_arg)
+{
+	if (strcmp(name, "total_resets") == 0 && len == sizeof(uint32_t)) {
+		uint32_t v = 0;
+		ssize_t got = read_cb(cb_arg, &v, sizeof(v));
+		if (got == sizeof(v)) {
+			atomic_set(&lwm2m_diag_total_resets, (atomic_val_t)v);
+		}
+	}
+	return 0;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(ami_settings, "ami", NULL,
+			       ami_settings_load_cb, NULL, NULL);
+
+/* Capture reset cause + bump total_resets (PRIO 7).
+ * Call once, very early, from main(). Failures are non-fatal.
+ */
+static void capture_reset_reason(void)
+{
+	uint32_t cause = 0;
+	int rc = hwinfo_get_reset_cause(&cause);
+	if (rc == 0) {
+		atomic_set(&lwm2m_diag_last_reset_reason, (atomic_val_t)cause);
+		LOG_INF("Reset cause: 0x%08x (POR=%d PIN=%d SW=%d WDT=%d "
+			"BROWNOUT=%d CPU_LOCKUP=%d)",
+			cause,
+			!!(cause & RESET_POR),
+			!!(cause & RESET_PIN),
+			!!(cause & RESET_SOFTWARE),
+			!!(cause & RESET_WATCHDOG),
+			!!(cause & RESET_BROWNOUT),
+			!!(cause & RESET_CPU_LOCKUP));
+		(void)hwinfo_clear_reset_cause();
+	} else {
+		LOG_WRN("hwinfo_get_reset_cause failed: %d", rc);
+	}
+
+	/* Increment + persist total_resets BEFORE any networking code runs,
+	 * so even a crash mid-boot still bumps the counter on the next try. */
+	uint32_t prev = (uint32_t)atomic_get(&lwm2m_diag_total_resets);
+	uint32_t now  = prev + 1U;
+	atomic_set(&lwm2m_diag_total_resets, (atomic_val_t)now);
+	int sr = settings_save_one(AMI_RESETS_KEY, &now, sizeof(now));
+	LOG_INF("total_resets: %u -> %u (settings_save=%d)", prev, now, sr);
 }
 
 /* Sensor update intervals */
@@ -309,8 +417,32 @@ static int lwm2m_discover_with_retry(int max_attempts, int per_attempt_ms)
  */
 static void lwm2m_recover_work_fn(struct k_work *w);
 static void lwm2m_recover_probe_fn(struct k_work *w);
+static void boot_watchdog_fn(struct k_work *w);
 /* Non-static: lwm2m_watchdog.c references this symbol via extern. */
 K_WORK_DELAYABLE_DEFINE(lwm2m_recover_work, lwm2m_recover_work_fn);
+
+/* Boot watchdog (PRIO 8): fires CONFIG_AMI_BOOT_REGISTER_DEADLINE_S after
+ * being scheduled. If lwm2m_first_register_complete is still 0, the boot
+ * path failed to produce a REGISTRATION_COMPLETE — sys_reboot warm to retry
+ * the entire boot sequence. The work is canceled in the
+ * REGISTRATION_COMPLETE handler. */
+static K_WORK_DELAYABLE_DEFINE(boot_watchdog_work, boot_watchdog_fn);
+
+static void boot_watchdog_fn(struct k_work *w)
+{
+	ARG_UNUSED(w);
+	if (atomic_get(&lwm2m_first_register_complete) != 0) {
+		/* Should not happen: REGISTRATION_COMPLETE handler cancels us. */
+		LOG_DBG("boot_watchdog fired but already registered — no-op");
+		return;
+	}
+	LOG_ERR("BOOT WATCHDOG: no REGISTRATION_COMPLETE in %ds — "
+		"sys_reboot WARM to retry boot",
+		CONFIG_AMI_BOOT_REGISTER_DEADLINE_S);
+	lwm2m_diag_record_error(-ETIMEDOUT);
+	ami_reboot_drain(SYS_REBOOT_WARM, "boot-watchdog");
+	/* unreachable */
+}
 /* Post-restart health probe — fires N seconds after start() returns OK to
  * verify the engine actually produced a REGISTRATION_COMPLETE. If not,
  * treats the restart as silently failed and reschedules recover_work.
@@ -402,8 +534,7 @@ static void lwm2m_recover_work_fn(struct k_work *w)
 			"scheduling soft (warm) reboot to preserve Thread session",
 			CONFIG_AMI_LWM2M_RECOVER_MAX_ATTEMPTS);
 		lwm2m_diag_record_error(-ETIMEDOUT);
-		k_sleep(K_SECONDS(2));   /* let log thread flush */
-		sys_reboot(SYS_REBOOT_WARM);
+		ami_reboot_drain(SYS_REBOOT_WARM, "max-recover-attempts");
 		/* unreachable */
 	}
 
@@ -525,8 +656,7 @@ static int device_reboot_cb(uint16_t obj_inst_id,
 			    uint8_t *args, uint16_t args_len)
 {
 	LOG_INF("DEVICE: Reboot requested");
-	k_sleep(K_MSEC(100));
-	sys_reboot(SYS_REBOOT_COLD);
+	ami_reboot_drain(SYS_REBOOT_COLD, "lwm2m-device-reboot");
 	return 0;
 }
 
@@ -546,6 +676,11 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		atomic_inc(&lwm2m_diag_reg_success);   /* Object 33000 RID 12 */
 		if (atomic_cas(&lwm2m_diag_in_recovery, 1, 0)) {
 			atomic_inc(&lwm2m_diag_restart_success);   /* Object 33000 RID 16 */
+		}
+		/* PRIO 8: cancel boot watchdog on first successful registration. */
+		if (atomic_cas(&lwm2m_first_register_complete, 0, 1)) {
+			k_work_cancel_delayable(&boot_watchdog_work);
+			LOG_INF("Boot watchdog disarmed (first REGISTER complete)");
 		}
 		k_work_cancel_delayable(&lwm2m_recover_work);
 		ami_set_rgb(AMI_RGB_GREEN);
@@ -1160,8 +1295,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(ami_log_cmds,
 static int cmd_ami_reset(const struct shell *sh, size_t argc, char **argv)
 {
 	shell_print(sh, "Rebooting...");
-	k_sleep(K_MSEC(100));
-	sys_reboot(SYS_REBOOT_COLD);
+	ami_reboot_drain(SYS_REBOOT_COLD, "shell-command");
 	return 0;
 }
 
@@ -1651,6 +1785,30 @@ int main(void)
 	/* Suppress cosmetic LwM2M registry re-sync errors at startup (restored after 25 s) */
 	suppress_lwm2m_registry_startup_noise();
 
+	/* PRIO 7: settings subsystem + reset cause capture.
+	 * Done EARLY so total_resets is persisted before any subsystem could
+	 * crash and cause a reset loop with no observability. */
+	{
+		int s_ret = settings_subsys_init();
+		if (s_ret == 0) {
+			(void)settings_load_subtree("ami");
+		} else {
+			LOG_WRN("settings_subsys_init failed: %d", s_ret);
+		}
+		capture_reset_reason();
+	}
+
+	/* PRIO 8: boot watchdog ARMED here, BEFORE Thread attach starts.
+	 * Cancelled in REGISTRATION_COMPLETE handler. If the boot path takes
+	 * longer than CONFIG_AMI_BOOT_REGISTER_DEADLINE_S to register, the
+	 * node sys_reboot WARM to retry the entire boot sequence. */
+	if (CONFIG_AMI_BOOT_REGISTER_DEADLINE_S > 0) {
+		LOG_INF("Boot watchdog ARMED: %ds deadline to first REGISTER",
+			CONFIG_AMI_BOOT_REGISTER_DEADLINE_S);
+		k_work_reschedule(&boot_watchdog_work,
+				  K_SECONDS(CONFIG_AMI_BOOT_REGISTER_DEADLINE_S));
+	}
+
 	/* LED init */
 	ami_led_init();
 	ami_set_rgb(AMI_RGB_BLUE);
@@ -1701,8 +1859,7 @@ int main(void)
 		LOG_ERR("DNS-SD: %d attempts failed; warm-reboot to retry boot",
 			CONFIG_AMI_LWM2M_DNS_SD_RETRY_MAX);
 		lwm2m_diag_record_error(-EHOSTUNREACH);
-		k_sleep(K_SECONDS(2));   /* let log thread flush */
-		sys_reboot(SYS_REBOOT_WARM);
+		ami_reboot_drain(SYS_REBOOT_WARM, "dns-sd-boot-fail");
 		/* unreachable */
 	}
 

@@ -54,7 +54,16 @@
 #define TD_LWM2M_WATCHDOG_COUNT_RID    19   /* U32: times the silence-watchdog forced a recover */
 #define TD_LWM2M_STORM_BACKOFF_RID     20   /* U32: times we doubled backoff due to 5.xx/timeout */
 
-#define TD_NUM_FIELDS             21
-#define TD_RES_INST_COUNT         21
+/* === v2.3 boot reliability — Bug D + Bug E diagnostics (RIDs 21-22) ===
+ * Added 2026-05-05 after the powercycle test where 2/5 nodes failed to boot.
+ * Together with PRIO 8 (boot watchdog, sys_reboot if no REGISTER in
+ * AMI_BOOT_REGISTER_DEADLINE_S seconds), these RIDs make every reboot
+ * observable from the server side without console access.
+ */
+#define TD_BOOT_LAST_RESET_REASON_RID  21   /* S32: hwinfo_get_reset_cause() bitmap; -1 if read failed */
+#define TD_BOOT_TOTAL_RESETS_RID       22   /* U32: monotonic count, persisted in NVS via settings */
+
+#define TD_NUM_FIELDS             23
+#define TD_RES_INST_COUNT         23
 
 #endif /* LWM2M_OBJ_THREAD_DIAG_H */

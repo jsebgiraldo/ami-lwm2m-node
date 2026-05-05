@@ -44,7 +44,7 @@ LOG_MODULE_REGISTER(thread_conn, LOG_LEVEL_INF);
  * Object 33000 — Thread MAC Diagnostics (Reduced v2.0)
  * ================================================================ */
 
-#define THREAD_DIAG_MAX_ID    21  /* resource IDs 0..20 (v2.2 production hardening) */
+#define THREAD_DIAG_MAX_ID    23  /* resource IDs 0..22 (v2.3 boot reliability) */
 #define THREAD_DIAG_MAX_INST  1
 
 /* Static data buffers — reduced: only Role, Partition ID, MAC counters */
@@ -75,6 +75,9 @@ static int32_t  lwm2m_last_error_code;
 static uint32_t lwm2m_last_error_uptime;
 static uint32_t lwm2m_watchdog_count;
 static uint32_t lwm2m_storm_backoff;
+/* v2.3 — boot reliability counters */
+static int32_t  boot_last_reset_reason;   /* hwinfo bitmap; -1 = unknown */
+static uint32_t boot_total_resets;        /* persisted via settings */
 
 /* LwM2M object structures */
 static struct lwm2m_engine_obj thread_diag_obj;
@@ -103,6 +106,9 @@ static struct lwm2m_engine_obj_field thread_diag_fields[] = {
 	OBJ_FIELD_DATA(TD_LWM2M_LAST_ERROR_UPTIME_RID, R, U32),
 	OBJ_FIELD_DATA(TD_LWM2M_WATCHDOG_COUNT_RID, R, U32),
 	OBJ_FIELD_DATA(TD_LWM2M_STORM_BACKOFF_RID, R, U32),
+	/* v2.3 — boot reliability (Bug D + Bug E diagnostics) */
+	OBJ_FIELD_DATA(TD_BOOT_LAST_RESET_REASON_RID, R, S32),
+	OBJ_FIELD_DATA(TD_BOOT_TOTAL_RESETS_RID, R, U32),
 };
 
 static struct lwm2m_engine_obj_inst thread_diag_inst;
@@ -162,6 +168,12 @@ static struct lwm2m_engine_obj_inst *thread_diag_create(uint16_t obj_inst_id)
 	INIT_OBJ_RES_DATA(TD_LWM2M_STORM_BACKOFF_RID, thread_diag_res, i, thread_diag_ri, j,
 			  &lwm2m_storm_backoff, sizeof(lwm2m_storm_backoff));
 
+	/* v2.3 — boot reliability */
+	INIT_OBJ_RES_DATA(TD_BOOT_LAST_RESET_REASON_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &boot_last_reset_reason, sizeof(boot_last_reset_reason));
+	INIT_OBJ_RES_DATA(TD_BOOT_TOTAL_RESETS_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &boot_total_resets, sizeof(boot_total_resets));
+
 	thread_diag_inst.resources = thread_diag_res;
 	thread_diag_inst.resource_count = i;
 
@@ -175,7 +187,7 @@ void init_thread_diag_object(void)
 
 	thread_diag_obj.obj_id = THREAD_DIAG_OBJECT_ID;
 	thread_diag_obj.version_major = 2;
-	thread_diag_obj.version_minor = 2;
+	thread_diag_obj.version_minor = 3;
 	thread_diag_obj.is_core = false;
 	thread_diag_obj.fields = thread_diag_fields;
 	thread_diag_obj.field_count = ARRAY_SIZE(thread_diag_fields);
@@ -421,6 +433,8 @@ void update_connectivity_metrics(void)
 	extern uint32_t lwm2m_diag_get_last_error_uptime(void);
 	extern uint32_t lwm2m_diag_get_watchdog_count(void);
 	extern uint32_t lwm2m_diag_get_storm_backoff(void);
+	extern int32_t  lwm2m_diag_get_last_reset_reason(void);   /* v2.3 */
+	extern uint32_t lwm2m_diag_get_total_resets(void);        /* v2.3 */
 
 	lwm2m_uptime_s         = (uint32_t)(k_uptime_get() / 1000);
 	lwm2m_reg_attempts     = lwm2m_diag_get_reg_attempts();
@@ -433,6 +447,8 @@ void update_connectivity_metrics(void)
 	lwm2m_last_error_uptime = lwm2m_diag_get_last_error_uptime();
 	lwm2m_watchdog_count   = lwm2m_diag_get_watchdog_count();
 	lwm2m_storm_backoff    = lwm2m_diag_get_storm_backoff();
+	boot_last_reset_reason = lwm2m_diag_get_last_reset_reason();
+	boot_total_resets      = lwm2m_diag_get_total_resets();
 
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_UPTIME_S_RID);
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_REG_ATTEMPTS_RID);
@@ -445,6 +461,8 @@ void update_connectivity_metrics(void)
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_LAST_ERROR_UPTIME_RID);
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_WATCHDOG_COUNT_RID);
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_STORM_BACKOFF_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_BOOT_LAST_RESET_REASON_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_BOOT_TOTAL_RESETS_RID);
 
 	LOG_INF("Obj4: RSSI=%ddBm LQI=%u%% IPs=%d router=%s",
 		best_rssi, lqi_to_percent(best_lqi), ip_count, router_ip_str);

@@ -53,6 +53,40 @@ config AMI_LWM2M_RECOVER_MAX_ATTEMPTS
 	  policy: if the client repeatedly registers and falls back into
 	  failure, escalation still happens.
 
+config AMI_BOOT_REGISTER_DEADLINE_S
+	int "Boot watchdog deadline: max seconds between boot and first REGISTER COMPLETE"
+	default 90
+	help
+	  PRIO 8 boot watchdog. From the moment the firmware enters main loop
+	  to the first LWM2M_RD_CLIENT_EVENT_REGISTRATION_COMPLETE event, this
+	  is the maximum allowed time. If exceeded, the node performs a
+	  SYS_REBOOT_WARM (preserving Thread NVS).
+
+	  This is defense-in-depth for Bug E: nodes that hang in the boot
+	  path before reaching lwm2m_rd_client_start (Thread attach stuck,
+	  DNS-SD lookup repeatedly failing, init crash, etc) will auto-recover
+	  without operator intervention.
+
+	  Default 90s budget: 30s Thread attach + 5s IPv6 propagation +
+	  10x7s DNS-SD retries + 30s REGISTER + safety margin. If actual
+	  measured boot time exceeds this, raise the value before lowering
+	  the watchdog gracefully.
+
+	  Setting to 0 disables the boot watchdog (not recommended in fleet).
+
+config AMI_REBOOT_USB_DRAIN_MS
+	int "Milliseconds to sleep before sys_reboot to drain USB Serial/JTAG"
+	default 5000
+	help
+	  ESP32-C6 native USB Serial/JTAG often hangs (host-side enumerated
+	  but cannot open) when sys_reboot() races with an active console
+	  session. Sleeping before the reboot gives the host time to detect
+	  link drop and clean up its USB stack so the post-reset enumeration
+	  succeeds without manual unplug.
+
+	  5000 ms is conservative; 1500-2000 ms also works in practice but
+	  loses log buffer flushing margin. Set to 0 to disable the delay.
+
 config AMI_LWM2M_NOTIFY_MIN_INTERVAL_MS
 	int "Per-resource minimum interval between LwM2M Notifies (milliseconds)"
 	default 30000
