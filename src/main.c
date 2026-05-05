@@ -68,17 +68,19 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.5.0"
+#define CLIENT_FIRMWARE_VER     "0.6.0"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
 static char endpoint_name[32];
 
 /* LwM2M server URI runtime selection (primary + secondary fallback). */
-static char lwm2m_server_uri_primary[96];
-static char lwm2m_server_uri_secondary[96];
-static const char *lwm2m_server_uris[2];
-static int lwm2m_server_index;
+/* DNS-SD resolved server URI. Set at boot from
+ * lwm2m_discover_resolve(_lwm2m._udp.default.service.arpa.) and refreshed
+ * on every recovery cycle. The Kconfig fallback symbols
+ * AMI_LWM2M_SERVER_IPV6_PRIMARY/_SECONDARY are deprecated and ignored
+ * (v0.6.0+). */
+static char lwm2m_server_uri[96];
 static uint8_t lwm2m_reg_failures;
 
 /* === v0.20.0 production observability counters (Object 33000 RIDs 11-20) ===
@@ -252,7 +254,6 @@ static double demo_energy_kwh = 61100.0;
 /* Forward declarations */
 static void update_sensors_fallback(void);
 static void fill_demo_readings(struct meter_readings *r);
-static const char *active_lwm2m_server_uri(void);
 static void rd_client_event(struct lwm2m_ctx *client,
 			enum lwm2m_rd_client_event client_event);
 static void observe_cb(enum lwm2m_observe_event event,
@@ -263,41 +264,44 @@ static struct lwm2m_ctx client_ctx;
 static bool lwm2m_connected;
 static atomic_t lwm2m_recovering;
 
-static void init_lwm2m_server_uris(void)
+/* DNS-SD resolution with retry+backoff.
+ *
+ * Boot path: invoke this until success or until CONFIG_AMI_LWM2M_DNS_SD_RETRY_MAX
+ * attempts have failed; the caller is responsible for the escalation
+ * (sys_reboot warm) on terminal failure.
+ *
+ * Recovery path: invoke once before lwm2m_rd_client_start(); on failure,
+ * abort the cycle and let recover_work_fn reschedule with backoff.
+ *
+ * Returns 0 on success (lwm2m_server_uri populated), negative errno on failure.
+ */
+static int lwm2m_discover_with_retry(int max_attempts, int per_attempt_ms)
 {
-	snprintk(lwm2m_server_uri_primary, sizeof(lwm2m_server_uri_primary),
-		 "coap://[%s]:5683", CONFIG_AMI_LWM2M_SERVER_IPV6_PRIMARY);
-	snprintk(lwm2m_server_uri_secondary, sizeof(lwm2m_server_uri_secondary),
-		 "coap://[%s]:5683", CONFIG_AMI_LWM2M_SERVER_IPV6_SECONDARY);
+	char discovered[sizeof(lwm2m_server_uri)];
+	int backoff_s = 5;
+	const int backoff_cap_s = 60;
 
-	lwm2m_server_uris[0] = lwm2m_server_uri_primary;
-	if (strlen(CONFIG_AMI_LWM2M_SERVER_IPV6_SECONDARY) > 0) {
-		lwm2m_server_uris[1] = lwm2m_server_uri_secondary;
-	} else {
-		lwm2m_server_uris[1] = lwm2m_server_uri_primary;
+	for (int i = 1; i <= max_attempts; i++) {
+		LOG_INF("DNS-SD lookup attempt %d/%d (timeout=%dms)...",
+			i, max_attempts, per_attempt_ms);
+		int ret = lwm2m_discover_resolve(discovered, sizeof(discovered),
+						 per_attempt_ms);
+		if (ret == 0) {
+			strncpy(lwm2m_server_uri, discovered,
+				sizeof(lwm2m_server_uri) - 1);
+			lwm2m_server_uri[sizeof(lwm2m_server_uri) - 1] = '\0';
+			LOG_INF("DNS-SD resolved: %s", lwm2m_server_uri);
+			return 0;
+		}
+
+		LOG_WRN("DNS-SD lookup failed (err=%d); attempt %d/%d, "
+			"sleeping %ds", ret, i, max_attempts, backoff_s);
+		if (i < max_attempts) {
+			k_sleep(K_SECONDS(backoff_s));
+			backoff_s = MIN(backoff_s * 2, backoff_cap_s);
+		}
 	}
-	lwm2m_server_index = 0;
-}
-
-static const char *active_lwm2m_server_uri(void)
-{
-	return lwm2m_server_uris[lwm2m_server_index];
-}
-
-static void maybe_switch_lwm2m_server(void)
-{
-	if (lwm2m_server_uris[0] == lwm2m_server_uris[1]) {
-		return;
-	}
-
-	if (lwm2m_reg_failures < 2) {
-		return;
-	}
-
-	lwm2m_server_index ^= 1;
-	lwm2m_reg_failures = 0;
-	lwm2m_set_string(&LWM2M_OBJ(0, 0, 0), active_lwm2m_server_uri());
-	LOG_WRN("LwM2M server failover -> %s", active_lwm2m_server_uri());
+	return -EHOSTUNREACH;
 }
 
 /* Forward declarations so lwm2m_recover_work_fn can reschedule itself
@@ -403,10 +407,33 @@ static void lwm2m_recover_work_fn(struct k_work *w)
 		/* unreachable */
 	}
 
+	/* PRIO 9: re-resolve DNS-SD before each restart. The OTBR may have
+	 * regenerated its mleid/OMR (RCP swap, dataset reapply, partition
+	 * split) since boot. Restarting against a stale URI guarantees
+	 * silent failure. If DNS-SD fails here, abort and retry next cycle —
+	 * better to miss one cycle than to register against a dead address.
+	 */
+	{
+		int dns_ret = lwm2m_discover_with_retry(2,
+					CONFIG_AMI_LWM2M_DNS_SD_TIMEOUT_MS);
+		if (dns_ret != 0) {
+			LOG_WRN("recover: DNS-SD lookup failed (err=%d). "
+				"Aborting cycle, will retry on next event/watchdog",
+				dns_ret);
+			lwm2m_diag_record_error(dns_ret);
+			atomic_set(&lwm2m_recovering, 0);
+			atomic_set(&lwm2m_diag_in_recovery, 0);
+			/* Don't schedule a follow-up here — recover_count was
+			 * already incremented by the caller (event handler /
+			 * watchdog). Let the next failure event re-trigger us. */
+			return;
+		}
+	}
+
 	LOG_INF("LwM2M engine: restart attempt %d/%d (server=%s)",
 		lwm2m_recover_attempt,
 		CONFIG_AMI_LWM2M_RECOVER_MAX_ATTEMPTS,
-		active_lwm2m_server_uri());
+		lwm2m_server_uri);
 
 	LOG_INF("calling lwm2m_rd_client_stop");
 	int ret_stop = lwm2m_rd_client_stop(&client_ctx, rd_client_event, false);
@@ -414,7 +441,10 @@ static void lwm2m_recover_work_fn(struct k_work *w)
 
 	memset(&client_ctx, 0, sizeof(client_ctx));
 
-	atomic_inc(&lwm2m_diag_reg_attempts);   /* Object 33000 RID 11 */
+	/* Update Object 0 RID 0 (Server URI) with the freshly resolved address. */
+	lwm2m_set_string(&LWM2M_OBJ(0, 0, 0), lwm2m_server_uri);
+
+	lwm2m_diag_inc_reg_attempts();   /* Object 33000 RID 11 */
 	LOG_INF("calling lwm2m_rd_client_start (attempt %d)", lwm2m_recover_attempt);
 	int ret = lwm2m_rd_client_start(&client_ctx, endpoint_name, 0,
 				      rd_client_event, observe_cb);
@@ -527,7 +557,6 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		lwm2m_reg_failures++;
 		lwm2m_diag_record_error(-ECONNRESET);
 		lwm2m_diag_inc_recover_count();   /* Bug B: surface recovery cycle */
-		maybe_switch_lwm2m_server();
 		backoff_s = lwm2m_recover_backoff_s(lwm2m_recover_attempt + 1);
 		LOG_INF("LwM2M engine error: scheduling restart attempt %d/%d in %us",
 			lwm2m_recover_attempt + 1,
@@ -545,7 +574,6 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		lwm2m_reg_failures++;
 		lwm2m_diag_record_error(-ETIMEDOUT);
 		lwm2m_diag_inc_recover_count();   /* Bug B */
-		maybe_switch_lwm2m_server();
 		backoff_s = lwm2m_recover_backoff_s(lwm2m_recover_attempt + 1);
 		LOG_INF("LwM2M engine error: scheduling restart attempt %d/%d in %us",
 			lwm2m_recover_attempt + 1,
@@ -590,7 +618,6 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		lwm2m_diag_record_error(-ECONNREFUSED);
 		lwm2m_diag_inc_recover_count();   /* Bug B */
 		lwm2m_diag_inc_storm_backoff();
-		maybe_switch_lwm2m_server();
 		backoff_s = lwm2m_recover_backoff_s(lwm2m_recover_attempt + 1) * 2u;
 		if (backoff_s > (uint32_t)CONFIG_AMI_LWM2M_RECOVER_BACKOFF_MAX_S) {
 			backoff_s = CONFIG_AMI_LWM2M_RECOVER_BACKOFF_MAX_S;
@@ -652,7 +679,7 @@ static int lwm2m_setup(void)
 	int ret;
 
 	/* Security Object (0) */
-	lwm2m_set_string(&LWM2M_OBJ(0, 0, 0), active_lwm2m_server_uri());
+	lwm2m_set_string(&LWM2M_OBJ(0, 0, 0), lwm2m_server_uri);
 	lwm2m_set_u8(&LWM2M_OBJ(0, 0, 2), 3); /* NoSec mode */
 	lwm2m_set_u16(&LWM2M_OBJ(0, 0, 10), 101); /* Short Server ID */
 
@@ -723,9 +750,7 @@ static int lwm2m_setup(void)
 	init_thread_cli_object();
 
 	LOG_INF("LwM2M objects configured");
-	LOG_INF("  Server(primary):   %s", lwm2m_server_uris[0]);
-	LOG_INF("  Server(secondary): %s", lwm2m_server_uris[1]);
-	LOG_INF("  Server(active):    %s", active_lwm2m_server_uri());
+	LOG_INF("  Server (DNS-SD):   %s", lwm2m_server_uri);
 	return 0;
 }
 
@@ -805,7 +830,7 @@ static int cmd_ami_status(const struct shell *sh, size_t argc, char **argv)
 
 	/* LwM2M */
 	shell_print(sh, "  LwM2M  : %s", lwm2m_connected ? "OK  (registered)" : "FAIL (not registered)");
-	shell_print(sh, "    server=%s", active_lwm2m_server_uri());
+	shell_print(sh, "    server=%s", lwm2m_server_uri);
 
 	/* DLMS */
 	shell_print(sh, "  DLMS   : %s  failures=%d  poll_interval=%ds",
@@ -890,7 +915,7 @@ static int cmd_ami_test_lwm2m(const struct shell *sh, size_t argc, char **argv)
 
 	if (lwm2m_connected) {
 		shell_print(sh, "  endpoint  : %s", endpoint_name);
-		shell_print(sh, "  server    : %s", active_lwm2m_server_uri());
+		shell_print(sh, "  server    : %s", lwm2m_server_uri);
 		shell_print(sh, "  [PASS] LwM2M registered");
 		return 0;
 	} else {
@@ -1625,7 +1650,6 @@ int main(void)
 
 	/* Suppress cosmetic LwM2M registry re-sync errors at startup (restored after 25 s) */
 	suppress_lwm2m_registry_startup_noise();
-	init_lwm2m_server_uris();
 
 	/* LED init */
 	ami_led_init();
@@ -1666,24 +1690,20 @@ int main(void)
 	build_endpoint_name();
 	LOG_INF("Endpoint: %s", endpoint_name);
 
-	/* Try DNS-SD discovery of LwM2M server via OTBR's SRP/Advertising Proxy.
-	 * On success, overwrites the primary URI; on failure, the Kconfig
-	 * default loaded by init_lwm2m_server_uris() is kept.
+	/* DNS-SD only — resolve LwM2M server via OTBR's SRP/Advertising Proxy.
+	 * No Kconfig fallback (deprecated in v0.6.0). On terminal failure
+	 * (CONFIG_AMI_LWM2M_DNS_SD_RETRY_MAX consecutive lookups failed),
+	 * persist last_error_code = -EHOSTUNREACH and warm-reboot to retry
+	 * the entire boot sequence (preserves Thread NVS).
 	 */
-	{
-		char discovered[sizeof(lwm2m_server_uri_primary)];
-		if (lwm2m_discover_resolve(discovered, sizeof(discovered), 7000) == 0) {
-			strncpy(lwm2m_server_uri_primary, discovered,
-				sizeof(lwm2m_server_uri_primary) - 1);
-			lwm2m_server_uri_primary[sizeof(lwm2m_server_uri_primary) - 1] = '\0';
-			lwm2m_server_uris[0] = lwm2m_server_uri_primary;
-			lwm2m_server_index = 0;
-			LOG_INF("LwM2M server URI (discovered): %s",
-				lwm2m_server_uri_primary);
-		} else {
-			LOG_WRN("LwM2M server URI (Kconfig fallback): %s",
-				lwm2m_server_uri_primary);
-		}
+	if (lwm2m_discover_with_retry(CONFIG_AMI_LWM2M_DNS_SD_RETRY_MAX,
+				      CONFIG_AMI_LWM2M_DNS_SD_TIMEOUT_MS) != 0) {
+		LOG_ERR("DNS-SD: %d attempts failed; warm-reboot to retry boot",
+			CONFIG_AMI_LWM2M_DNS_SD_RETRY_MAX);
+		lwm2m_diag_record_error(-EHOSTUNREACH);
+		k_sleep(K_SECONDS(2));   /* let log thread flush */
+		sys_reboot(SYS_REBOOT_WARM);
+		/* unreachable */
 	}
 
 	/* Setup LwM2M objects */

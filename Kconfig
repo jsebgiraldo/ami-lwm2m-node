@@ -81,22 +81,38 @@ config AMI_LWM2M_NOTIFY_MIN_INTERVAL_MS
 	  Per-mesh override: set in overlays/<mesh>.conf if needed.
 
 config AMI_LWM2M_SERVER_IPV6_PRIMARY
-	string "Primary LwM2M server IPv6 (fallback if DNS-SD discovery fails)"
-	default "fdf5:bffd:bd6:ef74:eb7b:f1d1:874e:2b91"
-	help
-	  Primary IPv6 address for the LwM2M server URI used in Object 0.
-	  Used only if OpenThread DNS-SD discovery of the SRP service
-	  ThingsBoard-Edge._lwm2m._udp.default.service.arpa. (or the host
-	  thingsboard-edge.default.service.arpa.) fails at boot.
-	  Format: full IPv6 literal without brackets.
-
-config AMI_LWM2M_SERVER_IPV6_SECONDARY
-	string "Secondary LwM2M server IPv6"
+	string "DEPRECATED — Primary LwM2M server IPv6 (no longer read by code)"
 	default ""
 	help
-	  Optional fallback IPv6 address. If repeated registration failures occur,
-	  the client switches to this address and retries automatically.
-	  Leave empty to disable failover.
+	  DEPRECATED in v0.6.0. Server discovery is DNS-SD only via
+	  _lwm2m._udp.default.service.arpa. The firmware ignores this value
+	  even if set. The Kconfig symbol is preserved so legacy overlays
+	  do not fail to build, but its value has no effect.
+
+	  Remove from your overlay file. v0.7.0 will delete the symbol.
+
+config AMI_LWM2M_SERVER_IPV6_SECONDARY
+	string "DEPRECATED — Secondary LwM2M server IPv6 (no longer read by code)"
+	default ""
+	help
+	  DEPRECATED in v0.6.0. See AMI_LWM2M_SERVER_IPV6_PRIMARY.
+
+config AMI_LWM2M_DNS_SD_RETRY_MAX
+	int "Maximum DNS-SD lookup retries before sys_reboot at boot"
+	default 10
+	help
+	  Number of consecutive DNS-SD failures at boot before the node
+	  performs sys_reboot(SYS_REBOOT_WARM). Each retry uses exponential
+	  backoff (5s, 10s, 20s, ..., capped at 60s). Default 10 → max ~9 min
+	  before reboot. Tunable for harsh mesh-attach environments.
+
+config AMI_LWM2M_DNS_SD_TIMEOUT_MS
+	int "Per-attempt DNS-SD lookup timeout (milliseconds)"
+	default 7000
+	help
+	  Timeout for a single otDnsClientResolveService attempt. Below 5000
+	  may starve under realistic mesh latency; above 15000 causes
+	  sluggish boot if SRP server is unresponsive.
 
 choice AMI_MESH
 	prompt "Target Thread mesh"
