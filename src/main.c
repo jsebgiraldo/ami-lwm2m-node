@@ -70,7 +70,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.1"
+#define CLIENT_FIRMWARE_VER     "0.6.2"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -210,6 +210,57 @@ static void ami_reboot_drain(int reboot_type, const char *reason)
 		k_sleep(K_MSEC(CONFIG_AMI_REBOOT_USB_DRAIN_MS));
 	}
 	sys_reboot(reboot_type);
+}
+
+/* === v0.6.2 panic handler with USB drain ===
+ *
+ * Default Zephyr fatal handler halts the CPU. With CONFIG_RESET_ON_FATAL_ERROR
+ * it would sys_reboot(0) immediately, but that races with the host USB stack
+ * the same way the recover_work_fn used to before ami_reboot_drain.
+ *
+ * Override the weak symbol to:
+ *   1. LOG_PANIC() to flush any buffered logs (best-effort post-panic).
+ *   2. Mark last_error_code = -EFAULT so the operator sees "panic"
+ *      via Object 33000 RID 17 after the next REGISTER.
+ *   3. Drain USB CONFIG_AMI_REBOOT_USB_DRAIN_MS before the reboot.
+ *   4. sys_reboot(SYS_REBOOT_COLD) — full reset since the kernel may
+ *      be in an inconsistent state (vs WARM which preserves NVS Thread but
+ *      relies on the kernel not having corrupted memory).
+ *
+ * Coupled with PRIO 7 (RID 21 last_reset_reason) the operator can correlate:
+ *   RID 21 = RESET_SOFTWARE  (came from sys_reboot)
+ *   RID 17 = -EFAULT (-14)   (path was the panic handler)
+ * → conclusion: the chip panicked. Without this, panic-induced reboots
+ * would leave the host USB stuck and the operator would need a physical
+ * power-cycle.
+ *
+ * IMPORTANT: this runs in fatal context. Avoid k_sleep() if interrupts
+ * are disabled (which is typical post-panic). We use k_busy_wait()
+ * instead — busy-wait works regardless of scheduler state.
+ */
+void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
+{
+	ARG_UNUSED(esf);
+
+	LOG_PANIC();   /* flush any pending log records */
+	LOG_ERR("FATAL panic (reason=%u): drain USB %dms then sys_reboot COLD",
+		reason, CONFIG_AMI_REBOOT_USB_DRAIN_MS);
+
+	/* Best-effort: persist the panic indicator. atomic_set is safe to call
+	 * from any context (single store, no scheduler interaction). */
+	atomic_set(&lwm2m_diag_last_error_code, (atomic_val_t)(-EFAULT));
+	atomic_set(&lwm2m_diag_last_error_uptime,
+		   (atomic_val_t)(uint32_t)(k_uptime_get() / 1000));
+
+	/* Busy-wait drain — interrupt-safe alternative to k_sleep().
+	 * k_busy_wait works even if interrupts are disabled by the panic path. */
+	if (CONFIG_AMI_REBOOT_USB_DRAIN_MS > 0) {
+		k_busy_wait((uint32_t)CONFIG_AMI_REBOOT_USB_DRAIN_MS * 1000U);
+	}
+
+	sys_reboot(SYS_REBOOT_COLD);
+	/* unreachable */
+	CODE_UNREACHABLE;
 }
 
 /* === Settings subsystem hooks for total_resets persistence ===
@@ -1684,7 +1735,7 @@ static void apply_otbr_dataset(void)
 	static const uint8_t otbr_tlvs[] = {
 		/* UNAL-R1000 on Seeed R1000 — Ch21, PAN 0x41AE
 		 * Mesh-local: fdf1:a391:6243:2a67::/64
-		 * Exported via: ssh root@192.168.1.175 'ot-ctl dataset active -x'
+		 * Exported via: ssh root@192.168.8.176 'ot-ctl dataset active -x'
 		 */
 		0x0e, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
 		0x4a, 0x03, 0x00, 0x00, 0x1a, 0x35, 0x06, 0x00, 0x04, 0x00,
