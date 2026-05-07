@@ -70,7 +70,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.5"
+#define CLIENT_FIRMWARE_VER     "0.6.6"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -338,16 +338,13 @@ static int dlms_poll_interval_s = DLMS_POLL_INTERVAL_DEFAULT;
 static int64_t last_dlms_poll_ms;
 static const struct gpio_dt_spec led0 =
 	GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios, {0});
-/* WS2812 RGB brightness (0-255). Lowered progressively as we observed the
- * SoC running hot:
- *   v0.6.2: 40 (was always-on GREEN)
- *   v0.6.3: 8 (5x reduction)
- *   v0.6.4: 2 (~0.8% of max)
- *   v0.6.5: 1 (minimum visible value — ~0.4% of max, ~40x less LED
- *           current draw vs v0.6.2). Combined with auto-off 2s the LED
- *           is essentially a brief blink at boot/REGISTER and otherwise
- *           dark. */
-#define AMI_RGB_BRIGHTNESS 1
+/* WS2812 RGB brightness (0-255). Runtime-tunable via shell:
+ *   ami led brightness <0..255>
+ *   ami led <color>          (color = off|red|green|blue|yellow|cyan|magenta|white)
+ *   ami led off
+ * Default 1 = ~0.4% of max (lowest practically visible). */
+#define AMI_RGB_BRIGHTNESS_DEFAULT 1
+static uint8_t ami_rgb_brightness = AMI_RGB_BRIGHTNESS_DEFAULT;
 
 enum ami_rgb_color {
 	AMI_RGB_OFF,
@@ -368,11 +365,14 @@ static const char *rgb_color_name(enum ami_rgb_color c)
 	return (c <= AMI_RGB_WHITE) ? names[c] : "?";
 }
 
+static enum ami_rgb_color ami_rgb_last_color = AMI_RGB_OFF;
+
 static void ami_set_rgb(enum ami_rgb_color color)
 {
-	const uint8_t br = AMI_RGB_BRIGHTNESS;
+	const uint8_t br = ami_rgb_brightness;
+	ami_rgb_last_color = color;
 
-	LOG_INF("LED -> %s", rgb_color_name(color));
+	LOG_INF("LED -> %s (brightness=%u)", rgb_color_name(color), br);
 
 	if (rgb_led_is_ready()) {
 		switch (color) {
@@ -1413,6 +1413,43 @@ static int cmd_ami_rgb(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+/* ami brightness — runtime LED brightness tuning.
+ * Usage:
+ *   ami brightness          (show current value)
+ *   ami brightness <0-255>  (set new value, immediately re-applies to active color)
+ * Cancels the auto-off so the new brightness stays visible until the user
+ * explicitly turns the LED off ('ami rgb off') or another color triggers. */
+static int cmd_ami_brightness(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc < 2) {
+		shell_print(sh, "current brightness=%u (last color=%s)",
+			    ami_rgb_brightness, rgb_color_name(ami_rgb_last_color));
+		shell_print(sh, "usage: ami brightness <0-255>");
+		return 0;
+	}
+	char *end;
+	long v = strtol(argv[1], &end, 10);
+	if (*end != '\0' || v < 0 || v > 255) {
+		shell_error(sh, "brightness must be 0..255 (got '%s')", argv[1]);
+		return -EINVAL;
+	}
+	ami_rgb_brightness = (uint8_t)v;
+
+	/* Cancel any pending auto-off so the user can observe steady-state. */
+	k_work_cancel_delayable(&led_auto_off_work);
+
+	/* Re-apply the last color so the new brightness becomes visible
+	 * immediately (otherwise the new value waits for the next color
+	 * change). If the LED was OFF, default to GREEN for visibility. */
+	enum ami_rgb_color c = (ami_rgb_last_color == AMI_RGB_OFF)
+		? AMI_RGB_GREEN : ami_rgb_last_color;
+	ami_set_rgb(c);
+
+	shell_print(sh, "brightness=%u applied to %s (auto-off cancelled)",
+		    ami_rgb_brightness, rgb_color_name(c));
+	return 0;
+}
+
 static int cmd_ami_diag(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc); ARG_UNUSED(argv);
@@ -1531,6 +1568,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(ami_cmds,
 	SHELL_CMD(test,   &ami_test_cmds, "Run subsystem tests",        NULL),
 	SHELL_CMD(log,    &ami_log_cmds,  "Control DLMS/RS485 log verbosity", NULL),
 	SHELL_CMD_ARG(rgb, NULL, "Set status color: rgb <off|red|green|blue|yellow|cyan|magenta|white>", cmd_ami_rgb, 2, 0),
+	SHELL_CMD_ARG(brightness, NULL, "RGB brightness (0..255). 'ami brightness' shows current.", cmd_ami_brightness, 1, 1),
 	SHELL_CMD(diag,   NULL,           "Show per-OBIS read diagnostics",   cmd_ami_diag),
 	SHELL_CMD(obis,   &ami_obis_cmds, "OBIS polling control (list/skip/enable)", NULL),
 	SHELL_CMD(reset,  NULL,           "Reboot the node",                  cmd_ami_reset),
