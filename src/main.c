@@ -70,7 +70,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.2"
+#define CLIENT_FIRMWARE_VER     "0.6.3"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -338,8 +338,13 @@ static int dlms_poll_interval_s = DLMS_POLL_INTERVAL_DEFAULT;
 static int64_t last_dlms_poll_ms;
 static const struct gpio_dt_spec led0 =
 	GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios, {0});
-/* WS2812 RGB brightness (0-255). Keep low to avoid blinding. */
-#define AMI_RGB_BRIGHTNESS 40
+/* WS2812 RGB brightness (0-255). Lowered from 40 → 8 in v0.6.3 to reduce
+ * self-heating: each WS2812 channel at brightness=40 draws ~3-4 mA
+ * continuously; brightness=8 cuts that 5x. With the LED on GREEN forever
+ * post-REGISTER, the heat accumulated. See also
+ * CONFIG_AMI_RGB_AUTO_OFF_AFTER_REGISTER_S which turns the LED off
+ * entirely 60s after first REGISTER. */
+#define AMI_RGB_BRIGHTNESS 8
 
 enum ami_rgb_color {
 	AMI_RGB_OFF,
@@ -478,6 +483,17 @@ K_WORK_DELAYABLE_DEFINE(lwm2m_recover_work, lwm2m_recover_work_fn);
  * the entire boot sequence. The work is canceled in the
  * REGISTRATION_COMPLETE handler. */
 static K_WORK_DELAYABLE_DEFINE(boot_watchdog_work, boot_watchdog_fn);
+
+/* v0.6.3 thermal mitigation: auto-turn-off the green LED N seconds after
+ * the first REGISTER complete. Reduces continuous WS2812 current draw
+ * (per-channel ~3-4 mA at brightness=8 ≈ 0.7 mA, but cumulative). */
+static void led_auto_off_fn(struct k_work *w)
+{
+	ARG_UNUSED(w);
+	LOG_INF("LED auto-off (post-REGISTER thermal mitigation)");
+	rgb_led_off();
+}
+static K_WORK_DELAYABLE_DEFINE(led_auto_off_work, led_auto_off_fn);
 
 static void boot_watchdog_fn(struct k_work *w)
 {
@@ -735,6 +751,14 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		}
 		k_work_cancel_delayable(&lwm2m_recover_work);
 		ami_set_rgb(AMI_RGB_GREEN);
+		/* v0.6.3 thermal mitigation: schedule LED auto-off N seconds
+		 * later to reduce continuous WS2812 current draw. Only on the
+		 * GREEN steady-state path — RED/YELLOW error states are not
+		 * affected since this only schedules from the GREEN branch. */
+		if (CONFIG_AMI_RGB_AUTO_OFF_AFTER_REGISTER_S > 0) {
+			k_work_reschedule(&led_auto_off_work,
+				K_SECONDS(CONFIG_AMI_RGB_AUTO_OFF_AFTER_REGISTER_S));
+		}
 		break;
 	case LWM2M_RD_CLIENT_EVENT_REGISTRATION_FAILURE:
 		LOG_ERR("LwM2M Registration FAILED");
@@ -1787,9 +1811,13 @@ static void apply_otbr_dataset(void)
 	LOG_INF("Dataset commissioned: %s",
 		otDatasetIsCommissioned(ot) ? "yes" : "no");
 
-	/* Set TX power to maximum (20 dBm) before enabling radio */
-	otPlatRadioSetTransmitPower(ot, 20);
-	LOG_INF("TX power set to 20 dBm");
+	/* Set TX power. Default 8 dBm via CONFIG_AMI_TX_POWER_DBM — low enough
+	 * to avoid self-heating with nodes clustered close to OTBR, high enough
+	 * to maintain LQI=3. Was 20 dBm (max) in v0.6.2 and earlier; that level
+	 * heated the SoC enough to risk thermal-induced reboots in tight
+	 * cabinet deployments. */
+	otPlatRadioSetTransmitPower(ot, CONFIG_AMI_TX_POWER_DBM);
+	LOG_INF("TX power set to %d dBm", CONFIG_AMI_TX_POWER_DBM);
 
 	/* Enable IPv6 (this triggers otPlatRadioEnable → radio SLEEP) */
 	otIp6SetEnabled(ot, true);

@@ -74,6 +74,35 @@ config AMI_BOOT_REGISTER_DEADLINE_S
 
 	  Setting to 0 disables the boot watchdog (not recommended in fleet).
 
+config AMI_TX_POWER_DBM
+	int "OpenThread TX power (dBm)"
+	default 8
+	range -16 20
+	help
+	  Power output for the IEEE 802.15.4 radio. Lower values reduce the
+	  ESP32-C6 self-heating significantly: each +3 dBm roughly doubles
+	  RF output and adds ~20-30 mA of current draw during TX bursts,
+	  which translates directly to die temperature. With nodes within
+	  ~5 meters of the OTBR (typical bench / cabinet deployment), 8 dBm
+	  is more than enough — RSSI of -32 to -45 dBm at the OTBR confirms.
+
+	  Lower this further (3 or 0) if the cabinet is small and nodes
+	  cluster <50 cm apart. Raise to 20 only for outdoor or long-range
+	  deployments.
+
+config AMI_RGB_AUTO_OFF_AFTER_REGISTER_S
+	int "Seconds to keep RGB LED green after first REGISTER, then auto-off"
+	default 60
+	help
+	  Defense-in-depth against self-heating from the WS2812 RGB LED.
+	  After the first LWM2M_RD_CLIENT_EVENT_REGISTRATION_COMPLETE the
+	  LED stays green for this many seconds, then turns OFF to save
+	  power and reduce die heating. Errors (RED) and boot states
+	  (BLUE/CYAN) still drive the LED — only steady-state GREEN is
+	  auto-turned-off.
+
+	  Set 0 to keep the LED ON forever (legacy behavior).
+
 config AMI_REBOOT_USB_DRAIN_MS
 	int "Milliseconds to sleep before sys_reboot to drain USB Serial/JTAG"
 	default 5000
@@ -163,7 +192,7 @@ choice AMI_MESH
 	    python tools/build_firmware.py --variant med --mesh r1000
 
 config AMI_MESH_R1000
-	bool "UNAL-R1000 on Seeed R1000 (192.168.1.175, channel 21) — production default"
+	bool "UNAL-R1000 on Seeed R1000 (192.168.8.176, channel 21) — production default"
 	help
 	  Production deployment — clean channel, lessons learned applied.
 	    Channel:        21
