@@ -70,7 +70,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.3"
+#define CLIENT_FIRMWARE_VER     "0.6.4"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -338,13 +338,15 @@ static int dlms_poll_interval_s = DLMS_POLL_INTERVAL_DEFAULT;
 static int64_t last_dlms_poll_ms;
 static const struct gpio_dt_spec led0 =
 	GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios, {0});
-/* WS2812 RGB brightness (0-255). Lowered from 40 → 8 in v0.6.3 to reduce
- * self-heating: each WS2812 channel at brightness=40 draws ~3-4 mA
- * continuously; brightness=8 cuts that 5x. With the LED on GREEN forever
- * post-REGISTER, the heat accumulated. See also
- * CONFIG_AMI_RGB_AUTO_OFF_AFTER_REGISTER_S which turns the LED off
- * entirely 60s after first REGISTER. */
-#define AMI_RGB_BRIGHTNESS 8
+/* WS2812 RGB brightness (0-255). Lowered progressively as we observed the
+ * SoC running hot:
+ *   v0.6.2: 40 (was always-on GREEN)
+ *   v0.6.3: 8 (5x reduction)
+ *   v0.6.4: 2 (~0.8% of max — visible as a faint glow, still useful for
+ *           diagnostic but ~20x less LED current draw vs v0.6.2)
+ * Combined with CONFIG_AMI_RGB_AUTO_OFF_AFTER_REGISTER_S=10 the LED is
+ * effectively off most of the time. */
+#define AMI_RGB_BRIGHTNESS 2
 
 enum ami_rgb_color {
 	AMI_RGB_OFF,

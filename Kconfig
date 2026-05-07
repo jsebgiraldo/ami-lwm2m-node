@@ -92,7 +92,7 @@ config AMI_TX_POWER_DBM
 
 config AMI_RGB_AUTO_OFF_AFTER_REGISTER_S
 	int "Seconds to keep RGB LED green after first REGISTER, then auto-off"
-	default 60
+	default 10
 	help
 	  Defense-in-depth against self-heating from the WS2812 RGB LED.
 	  After the first LWM2M_RD_CLIENT_EVENT_REGISTRATION_COMPLETE the
