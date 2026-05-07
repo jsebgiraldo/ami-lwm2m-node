@@ -70,7 +70,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.4"
+#define CLIENT_FIRMWARE_VER     "0.6.5"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -342,11 +342,12 @@ static const struct gpio_dt_spec led0 =
  * SoC running hot:
  *   v0.6.2: 40 (was always-on GREEN)
  *   v0.6.3: 8 (5x reduction)
- *   v0.6.4: 2 (~0.8% of max — visible as a faint glow, still useful for
- *           diagnostic but ~20x less LED current draw vs v0.6.2)
- * Combined with CONFIG_AMI_RGB_AUTO_OFF_AFTER_REGISTER_S=10 the LED is
- * effectively off most of the time. */
-#define AMI_RGB_BRIGHTNESS 2
+ *   v0.6.4: 2 (~0.8% of max)
+ *   v0.6.5: 1 (minimum visible value — ~0.4% of max, ~40x less LED
+ *           current draw vs v0.6.2). Combined with auto-off 2s the LED
+ *           is essentially a brief blink at boot/REGISTER and otherwise
+ *           dark. */
+#define AMI_RGB_BRIGHTNESS 1
 
 enum ami_rgb_color {
 	AMI_RGB_OFF,

@@ -76,7 +76,7 @@ config AMI_BOOT_REGISTER_DEADLINE_S
 
 config AMI_TX_POWER_DBM
 	int "OpenThread TX power (dBm)"
-	default 8
+	default 3
 	range -16 20
 	help
 	  Power output for the IEEE 802.15.4 radio. Lower values reduce the
@@ -92,7 +92,7 @@ config AMI_TX_POWER_DBM
 
 config AMI_RGB_AUTO_OFF_AFTER_REGISTER_S
 	int "Seconds to keep RGB LED green after first REGISTER, then auto-off"
-	default 10
+	default 2
 	help
 	  Defense-in-depth against self-heating from the WS2812 RGB LED.
 	  After the first LWM2M_RD_CLIENT_EVENT_REGISTRATION_COMPLETE the
