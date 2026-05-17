@@ -948,15 +948,16 @@ static int64_t pm_last_notify_ms[NUM_PM_NOTIFY_SLOTS];
 static uint32_t pm_notify_send_count[NUM_PM_NOTIFY_SLOTS];
 static uint32_t pm_notify_skip_count[NUM_PM_NOTIFY_SLOTS];
 
-/* Optional liveness hook for the external watchdog (PRIO 5). Declared as
- * weak via the header in case the watchdog module isn't compiled in. */
-extern void lwm2m_watchdog_emit_event(void);
-
 /* Helper macro: push a field to LwM2M if it was read this cycle AND the
  * per-resource throttle window has elapsed. `bit_idx` doubles as the slot
- * index into the throttle bookkeeping arrays. Each successful emit also
- * pings the watchdog (liveness signal — proves Updates/Notifies are
- * actually leaving the engine, not just being queued).
+ * index into the throttle bookkeeping arrays.
+ *
+ * v0.6.17: this no longer pings the liveness watchdog. lwm2m_set_f64 +
+ * lwm2m_notify_observer only QUEUE data into the engine and return success
+ * even when the radio is dead — that false signal let a node hung with a
+ * wedged peripheral keep "proving" liveness, so no watchdog ever reset it
+ * (field proof: ~1.5 h hang, total_resets unchanged). Liveness is now fed
+ * ONLY by server-ACKed REG events (rd_client_event in main.c).
  */
 #define PUSH_FIELD(field, rid, bit_idx) do {                                  \
 	if (!(readings->field_mask & (1u << (bit_idx)))) {                    \
@@ -977,7 +978,6 @@ extern void lwm2m_watchdog_emit_event(void);
 	pm_last_notify_ms[bit_idx] = now_ms;                                  \
 	pm_notify_send_count[bit_idx]++;                                      \
 	pushed++;                                                             \
-	lwm2m_watchdog_emit_event();   /* PRIO 5 liveness signal */           \
 } while (0)
 
 /* Public: aggregate notify counters across all 26 resource slots.

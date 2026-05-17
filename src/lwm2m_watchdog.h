@@ -6,11 +6,14 @@
  * but stops emitting Updates and Notifies. Without this watchdog, the
  * node is zombie until reset.
  *
- * Liveness signal: lwm2m_watchdog_emit_event() is called by the
- * application every time a Notify or Update is successfully emitted
- * (e.g. from meter_push_to_lwm2m()). The watchdog timer fires every
- * LWM2M_WATCHDOG_PERIOD_S and submits lwm2m_recover_work if the silence
- * exceeds 2 × CONFIG_LWM2M_ENGINE_DEFAULT_LIFETIME.
+ * Liveness signal: lwm2m_watchdog_emit_event() is called ONLY on a
+ * server-ACKed RD client event — REGISTRATION_COMPLETE and
+ * REG_UPDATE_COMPLETE (v0.6.17). It is deliberately NOT called from the
+ * meter push path: lwm2m_set / notify only queue data locally and return
+ * success even when the radio is dead, which would let a wedged node fake
+ * liveness forever. The watchdog timer fires every LWM2M_WATCHDOG_PERIOD_S
+ * and submits lwm2m_recover_work if the silence exceeds
+ * 2x CONFIG_LWM2M_ENGINE_DEFAULT_LIFETIME.
  *
  * Runs on a dedicated preemptive thread (K_PRIO_PREEMPT(7)) with its own
  * stack. Independent of every Zephyr workq — neither the LwM2M engine
@@ -28,11 +31,12 @@
 void lwm2m_watchdog_init(void);
 
 /**
- * @brief Signal liveness: a Notify or Update was just emitted.
+ * @brief Signal end-to-end liveness: the LwM2M server just ACKed us.
  *
- * Resets the silence-since timer. Called from meter_push_to_lwm2m()
- * (each successful PUSH_FIELD) and from rd_client_event() on
- * REG_UPDATE_COMPLETE.
+ * Resets the silence-since timer. v0.6.17: called ONLY from
+ * rd_client_event() on REGISTRATION_COMPLETE and REG_UPDATE_COMPLETE —
+ * the only un-fakeable proof the full radio+mesh+server+CoAP path is
+ * alive. NOT called from the meter push path (see header notes).
  */
 void lwm2m_watchdog_emit_event(void);
 

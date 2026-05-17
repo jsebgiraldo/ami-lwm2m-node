@@ -50,14 +50,33 @@ def pick_com(arg_com: str | None) -> str:
 
 def west_flash(env: fc.ToolEnv, com: str, variant: str = fc.DEFAULT_VARIANT,
                mesh: str = fc.DEFAULT_MESH, baud: str = "460800") -> None:
-    west = env.venv_scripts / "west.exe"
+    """Write zephyr.bin via esptool with flash-freq=40m / flash-mode=dio.
+
+    Why direct esptool instead of `west flash`: ESP32-C6 SuperMini clones
+    ship with BOYA/GD flash (manufacturer 0x46) that silently fails to
+    access flash at the default 80 MHz / QIO that Zephyr's esp32 runner
+    bakes into the image header. Symptom: chip flashes + verifies fine,
+    USB-CDC enumerates, but the firmware never boots (silent serial, no
+    Thread TX). Override the image header to 40 MHz DIO and it boots.
+    XIAO ESP32-C6 boards (with proper Espressif/Winbond flash) also work
+    fine at 40 MHz — slightly slower flash reads at boot, no runtime
+    impact since the app runs from internal RAM/IROM. So this is a
+    universally-safe default.
+    """
     bdir = fc.build_dir(env, variant, mesh)
-    cmd = [str(west), "flash", "--build-dir", str(bdir),
-           "--esp-device", com, "--esp-baud-rate", baud]
-    print(f"\n[flash] variant={variant} mesh={mesh} {com} @ {baud}")
-    res = subprocess.run(cmd, cwd=str(env.west_workspace), env=env.env_for_subprocess())
+    binfile = bdir / "zephyr" / "zephyr.bin"
+    if not binfile.exists():
+        raise RuntimeError(f"firmware binary not found: {binfile}")
+    cmd = ["python", "-m", "esptool",
+           "--chip", "esp32c6", "--port", com, "--baud", baud,
+           "--before", "default-reset", "--after", "hard-reset",
+           "write-flash", "--erase-all",
+           "--flash-freq", "40m", "--flash-mode", "dio",
+           "0x0", str(binfile)]
+    print(f"\n[flash] variant={variant} mesh={mesh} {com} @ {baud} (40m DIO override)")
+    res = subprocess.run(cmd, env=env.env_for_subprocess())
     if res.returncode != 0:
-        raise RuntimeError(f"west flash failed (rc={res.returncode})")
+        raise RuntimeError(f"esptool write-flash failed (rc={res.returncode})")
 
 
 def wait_for_telemetry(tb: TBClient, endpoint: str, timeout_s: int = 120) -> tuple[bool, list[str]]:

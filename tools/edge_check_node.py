@@ -21,7 +21,7 @@ fc.bootstrap_venv()
 
 import paramiko  # noqa: E402
 
-EDGE_HOST = "192.168.1.175"
+EDGE_HOST = "192.168.8.176"
 EDGE_USER = "root"
 EDGE_PASS = "root"
 

@@ -4,7 +4,7 @@ import paramiko
 import time
 import sys
 
-HOST = "192.168.1.111"
+HOST = "192.168.8.176"
 USER = "root"
 PASS = "root"
 

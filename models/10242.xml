@@ -1,0 +1,317 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LWM2M xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:noNamespaceSchemaLocation="http://www.openmobilealliance.org/tech/profiles/LWM2M-v1_1.xsd">
+  <Object ObjectType="MODefinition">
+    <Name>3-Phase Power Meter</Name>
+    <Description1>Custom AMI object — DLMS/COSEM-backed 3-phase power meter (voltage, current, power, energy, frequency).</Description1>
+    <ObjectID>10242</ObjectID>
+    <ObjectURN>urn:oma:lwm2m:x:10242:1.0</ObjectURN>
+    <LWM2MVersion>1.1</LWM2MVersion>
+    <ObjectVersion>1.0</ObjectVersion>
+    <MultipleInstances>Single</MultipleInstances>
+    <Mandatory>Optional</Mandatory>
+    <Resources>
+      <Item ID="0">
+        <Name>Manufacturer</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Manufacturer of the meter.</Description>
+      </Item>
+      <Item ID="1">
+        <Name>Model Number</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Meter model number.</Description>
+      </Item>
+      <Item ID="2">
+        <Name>Serial Number</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Meter serial number.</Description>
+      </Item>
+      <Item ID="3">
+        <Name>Description</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Human-readable description.</Description>
+      </Item>
+      <Item ID="4">
+        <Name>Tension Phase R</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>V</Units>
+        <Description>RMS line voltage on phase R.</Description>
+      </Item>
+      <Item ID="5">
+        <Name>Current Phase R</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>A</Units>
+        <Description>RMS current on phase R.</Description>
+      </Item>
+      <Item ID="6">
+        <Name>Active Power Phase R</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kW</Units>
+        <Description>Active power on phase R.</Description>
+      </Item>
+      <Item ID="7">
+        <Name>Reactive Power Phase R</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kvar</Units>
+        <Description>Reactive power on phase R.</Description>
+      </Item>
+      <Item ID="10">
+        <Name>Apparent Power Phase R</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kVA</Units>
+        <Description>Apparent power on phase R.</Description>
+      </Item>
+      <Item ID="11">
+        <Name>Power Factor Phase R</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Power factor on phase R, -1..1.</Description>
+      </Item>
+      <Item ID="14">
+        <Name>Tension Phase S</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>V</Units>
+        <Description>RMS line voltage on phase S.</Description>
+      </Item>
+      <Item ID="15">
+        <Name>Current Phase S</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>A</Units>
+        <Description>RMS current on phase S.</Description>
+      </Item>
+      <Item ID="16">
+        <Name>Active Power Phase S</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kW</Units>
+        <Description>Active power on phase S.</Description>
+      </Item>
+      <Item ID="17">
+        <Name>Reactive Power Phase S</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kvar</Units>
+        <Description>Reactive power on phase S.</Description>
+      </Item>
+      <Item ID="20">
+        <Name>Apparent Power Phase S</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kVA</Units>
+        <Description>Apparent power on phase S.</Description>
+      </Item>
+      <Item ID="21">
+        <Name>Power Factor Phase S</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Power factor on phase S, -1..1.</Description>
+      </Item>
+      <Item ID="24">
+        <Name>Tension Phase T</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>V</Units>
+        <Description>RMS line voltage on phase T.</Description>
+      </Item>
+      <Item ID="25">
+        <Name>Current Phase T</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>A</Units>
+        <Description>RMS current on phase T.</Description>
+      </Item>
+      <Item ID="26">
+        <Name>Active Power Phase T</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kW</Units>
+        <Description>Active power on phase T.</Description>
+      </Item>
+      <Item ID="27">
+        <Name>Reactive Power Phase T</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kvar</Units>
+        <Description>Reactive power on phase T.</Description>
+      </Item>
+      <Item ID="30">
+        <Name>Apparent Power Phase T</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kVA</Units>
+        <Description>Apparent power on phase T.</Description>
+      </Item>
+      <Item ID="31">
+        <Name>Power Factor Phase T</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Power factor on phase T, -1..1.</Description>
+      </Item>
+      <Item ID="34">
+        <Name>3-Phase Active Power</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kW</Units>
+        <Description>Total 3-phase active power.</Description>
+      </Item>
+      <Item ID="35">
+        <Name>3-Phase Reactive Power</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kvar</Units>
+        <Description>Total 3-phase reactive power.</Description>
+      </Item>
+      <Item ID="38">
+        <Name>3-Phase Apparent Power</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kVA</Units>
+        <Description>Total 3-phase apparent power.</Description>
+      </Item>
+      <Item ID="39">
+        <Name>3-Phase Power Factor</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Aggregate 3-phase power factor.</Description>
+      </Item>
+      <Item ID="41">
+        <Name>Active Energy</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kWh</Units>
+        <Description>Cumulative active energy.</Description>
+      </Item>
+      <Item ID="42">
+        <Name>Reactive Energy</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kvarh</Units>
+        <Description>Cumulative reactive energy.</Description>
+      </Item>
+      <Item ID="45">
+        <Name>Apparent Energy</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>kVAh</Units>
+        <Description>Cumulative apparent energy.</Description>
+      </Item>
+      <Item ID="49">
+        <Name>Frequency</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>Hz</Units>
+        <Description>Mains frequency.</Description>
+      </Item>
+    </Resources>
+    <Description2/>
+  </Object>
+</LWM2M>

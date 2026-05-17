@@ -76,7 +76,7 @@ config AMI_BOOT_REGISTER_DEADLINE_S
 
 config AMI_TX_POWER_DBM
 	int "OpenThread TX power (dBm)"
-	default 3
+	default 8
 	range -16 20
 	help
 	  Power output for the IEEE 802.15.4 radio. Lower values reduce the
@@ -159,6 +159,64 @@ config AMI_LWM2M_SERVER_IPV6_SECONDARY
 	default ""
 	help
 	  DEPRECATED in v0.6.0. See AMI_LWM2M_SERVER_IPV6_PRIMARY.
+
+config AMI_HW_WATCHDOG_TIMEOUT_S
+	int "Hardware watchdog channel timeout (seconds)"
+	default 180
+	range 30 600
+	help
+	  PRIO 9 hardware watchdog (TG0_WDT via task_wdt). Per-channel timeout
+	  in seconds. If any channel goes unfed for this long, the SoC is
+	  hard-reset (SYS_RESET). Two channels are armed:
+
+	    kernel-alive  fed from a dedicated K_PRIO_PREEMPT(4) thread.
+	                  Times out only if the kernel scheduler is stalled
+	                  or all threads above prio 4 are starving lower ones.
+
+	    workq-alive   fed from a self-rescheduling delayed_work on
+	                  system_workq. Times out if the system workq is dead
+	                  (deadlocked work item, lost worker thread, etc).
+
+	  180 s is comfortably above any legitimate blocking the application
+	  performs (DNS-SD lookups ≤ 7 s × N retries, LwM2M restart cycles ≤
+	  60 s, ami_reboot_drain ≤ 5 s). Lower only if you've measured the
+	  worst-case feed latency on hardware and know it stays well below
+	  the new value.
+
+	  Range 30..600 s. The HW timer runs continuously from boot, including
+	  during Thread attach (typical 10–30 s), so any value below ~60 s
+	  risks false positives at boot.
+
+config AMI_REAL_LIVENESS_TIMEOUT_S
+	int "Real-liveness watchdog: max seconds without a server-ACKed LwM2M event"
+	default 600
+	range 180 3600
+	help
+	  PRIO 9 backstop, v0.6.17. The hardware watchdog's kernel-alive
+	  channel is gated on this: if no LWM2M_RD_CLIENT_EVENT_REGISTRATION_
+	  COMPLETE or REG_UPDATE_COMPLETE arrives for this many seconds AFTER
+	  the first registration, the node is "registered but cut off" and the
+	  kernel feeder triggers a cold SoC reset.
+
+	  This catches the failure mode the original watchdog could not: a
+	  wedged USB/radio peripheral while the CPU stays healthy. The kernel
+	  scheduler keeps running, both watchdog channels keep being fed, yet
+	  no data reaches the server. Field proof: a node hung ~1.5 h with
+	  total_resets unchanged — zero automatic recovery.
+
+	  A server-ACKed registration event is the only un-fakeable liveness
+	  signal: it requires the full radio + mesh + routing + server + CoAP
+	  path to be alive. lwm2m_set_*/notify success does NOT — it only
+	  queues data locally.
+
+	  Default 600 s (10 min): comfortably longer than the soft LwM2M
+	  watchdog's full detect+recover escalation (~240 s detect, then
+	  backoff retries), so it only fires when that softer layer has
+	  already failed. With lifetime 120 s, a healthy node gets a
+	  REG_UPDATE_COMPLETE roughly every 90 s, so 600 s tolerates several
+	  missed updates + CoAP retransmit chains before declaring the node
+	  dead. Lower it for faster recovery if false positives are not seen
+	  in the field; raise it if a slow server (GC pauses) trips it.
 
 config AMI_LWM2M_DNS_SD_RETRY_MAX
 	int "Maximum DNS-SD lookup retries before sys_reboot at boot"

@@ -1,0 +1,103 @@
+/*
+ * Devicetree overlay for WeAct ESP32-C6 Mini / ESP32-C6 SuperMini
+ * (drop-in replacement for the Seeed XIAO ESP32-C6 in this fleet)
+ *
+ * Differences vs xiao_esp32c6_hpcore.overlay:
+ *   - Console stays on the board-default UART0 (GPIO16/17), NOT usb_serial
+ *     — that's how the WeAct board.dts wires its USB-C through.
+ *   - SPI2 default pinmux on the WeAct DTS uses GPIO2 for SCLK, which
+ *     collides with our RS485 DE/RE on GPIO2. We disable spi2 to keep
+ *     GPIO2 free.
+ *   - Single onboard LED on GPIO8 (WeAct uses it as WS2812 RGB via I2S
+ *     in its DTS; we disable that and drive it via the existing
+ *     direct-register WS2812 bit-bang in src/rgb_led.c which already
+ *     targets GPIO8 — see header note in that file).
+ *
+ * DLMS RS485 wiring (same as XIAO):
+ *   UART1 TX = GPIO22  (D4 equivalent on XIAO)
+ *   UART1 RX = GPIO23
+ *   DE/RE    = GPIO2   (HIGH = TX)
+ */
+
+#include <zephyr/dt-bindings/pinctrl/esp-pinctrl-common.h>
+#include <zephyr/dt-bindings/pinctrl/esp32c6-pinctrl.h>
+#include <zephyr/dt-bindings/pinctrl/esp32c6-gpio-sigmap.h>
+
+/* The WeAct board DTS routes the console to UART0 (GPIO16/17) — that
+ * matches their boards which solder a CH340/CP2102 between USB-C and
+ * UART0. The ESP32-C6 SuperMini wires USB-C straight to the chip's
+ * native USB-Serial-JTAG (GPIO12/13), so we override the chosen console
+ * to usb_serial; that way `west monitor` / pyserial on the COM port the
+ * board enumerates as actually sees the firmware logs.
+ */
+/ {
+	chosen {
+		zephyr,console = &usb_serial;
+		zephyr,shell-uart = &usb_serial;
+	};
+};
+
+&usb_serial {
+	status = "okay";
+};
+
+&pinctrl {
+	uart1_default: uart1_default {
+		group1 {
+			pinmux = <UART1_TX_GPIO22>;
+			output-high;
+		};
+		group2 {
+			pinmux = <UART1_RX_GPIO23>;
+			bias-pull-up;
+		};
+	};
+};
+
+/* Disable WeAct's I2S-driven WS2812 — we drive GPIO8 directly from
+ * src/rgb_led.c (bit-bang, same as on XIAO). */
+&i2s {
+	status = "disabled";
+};
+
+/* Disable SPI2 — its default SCLK pin collides with our RS485 DE/RE (GPIO2). */
+&spi2 {
+	status = "disabled";
+};
+
+/* WeAct's I2C0 lives on GPIO14/15 which don't collide with anything we
+ * need — leave it on for now (the application doesn't use it). */
+
+/* HW watchdog backstop (same role as on XIAO). */
+&wdt0 {
+	status = "okay";
+};
+
+/* On-die temperature sensor. */
+&coretemp {
+	status = "okay";
+};
+
+/* DLMS RS485 UART. */
+&uart1 {
+	status = "okay";
+	current-speed = <9600>;
+	pinctrl-0 = <&uart1_default>;
+	pinctrl-names = "default";
+};
+
+/* RS485 DE/RE control as a plain GPIO + a led0 alias the rgb_led driver
+ * doesn't need but other code (and Zephyr conventions) expect. */
+/ {
+	rs485_ctrl: rs485_ctrl {
+		compatible = "gpio-leds";  /* reuse for a single GPIO node */
+		rs485_de: rs485_de {
+			gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+			label = "RS485 DE/RE";
+		};
+	};
+
+	aliases {
+		rs485-uart = &uart1;
+	};
+};

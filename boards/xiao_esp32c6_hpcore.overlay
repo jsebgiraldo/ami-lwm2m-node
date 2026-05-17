@@ -36,6 +36,23 @@
 	status = "disabled";
 };
 
+/* Enable Timer-Group 0 hardware watchdog (v0.6.13+, PRIO 9).
+ * Last-resort defense against firmware hangs that the soft watchdog
+ * cannot recover from (system_workq stuck, scheduler stalled, USB
+ * drain blocked at sys_reboot). Driven via Zephyr's task_wdt subsystem
+ * — see src/hw_watchdog.c. */
+&wdt0 {
+	status = "okay";
+};
+
+/* Enable on-die temperature sensor (v0.6.11+).
+ * Used to monitor SoC self-heating during operation. Read via
+ * sensor_sample_fetch + sensor_channel_get(SENSOR_CHAN_DIE_TEMP).
+ * Range: -40°C to +125°C. Accuracy ~±2°C after factory calibration. */
+&coretemp {
+	status = "okay";
+};
+
 /* Enable UART1 for RS485 DLMS communication */
 &uart1 {
 	status = "okay";

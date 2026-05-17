@@ -18,6 +18,7 @@
 #include <zephyr/sys/reboot.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/hwinfo.h>           /* PRIO 7: reset cause */
+#include <zephyr/drivers/sensor.h>           /* v0.6.11: SoC die temp sensor */
 #include <zephyr/net/lwm2m.h>
 #include <zephyr/net/net_if.h>
 #include <zephyr/random/random.h>
@@ -35,6 +36,7 @@
 
 #include "lwm2m_discover.h"
 #include "lwm2m_watchdog.h"
+#include "hw_watchdog.h"
 #include "lwm2m_obj_power_meter.h"
 #include "lwm2m_obj_thread_diag.h"
 #include "lwm2m_obj_thread_net.h"
@@ -52,6 +54,14 @@ extern void init_firmware_update(void);
 extern void init_connmon_thread(void);
 extern void init_thread_diag_object(void);
 extern void update_connectivity_metrics(void);
+extern void thread_diag_publish_post_mortem(uint32_t uptime_s, uint32_t heap_free,
+					    uint32_t heap_min_free, uint32_t reg_age_s,
+					    uint8_t lwm2m_state, uint8_t thread_role);
+
+/* Post-mortem snapshot (v0.6.19): persisted NVS slot describing the
+ * firmware's state at the most recent snapshot before the last reset.
+ * Survives hardware-watchdog hard resets (which run no software). */
+#include "post_mortem.h"
 
 LOG_MODULE_REGISTER(ami_lwm2m, LOG_LEVEL_INF);
 
@@ -70,7 +80,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.6"
+#define CLIENT_FIRMWARE_VER     "0.6.18"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -190,6 +200,27 @@ uint32_t lwm2m_diag_get_total_resets(void)
  * is still 0, the boot path has failed to register and we sys_reboot.
  */
 static atomic_t lwm2m_first_register_complete = ATOMIC_INIT(0);
+
+/* === v0.6.18 — "reached network" flag ===
+ * Set to 1 once the node has gotten far enough that the network path is
+ * proven healthy and only the LwM2M *server* could still be the problem:
+ * Thread attached + DNS-SD resolved + lwm2m_rd_client_start() called.
+ *
+ * The boot watchdog uses this to distinguish two very different failures:
+ *   - flag still 0  -> genuine boot-path hang (Thread won't attach, DNS-SD
+ *                      never resolves) -> reboot is the right recovery.
+ *   - flag is 1     -> server-side rejection/outage (TB Edge down, device
+ *                      not provisioned, registration refused). Rebooting
+ *                      here just discards a working Thread attachment and
+ *                      churns the whole fleet into a 90 s reboot-storm
+ *                      every time the server hiccups. Do NOT reboot — keep
+ *                      the mesh attachment and let lwm2m_recover_work retry
+ *                      registration with backoff.
+ * (Lesson from the TB Edge re-install incident: all 7 nodes hit
+ *  total_resets ~20 reboot-looping against a server that was simply
+ *  rejecting their registration.)
+ */
+static atomic_t lwm2m_reached_network = ATOMIC_INIT(0);
 
 /* === Drain-and-reboot helper (USB-friendly) ===
  *
@@ -316,6 +347,39 @@ static void capture_reset_reason(void)
 	atomic_set(&lwm2m_diag_total_resets, (atomic_val_t)now);
 	int sr = settings_save_one(AMI_RESETS_KEY, &now, sizeof(now));
 	LOG_INF("total_resets: %u -> %u (settings_save=%d)", prev, now, sr);
+}
+
+/* === v0.6.11 SoC die temperature ===
+ *
+ * Reads the ESP32-C6 on-chip temperature sensor (silicon die temperature
+ * after VBE + bandgap calibration). Range -40..+125 °C, accuracy ~±2 °C.
+ * Single-shot reads triggered explicitly — the sensor draws ADC current
+ * during sampling, so we don't poll it constantly. Returns INT32_MIN
+ * if the sensor is not available or read failed.
+ */
+static const struct device *const ami_coretemp =
+	DEVICE_DT_GET_OR_NULL(DT_NODELABEL(coretemp));
+
+/* Returns die temperature in millidegrees Celsius (e.g. 45000 = 45.0 °C),
+ * or INT32_MIN on error. Non-static: thread_conn_monitor.c references it
+ * via extern to log thermal data alongside connectivity metrics. */
+int32_t ami_read_die_temp_mc(void)
+{
+	if (ami_coretemp == NULL || !device_is_ready(ami_coretemp)) {
+		return INT32_MIN;
+	}
+	int err = sensor_sample_fetch(ami_coretemp);
+	if (err) {
+		return INT32_MIN;
+	}
+	struct sensor_value t;
+	err = sensor_channel_get(ami_coretemp, SENSOR_CHAN_DIE_TEMP, &t);
+	if (err) {
+		return INT32_MIN;
+	}
+	/* sensor_value is { val1 = whole degrees, val2 = micro-degrees }.
+	 * Convert to millidegrees: val1 * 1000 + val2 / 1000. */
+	return (int32_t)(t.val1 * 1000 + t.val2 / 1000);
 }
 
 /* Sensor update intervals */
@@ -498,6 +562,48 @@ static void led_auto_off_fn(struct k_work *w)
 }
 static K_WORK_DELAYABLE_DEFINE(led_auto_off_work, led_auto_off_fn);
 
+/* v0.6.14 — Thread role-change callback: drive LED RED on detach so the
+ * operator can spot a mesh loss visually even after the post-REGISTER
+ * auto-off. Quiet until first REGISTER complete so it doesn't fight the
+ * boot UI (BLUE/CYAN/GREEN). */
+static atomic_t thread_role_atomic = ATOMIC_INIT(OT_DEVICE_ROLE_DISABLED);
+
+static void thread_state_changed_cb(otChangedFlags flags, void *ctx)
+{
+	ARG_UNUSED(ctx);
+	if (!(flags & OT_CHANGED_THREAD_ROLE)) {
+		return;
+	}
+	struct otInstance *ot = openthread_get_default_instance();
+	if (!ot) {
+		return;
+	}
+	otDeviceRole role = otThreadGetDeviceRole(ot);
+	otDeviceRole prev = (otDeviceRole)atomic_set(&thread_role_atomic, role);
+	bool now_attached  = (role >= OT_DEVICE_ROLE_CHILD);
+	bool was_attached  = (prev >= OT_DEVICE_ROLE_CHILD);
+
+	/* Boot UI owns the LED until the first REGISTER completes. */
+	if (atomic_get(&lwm2m_first_register_complete) == 0) {
+		return;
+	}
+
+	if (!now_attached && was_attached) {
+		LOG_WRN("Thread role dropped: %d -> %d (detached) — LED RED",
+			(int)prev, (int)role);
+		k_work_cancel_delayable(&led_auto_off_work);
+		ami_set_rgb(AMI_RGB_RED);
+	} else if (now_attached && !was_attached) {
+		LOG_INF("Thread role recovered: %d -> %d (attached) — LED OFF",
+			(int)prev, (int)role);
+		/* Clear the detach-RED only. If LwM2M is separately in error,
+		 * its own handler will re-set RED on the next event. */
+		if (ami_rgb_last_color == AMI_RGB_RED) {
+			ami_set_rgb(AMI_RGB_OFF);
+		}
+	}
+}
+
 static void boot_watchdog_fn(struct k_work *w)
 {
 	ARG_UNUSED(w);
@@ -506,8 +612,28 @@ static void boot_watchdog_fn(struct k_work *w)
 		LOG_DBG("boot_watchdog fired but already registered — no-op");
 		return;
 	}
-	LOG_ERR("BOOT WATCHDOG: no REGISTRATION_COMPLETE in %ds — "
-		"sys_reboot WARM to retry boot",
+	if (atomic_get(&lwm2m_reached_network) != 0) {
+		/* v0.6.18: Thread attached + DNS-SD resolved + rd_client_start
+		 * already called — the failure is unambiguously server-side
+		 * (TB Edge down / not provisioned / rejecting registration).
+		 * Rebooting would discard a healthy Thread attachment and churn
+		 * the whole fleet into a reboot-storm whenever the server
+		 * hiccups. Do NOT reboot: keep the mesh attachment and let
+		 * lwm2m_recover_work retry registration with backoff — the node
+		 * registers the instant the server is reachable again.
+		 *
+		 * The boot watchdog has done its job here (it confirmed this is
+		 * NOT a boot-path hang), so it bows out: recover_work and the
+		 * LwM2M soft watchdog own recovery from this point. */
+		LOG_WRN("BOOT WATCHDOG: network healthy but no REGISTER in %ds — "
+			"server-side failure, NOT rebooting; recover_work keeps "
+			"retrying with backoff",
+			CONFIG_AMI_BOOT_REGISTER_DEADLINE_S);
+		lwm2m_diag_record_error(-ETIMEDOUT);
+		return;
+	}
+	LOG_ERR("BOOT WATCHDOG: stuck pre-network in %ds — Thread attach / "
+		"DNS-SD never completed — sys_reboot WARM to retry boot",
 		CONFIG_AMI_BOOT_REGISTER_DEADLINE_S);
 	lwm2m_diag_record_error(-ETIMEDOUT);
 	ami_reboot_drain(SYS_REBOOT_WARM, "boot-watchdog");
@@ -743,6 +869,12 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		lwm2m_connected = true;
 		lwm2m_reg_failures = 0;
 		lwm2m_recover_attempt = 0;   /* confirmed sane state — reset escalation */
+		/* v0.6.17: server-ACKed event — feed BOTH liveness watchdogs.
+		 * This is an un-fakeable end-to-end signal (radio + mesh +
+		 * routing + server + CoAP all alive). */
+		lwm2m_watchdog_emit_event();
+		hw_watchdog_note_liveness();
+		pm_note_register_success();   /* v0.6.19: stamp last_reg in post-mortem */
 		atomic_inc(&lwm2m_diag_reg_success);   /* Object 33000 RID 12 */
 		if (atomic_cas(&lwm2m_diag_in_recovery, 1, 0)) {
 			atomic_inc(&lwm2m_diag_restart_success);   /* Object 33000 RID 16 */
@@ -800,11 +932,16 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		 * resets it. This keeps escalation tight if the engine is
 		 * looping REGISTER→UPDATE-fail→REGISTER cycles.
 		 *
-		 * BUT we DO ping the watchdog: a successful UPDATE proves the
-		 * engine is alive end-to-end, even if no Notify went out
-		 * recently (e.g. all 14 resources throttled).
+		 * BUT we DO feed both liveness watchdogs: a server-ACKed
+		 * UPDATE proves the engine is alive end-to-end. v0.6.17: this
+		 * (plus REGISTRATION_COMPLETE) is now the ONLY source of the
+		 * liveness signal — the meter PUSH_FIELD path no longer pings
+		 * it, since lwm2m_set / notify success is fakeable by a node
+		 * with a dead radio.
 		 */
 		lwm2m_watchdog_emit_event();
+		hw_watchdog_note_liveness();
+		pm_note_register_success();   /* v0.6.19: REG_UPDATE counts as proof-of-life */
 		break;
 	case LWM2M_RD_CLIENT_EVENT_DISCONNECT:
 		LOG_WRN("LwM2M Disconnected");
@@ -812,6 +949,9 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		ami_set_rgb(AMI_RGB_YELLOW);
 		lwm2m_diag_record_error(-ENOTCONN);
 		lwm2m_diag_inc_recover_count();   /* Bug B */
+		pm_clear_lwm2m_state(PM_LWM2M_STATE_REGISTERED);   /* v0.6.19 */
+		pm_set_lwm2m_state(PM_LWM2M_STATE_RECOVERING);
+		pm_snapshot();   /* eager: capture state when disconnect happens */
 		backoff_s = lwm2m_recover_backoff_s(lwm2m_recover_attempt + 1);
 		LOG_INF("LwM2M engine error: scheduling restart attempt %d/%d in %us",
 			lwm2m_recover_attempt + 1,
@@ -947,6 +1087,26 @@ static int lwm2m_setup(void)
 	ret = lwm2m_create_object_inst(&LWM2M_OBJ(POWER_METER_OBJECT_ID, 0));
 	if (ret < 0) {
 		LOG_ERR("Failed to create Power Meter inst: %d", ret);
+	}
+
+	/* Create IPSO Temperature Sensor instance (3303/0) — SoC die temp.
+	 * v0.6.12+: standard LwM2M observation path so the server reads
+	 *   /3303/0/5700  →  current die temp in °C (Float)
+	 *   /3303/0/5701  →  units = "Cel"
+	 *   /3303/0/5601  →  min measured since boot
+	 *   /3303/0/5602  →  max measured since boot
+	 *   /3303/0/5603  →  min range = -40
+	 *   /3303/0/5604  →  max range = 125
+	 */
+	ret = lwm2m_create_object_inst(&LWM2M_OBJ(3303, 0));
+	if (ret < 0) {
+		LOG_ERR("Failed to create IPSO Temp instance: %d", ret);
+	} else {
+		const double rmin = -40.0, rmax = 125.0;
+		lwm2m_set_string(&LWM2M_OBJ(3303, 0, 5701), "Cel");
+		lwm2m_set_f64(&LWM2M_OBJ(3303, 0, 5603), rmin);
+		lwm2m_set_f64(&LWM2M_OBJ(3303, 0, 5604), rmax);
+		LOG_INF("IPSO Temp Sensor (3303/0) initialized [-40..125 Cel]");
 	}
 
 	/* Initialize firmware update callbacks (Object 5) */
@@ -1450,6 +1610,22 @@ static int cmd_ami_brightness(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+/* ami temp — read SoC die temperature.
+ * Single shot. No averaging — operator can run it repeatedly to observe
+ * thermal trend. */
+static int cmd_ami_temp(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc); ARG_UNUSED(argv);
+	int32_t mc = ami_read_die_temp_mc();
+	if (mc == INT32_MIN) {
+		shell_error(sh, "die temp sensor not available");
+		return -ENODEV;
+	}
+	shell_print(sh, "die temp = %d.%03d C",
+		    mc / 1000, mc < 0 ? -mc % 1000 : mc % 1000);
+	return 0;
+}
+
 static int cmd_ami_diag(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc); ARG_UNUSED(argv);
@@ -1569,6 +1745,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(ami_cmds,
 	SHELL_CMD(log,    &ami_log_cmds,  "Control DLMS/RS485 log verbosity", NULL),
 	SHELL_CMD_ARG(rgb, NULL, "Set status color: rgb <off|red|green|blue|yellow|cyan|magenta|white>", cmd_ami_rgb, 2, 0),
 	SHELL_CMD_ARG(brightness, NULL, "RGB brightness (0..255). 'ami brightness' shows current.", cmd_ami_brightness, 1, 1),
+	SHELL_CMD(temp,   NULL,           "Read SoC die temperature (Celsius)", cmd_ami_temp),
 	SHELL_CMD(diag,   NULL,           "Show per-OBIS read diagnostics",   cmd_ami_diag),
 	SHELL_CMD(obis,   &ami_obis_cmds, "OBIS polling control (list/skip/enable)", NULL),
 	SHELL_CMD(reset,  NULL,           "Reboot the node",                  cmd_ami_reset),
@@ -1798,24 +1975,33 @@ static void apply_otbr_dataset(void)
 	const char *mesh_local_str = "fdf5:bffd:0bd6:ef74::/64";
 #elif defined(CONFIG_AMI_MESH_R1000)
 	static const uint8_t otbr_tlvs[] = {
-		/* UNAL-R1000 on Seeed R1000 — Ch21, PAN 0x41AE
-		 * Mesh-local: fdf1:a391:6243:2a67::/64
-		 * Exported via: ssh root@192.168.8.176 'ot-ctl dataset active -x'
+		/* Migrated 2026-05-16 from Seeed R1000 (Ch21, PAN 0x41AE — RAM-
+		 * constrained, cascade-failure-prone) to Pi4 EKH01-DE87 at
+		 * 192.168.8.111. Same mesh tag (r1000) kept for tool/script
+		 * compatibility; physical OTBR is now the Pi4. Channel is also
+		 * different — Ch25 has a clean noise floor (-85 dBm at last
+		 * energy scan) whereas Ch21 was -39 dBm (jammed by external
+		 * WiFi ch11). Auto-generated network name OpenThread-efeb is
+		 * kept rather than renamed so the dataset matches whatever the
+		 * Pi4 brings up out-of-the-box; firmware doesn't care about
+		 * the name. New mesh-local: fd32:e7c9:e9af:adf2::/64.
+		 * Exported via: ssh root@192.168.8.111 'ot-ctl dataset active -x'
 		 */
 		0x0e, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-		0x4a, 0x03, 0x00, 0x00, 0x1a, 0x35, 0x06, 0x00, 0x04, 0x00,
-		0x1f, 0xff, 0xe0, 0x02, 0x08, 0xb6, 0x83, 0x33, 0xbc, 0x10,
-		0x1c, 0x7c, 0x53, 0x07, 0x08, 0xfd, 0xf1, 0xa3, 0x91, 0x62,
-		0x43, 0x2a, 0x67, 0x05, 0x10, 0xb3, 0x1c, 0x15, 0x88, 0xa1,
-		0xb2, 0xf6, 0x8c, 0x62, 0x24, 0x01, 0x71, 0x1f, 0x73, 0xaf,
-		0xd0, 0x01, 0x02, 0x41, 0xae, 0x04, 0x10, 0x6c, 0x9b, 0x91,
-		0xf7, 0x1e, 0x59, 0x36, 0x02, 0x2a, 0x86, 0xaf, 0x24, 0xb3,
-		0xc9, 0x2c, 0xd3, 0x00, 0x03, 0x00, 0x00, 0x15, 0x03, 0x0a,
-		0x55, 0x4e, 0x41, 0x4c, 0x2d, 0x52, 0x31, 0x30, 0x30, 0x30,
-		0x0c, 0x04, 0x02, 0xa0, 0xf7, 0x78,
+		0x4a, 0x03, 0x00, 0x00, 0x10, 0x35, 0x06, 0x00, 0x04, 0x00,
+		0x1f, 0xff, 0xe0, 0x02, 0x08, 0x49, 0x98, 0xb1, 0x0e, 0x79,
+		0x22, 0x7f, 0x7e, 0x07, 0x08, 0xfd, 0x32, 0xe7, 0xc9, 0xe9,
+		0xaf, 0xad, 0xf2, 0x05, 0x10, 0xad, 0xae, 0xe4, 0x01, 0x16,
+		0xaa, 0x93, 0x63, 0x5b, 0x6c, 0xf5, 0x76, 0xf4, 0x08, 0x18,
+		0xe0, 0x03, 0x0f, 0x4f, 0x70, 0x65, 0x6e, 0x54, 0x68, 0x72,
+		0x65, 0x61, 0x64, 0x2d, 0x65, 0x66, 0x65, 0x62, 0x01, 0x02,
+		0xef, 0xeb, 0x04, 0x10, 0x39, 0x6f, 0x7e, 0x55, 0xe6, 0x62,
+		0x86, 0x03, 0xbe, 0x40, 0x78, 0xaa, 0x83, 0x89, 0xba, 0x0e,
+		0x0c, 0x04, 0x02, 0xa0, 0xf7, 0xf8, 0x00, 0x03, 0x00, 0x00,
+		0x19,
 	};
-	const char *mesh_label = "UNAL-R1000 (Seeed R1000, Ch21)";
-	const char *mesh_local_str = "fdf1:a391:6243:2a67::/64";
+	const char *mesh_label = "AMI-fleet (Pi4 EKH01-DE87, Ch25)";
+	const char *mesh_local_str = "fd32:e7c9:e9af:adf2::/64";
 #else
 #error "No AMI_MESH target selected (set CONFIG_AMI_MESH_PI4=y or CONFIG_AMI_MESH_R1000=y via overlay)"
 #endif
@@ -1890,6 +2076,52 @@ static void build_endpoint_name(void)
 	}
 }
 
+/* v0.6.15 — de-correlate the periodic conn-monitor push across the fleet.
+ *
+ * Without this, nodes flashed/booted together fire their CONN_UPDATE_INTERVAL_S
+ * push in near-perfect phase lock. Captured at 7 nodes: a synchronized ~47
+ * frame/s spike every 60 s against a 3.6 frame/s average. At 15 nodes that
+ * burst would near-saturate the single 802.15.4 channel (the OTBR has to ACK
+ * and relay every frame), driving CCA failures and retransmission cascades.
+ *
+ * Two mechanisms (option C):
+ *  - conn_update_phase_offset_ms(): a deterministic MAC-derived offset spreads
+ *    the fleet evenly across the interval from the very first push, and stays
+ *    stable across a synchronized power-cycle (the MAC doesn't change).
+ *  - conn_update_next_interval_ms(): per-cycle +/-5 s jitter — self-healing,
+ *    so even two nodes that happen to start in phase drift apart and never
+ *    re-correlate.
+ *
+ * Only the app-level conn-monitor push is affected — not the LwM2M
+ * Registration Update, which the Zephyr engine schedules against the
+ * lifetime and must not be perturbed.
+ */
+static uint32_t conn_update_phase_offset_ms(void)
+{
+	struct net_if *iface = net_if_get_default();
+	struct net_linkaddr *link = net_if_get_link_addr(iface);
+	/* v0.6.16: hash the 2-byte MAC suffix, not just the last byte. The
+	 * single-byte `last_byte % 60` clustered the real fleet badly — the
+	 * 7 nodes' last bytes (0x94..0xc8) all landed in 0..32 s of the 60 s
+	 * window. Folding both suffix bytes spreads any MAC set across the
+	 * full interval. */
+	uint16_t mac16;
+	if (link && link->len >= 2) {
+		mac16 = ((uint16_t)link->addr[link->len - 2] << 8)
+		      | link->addr[link->len - 1];
+	} else {
+		mac16 = (uint16_t)sys_rand32_get();
+	}
+	return (uint32_t)(mac16 % CONN_UPDATE_INTERVAL_S) * 1000U;
+}
+
+static int64_t conn_update_next_interval_ms(void)
+{
+	/* base interval +/- 5 s of per-cycle jitter */
+	int32_t jitter = (int32_t)(sys_rand32_get() % 10001) - 5000;
+	return (int64_t)CONN_UPDATE_INTERVAL_S * 1000 + jitter;
+}
+
 int main(void)
 {
 	int ret;
@@ -1912,11 +2144,49 @@ int main(void)
 		int s_ret = settings_subsys_init();
 		if (s_ret == 0) {
 			(void)settings_load_subtree("ami");
+			/* Also load the post-mortem subtree so pm_get_last()
+			 * returns the last-known firmware state to publish to
+			 * Object 33000 v2.4 RIDs 23-28. */
+			(void)settings_load_subtree("pm");
 		} else {
 			LOG_WRN("settings_subsys_init failed: %d", s_ret);
 		}
 		capture_reset_reason();
+
+		/* Read the last-boot post-mortem snapshot and publish it to
+		 * the Object 33000 backing storage so it surfaces as
+		 * telemetry as soon as LwM2M is up. The values describe what
+		 * the firmware was doing the LAST time it took a snapshot
+		 * before the just-completed reset — for a HW-watchdog reset
+		 * that's the tightest "what was the CPU doing when it hung"
+		 * picture we can reconstruct without a JTAG attached. */
+		struct pm_record last_pm;
+		if (pm_get_last(&last_pm)) {
+			thread_diag_publish_post_mortem(
+				last_pm.uptime_s, last_pm.heap_free,
+				last_pm.heap_min_free, last_pm.reg_age_s,
+				last_pm.lwm2m_state, last_pm.thread_role);
+			LOG_INF("post-mortem published: hang_at_up=%us "
+				"heap=%u(min=%u) reg_age=%us lwm2m=0x%02x role=%u",
+				last_pm.uptime_s, last_pm.heap_free,
+				last_pm.heap_min_free, last_pm.reg_age_s,
+				last_pm.lwm2m_state, last_pm.thread_role);
+		} else {
+			LOG_INF("post-mortem: no prior snapshot (first boot "
+				"after chip-erase or struct version changed)");
+		}
+		/* Kick off the periodic snapshot timer. From here on, every
+		 * PM_SNAPSHOT_PERIOD a fresh record overwrites the NVS slot. */
+		(void)pm_init();
 	}
+
+	/* PRIO 9: hardware watchdog ARMED first. Last-resort defense — if
+	 * the soft watchdog (PRIO 5) cannot recover because system_workq is
+	 * dead, the kernel scheduler is stalled, or ami_reboot_drain hangs,
+	 * the HW WDT fires SYS_RESET unconditionally after
+	 * CONFIG_AMI_HW_WATCHDOG_TIMEOUT_S seconds of channel silence.
+	 * Armed BEFORE Thread attach so any boot-path hang is also covered. */
+	hw_watchdog_init();
 
 	/* PRIO 8: boot watchdog ARMED here, BEFORE Thread attach starts.
 	 * Cancelled in REGISTRATION_COMPLETE handler. If the boot path takes
@@ -1935,6 +2205,26 @@ int main(void)
 
 	/* Apply OTBR dataset (mesh-local prefix + PSKc) before Thread attaches */
 	apply_otbr_dataset();
+
+	/* v0.6.14 — register Thread role-change callback for LED detach signal.
+	 * Registered here so it's armed before the first attach. The callback
+	 * itself is quiet until the first REGISTER complete, so it does not
+	 * fight the boot UI. */
+	{
+		openthread_mutex_lock();
+		struct otInstance *ot = openthread_get_default_instance();
+		if (ot) {
+			otError ot_err = otSetStateChangedCallback(
+				ot, thread_state_changed_cb, NULL);
+			if (ot_err != OT_ERROR_NONE) {
+				LOG_WRN("otSetStateChangedCallback failed: %d",
+					(int)ot_err);
+			} else {
+				LOG_INF("Thread role-change callback registered");
+			}
+		}
+		openthread_mutex_unlock();
+	}
 
 	/* Poll OpenThread role until attached (Child/Router/Leader) */
 	LOG_INF("Waiting for Thread network...");
@@ -2004,6 +2294,12 @@ int main(void)
 		initial_jitter_ms);
 	k_sleep(K_MSEC(initial_jitter_ms));
 
+	/* v0.6.18: network path proven healthy (Thread attached + DNS-SD
+	 * resolved — a DNS-SD failure would have warm-rebooted already via
+	 * the dns-sd-boot-fail path). From here, any failure to register is
+	 * server-side; the boot watchdog must NOT reboot on it. */
+	atomic_set(&lwm2m_reached_network, 1);
+
 	atomic_inc(&lwm2m_diag_reg_attempts);   /* Object 33000 RID 11 */
 	lwm2m_rd_client_start(&client_ctx, endpoint_name, 0,
 			      rd_client_event, observe_cb);
@@ -2026,6 +2322,15 @@ int main(void)
 	last_dlms_poll_ms = k_uptime_get();
 	int64_t last_conn_update_ms = last_dlms_poll_ms;
 
+	/* v0.6.15 — first conn-monitor push lands at base + MAC-derived phase
+	 * offset, spreading the fleet across the interval. Every subsequent
+	 * cycle re-jitters (see conn_update_next_interval_ms). */
+	uint32_t conn_phase_off = conn_update_phase_offset_ms();
+	int64_t conn_update_interval_ms =
+		(int64_t)CONN_UPDATE_INTERVAL_S * 1000 + conn_phase_off;
+	LOG_INF("conn-monitor push: base=%ds, MAC phase offset=%ums, +/-5s jitter",
+		CONN_UPDATE_INTERVAL_S, conn_phase_off);
+
 	while (1) {
 		k_sleep(LOOP_TICK);
 
@@ -2039,13 +2344,16 @@ int main(void)
 			last_dlms_poll_ms = now;
 		}
 
-		/* Connectivity metrics at slower rate (v0.18.0: decoupled from DLMS) */
-		if ((now - last_conn_update_ms) >= (CONN_UPDATE_INTERVAL_S * 1000)) {
+		/* Connectivity metrics at slower rate (v0.18.0: decoupled from DLMS).
+		 * v0.6.15: variable interval — MAC phase offset + per-cycle jitter
+		 * de-correlates the push across the fleet (anti burst-storm). */
+		if ((now - last_conn_update_ms) >= conn_update_interval_ms) {
 			update_connectivity_metrics();
 			update_thread_network();
 			update_thread_neighbors();
 			meter_dump_throttle_stats();   /* v0.20.0 — visibility on suppression rate */
 			last_conn_update_ms = now;
+			conn_update_interval_ms = conn_update_next_interval_ms();
 		}
 	}
 

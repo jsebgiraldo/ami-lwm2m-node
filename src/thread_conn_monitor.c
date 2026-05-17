@@ -79,6 +79,15 @@ static uint32_t lwm2m_storm_backoff;
 static int32_t  boot_last_reset_reason;   /* hwinfo bitmap; -1 = unknown */
 static uint32_t boot_total_resets;        /* persisted via settings */
 
+/* v2.4 — post-mortem snapshot from previous boot (filled in by
+ * thread_conn_monitor_publish_pm() at startup; static thereafter). */
+static uint32_t hang_uptime_s;
+static uint32_t hang_heap_free;
+static uint32_t hang_heap_min_free;
+static uint32_t hang_reg_age_s;
+static uint8_t  hang_lwm2m_state;
+static uint8_t  hang_thread_role;
+
 /* LwM2M object structures */
 static struct lwm2m_engine_obj thread_diag_obj;
 
@@ -109,6 +118,13 @@ static struct lwm2m_engine_obj_field thread_diag_fields[] = {
 	/* v2.3 — boot reliability (Bug D + Bug E diagnostics) */
 	OBJ_FIELD_DATA(TD_BOOT_LAST_RESET_REASON_RID, R, S32),
 	OBJ_FIELD_DATA(TD_BOOT_TOTAL_RESETS_RID, R, U32),
+	/* v2.4 — post-mortem snapshot (filled from NVS by post_mortem module) */
+	OBJ_FIELD_DATA(TD_HANG_UPTIME_S_RID, R, U32),
+	OBJ_FIELD_DATA(TD_HANG_HEAP_FREE_RID, R, U32),
+	OBJ_FIELD_DATA(TD_HANG_HEAP_MIN_FREE_RID, R, U32),
+	OBJ_FIELD_DATA(TD_HANG_REG_AGE_S_RID, R, U32),
+	OBJ_FIELD_DATA(TD_HANG_LWM2M_STATE_RID, R, U8),
+	OBJ_FIELD_DATA(TD_HANG_THREAD_ROLE_RID, R, U8),
 };
 
 static struct lwm2m_engine_obj_inst thread_diag_inst;
@@ -174,6 +190,20 @@ static struct lwm2m_engine_obj_inst *thread_diag_create(uint16_t obj_inst_id)
 	INIT_OBJ_RES_DATA(TD_BOOT_TOTAL_RESETS_RID, thread_diag_res, i, thread_diag_ri, j,
 			  &boot_total_resets, sizeof(boot_total_resets));
 
+	/* v2.4 — post-mortem snapshot fields */
+	INIT_OBJ_RES_DATA(TD_HANG_UPTIME_S_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &hang_uptime_s, sizeof(hang_uptime_s));
+	INIT_OBJ_RES_DATA(TD_HANG_HEAP_FREE_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &hang_heap_free, sizeof(hang_heap_free));
+	INIT_OBJ_RES_DATA(TD_HANG_HEAP_MIN_FREE_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &hang_heap_min_free, sizeof(hang_heap_min_free));
+	INIT_OBJ_RES_DATA(TD_HANG_REG_AGE_S_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &hang_reg_age_s, sizeof(hang_reg_age_s));
+	INIT_OBJ_RES_DATA(TD_HANG_LWM2M_STATE_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &hang_lwm2m_state, sizeof(hang_lwm2m_state));
+	INIT_OBJ_RES_DATA(TD_HANG_THREAD_ROLE_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &hang_thread_role, sizeof(hang_thread_role));
+
 	thread_diag_inst.resources = thread_diag_res;
 	thread_diag_inst.resource_count = i;
 
@@ -187,14 +217,16 @@ void init_thread_diag_object(void)
 
 	thread_diag_obj.obj_id = THREAD_DIAG_OBJECT_ID;
 	thread_diag_obj.version_major = 2;
-	/* version_minor stays at 2 even though we expose RIDs 21-22 (v2.3 schema).
-	 * Reason: TB Edge has the v2.2 XML loaded; if we report ver=2.3 the server
-	 * accepts the REGISTER but later breaks the LwM2M session keepalive when
-	 * it sees objectLink advertising RIDs it doesn't know about. Until the
-	 * server-side XML is bumped to v2.3, we keep ver=2.2 in the REGISTER
-	 * and let RIDs 21-22 surface as OPAQUE (same path the schema migration
-	 * 2.1 -> 2.2 followed). Bump back to 3 in v0.6.2 once edge-agent loads
-	 * the new XML. */
+	/* Held at 2 for now (v0.6.19 rollback). The post_mortem fields
+	 * (RIDs 23-28) are populated and exposed as resources in the
+	 * `thread_diag_res[]` array, but the REGISTER payload advertises
+	 * ver=2.2 — Leshan falls back to OPAQUE for unknown RIDs which is
+	 * compatible with the v2.2 server-side XML. Bumping to 4 + matching
+	 * XML on the Pi4 Edge caused Leshan to silently drop REGISTERs in
+	 * the 2026-05-17 deploy (blockwise + new model lookup interaction
+	 * not yet diagnosed); rolling back to 2 restored the working
+	 * baseline. Re-bump to 4 only after the v2.4 path is validated end
+	 * to end on an isolated node. */
 	thread_diag_obj.version_minor = 2;
 	thread_diag_obj.is_core = false;
 	thread_diag_obj.fields = thread_diag_fields;
@@ -211,6 +243,23 @@ void init_thread_diag_object(void)
 	/* Set initial role */
 	lwm2m_set_string(&LWM2M_OBJ(THREAD_DIAG_OBJECT_ID, 0, TD_ROLE_RID),
 			 "Detached");
+}
+
+/* Public hook for main.c: copy the post-mortem record loaded from NVS
+ * into the static backing storage so the values surface as LwM2M
+ * resources. Idempotent. Pass NULL or an invalid record (magic check
+ * already done in post_mortem.c) to leave the fields zero — that is
+ * the correct "first boot, no history" state. */
+void thread_diag_publish_post_mortem(uint32_t uptime_s, uint32_t heap_free,
+				     uint32_t heap_min_free, uint32_t reg_age_s,
+				     uint8_t lwm2m_state, uint8_t thread_role)
+{
+	hang_uptime_s     = uptime_s;
+	hang_heap_free    = heap_free;
+	hang_heap_min_free = heap_min_free;
+	hang_reg_age_s    = reg_age_s;
+	hang_lwm2m_state  = lwm2m_state;
+	hang_thread_role  = thread_role;
 }
 
 /* ================================================================
@@ -481,4 +530,21 @@ void update_connectivity_metrics(void)
 		lwm2m_reg_success, lwm2m_reg_attempts,
 		lwm2m_notify_emitted, lwm2m_notify_emitted + lwm2m_notify_throttled,
 		lwm2m_restart_success, lwm2m_recover_count_val);
+
+	/* v0.6.11: log SoC die temperature once per minute alongside the
+	 * other connectivity metrics so the operator can correlate thermal
+	 * trends with operational events.
+	 *
+	 * v0.6.12: also push the value to IPSO Object 3303/0/5700 so TB
+	 * Edge can read it remotely. The IPSO object auto-tracks min/max
+	 * (RIDs 5601, 5602) — we only need to set the current value. */
+	extern int32_t ami_read_die_temp_mc(void);
+	int32_t die_mc = ami_read_die_temp_mc();
+	if (die_mc != INT32_MIN) {
+		LOG_INF("Obj33000(diag): die_temp=%d.%03d C",
+			die_mc / 1000, die_mc < 0 ? -die_mc % 1000 : die_mc % 1000);
+		/* Push to IPSO 3303/0/5700 (Sensor Value, Float) */
+		double temp_c = (double)die_mc / 1000.0;
+		lwm2m_set_f64(&LWM2M_OBJ(3303, 0, 5700), temp_c);
+	}
 }

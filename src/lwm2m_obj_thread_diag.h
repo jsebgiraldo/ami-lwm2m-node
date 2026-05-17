@@ -63,7 +63,26 @@
 #define TD_BOOT_LAST_RESET_REASON_RID  21   /* S32: hwinfo_get_reset_cause() bitmap; -1 if read failed */
 #define TD_BOOT_TOTAL_RESETS_RID       22   /* U32: monotonic count, persisted in NVS via settings */
 
-#define TD_NUM_FIELDS             23
-#define TD_RES_INST_COUNT         23
+/* === v2.4 post-mortem — what was the firmware doing at the last hang? (RIDs 23-28) ===
+ * Populated at boot from the NVS snapshot owned by src/post_mortem.c. The
+ * snapshot runs periodically (every 60 s) so when the hardware watchdog
+ * fires — a HARD reset that runs no software — the most recent record
+ * still on flash is a tight description of what the CPU was doing right
+ * before the hang. Combined with last_reset_reason (RID 21) the server
+ * can tell HW-watchdog hangs from software-initiated reboots and see
+ * the firmware's last known state for both.
+ *
+ * Values stay valid across the lifetime of the boot (the snapshot only
+ * captures *previous-boot* context; no in-flight updates).
+ */
+#define TD_HANG_UPTIME_S_RID           23   /* U32: uptime at the moment of the saved snapshot */
+#define TD_HANG_HEAP_FREE_RID          24   /* U32: free heap bytes at snapshot */
+#define TD_HANG_HEAP_MIN_FREE_RID      25   /* U32: lifetime min free heap up to snapshot */
+#define TD_HANG_REG_AGE_S_RID          26   /* U32: seconds since last REG_UPDATE_COMPLETE at snapshot */
+#define TD_HANG_LWM2M_STATE_RID        27   /* U8 : PM_LWM2M_STATE_* bitmap (see post_mortem.h) */
+#define TD_HANG_THREAD_ROLE_RID        28   /* U8 : OT role at snapshot */
+
+#define TD_NUM_FIELDS             29
+#define TD_RES_INST_COUNT         29
 
 #endif /* LWM2M_OBJ_THREAD_DIAG_H */

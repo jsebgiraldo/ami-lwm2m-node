@@ -191,3 +191,4 @@ plink_in.txt
 
 # Deployment ledger (operator-specific runtime state, not firmware code)
 tools/deployment_ledger.csv
+soak_logs/

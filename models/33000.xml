@@ -2,12 +2,12 @@
 <LWM2M xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
        xsi:noNamespaceSchemaLocation="http://www.openmobilealliance.org/tech/profiles/LWM2M-v1_1.xsd">
   <Object ObjectType="MODefinition">
-    <Name>Thread MAC Diagnostics</Name>
-    <Description1>Thread MAC-layer counters and device state for AMI nodes. Role, Partition ID, and 8 MAC counters. Network config moved to Object 10483, neighbor info to Object 10485.</Description1>
+    <Name>Thread MAC + LwM2M Diagnostics</Name>
+    <Description1>Custom AMI object combining Thread MAC counters, LwM2M client observability counters, and boot-reliability state for un-fakeable watchdog telemetry.</Description1>
     <ObjectID>33000</ObjectID>
-    <ObjectURN>urn:oma:lwm2m:x:33000:2.0</ObjectURN>
+    <ObjectURN>urn:oma:lwm2m:x:33000:2.2</ObjectURN>
     <LWM2MVersion>1.1</LWM2MVersion>
-    <ObjectVersion>2.0</ObjectVersion>
+    <ObjectVersion>2.2</ObjectVersion>
     <MultipleInstances>Single</MultipleInstances>
     <Mandatory>Optional</Mandatory>
     <Resources>
@@ -17,9 +17,9 @@
         <MultipleInstances>Single</MultipleInstances>
         <Mandatory>Mandatory</Mandatory>
         <Type>String</Type>
-        <RangeEnumeration/>
-        <Units/>
-        <Description>Current Thread device role: Disabled, Detached, Child, Router, or Leader.</Description>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Current Thread role: Disabled, Detached, Child, Router, or Leader.</Description>
       </Item>
       <Item ID="1">
         <Name>Partition ID</Name>
@@ -27,9 +27,9 @@
         <MultipleInstances>Single</MultipleInstances>
         <Mandatory>Mandatory</Mandatory>
         <Type>Integer</Type>
-        <RangeEnumeration/>
-        <Units/>
-        <Description>Thread network partition identifier.</Description>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Thread partition identifier.</Description>
       </Item>
       <Item ID="2">
         <Name>TX Total</Name>
@@ -37,9 +37,9 @@
         <MultipleInstances>Single</MultipleInstances>
         <Mandatory>Mandatory</Mandatory>
         <Type>Integer</Type>
-        <RangeEnumeration/>
-        <Units/>
-        <Description>Total number of MAC frames transmitted.</Description>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Total MAC frames transmitted.</Description>
       </Item>
       <Item ID="3">
         <Name>RX Total</Name>
@@ -47,9 +47,9 @@
         <MultipleInstances>Single</MultipleInstances>
         <Mandatory>Mandatory</Mandatory>
         <Type>Integer</Type>
-        <RangeEnumeration/>
-        <Units/>
-        <Description>Total number of MAC frames received.</Description>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Total MAC frames received.</Description>
       </Item>
       <Item ID="4">
         <Name>TX Unicast</Name>
@@ -57,9 +57,9 @@
         <MultipleInstances>Single</MultipleInstances>
         <Mandatory>Mandatory</Mandatory>
         <Type>Integer</Type>
-        <RangeEnumeration/>
-        <Units/>
-        <Description>Number of unicast MAC frames transmitted.</Description>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Unicast MAC frames transmitted.</Description>
       </Item>
       <Item ID="5">
         <Name>RX Unicast</Name>
@@ -67,9 +67,9 @@
         <MultipleInstances>Single</MultipleInstances>
         <Mandatory>Mandatory</Mandatory>
         <Type>Integer</Type>
-        <RangeEnumeration/>
-        <Units/>
-        <Description>Number of unicast MAC frames received.</Description>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Unicast MAC frames received.</Description>
       </Item>
       <Item ID="6">
         <Name>TX Broadcast</Name>
@@ -77,9 +77,9 @@
         <MultipleInstances>Single</MultipleInstances>
         <Mandatory>Mandatory</Mandatory>
         <Type>Integer</Type>
-        <RangeEnumeration/>
-        <Units/>
-        <Description>Number of broadcast MAC frames transmitted.</Description>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Broadcast MAC frames transmitted.</Description>
       </Item>
       <Item ID="7">
         <Name>RX Broadcast</Name>
@@ -87,9 +87,9 @@
         <MultipleInstances>Single</MultipleInstances>
         <Mandatory>Mandatory</Mandatory>
         <Type>Integer</Type>
-        <RangeEnumeration/>
-        <Units/>
-        <Description>Number of broadcast MAC frames received.</Description>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Broadcast MAC frames received.</Description>
       </Item>
       <Item ID="8">
         <Name>TX Error Abort</Name>
@@ -97,9 +97,9 @@
         <MultipleInstances>Single</MultipleInstances>
         <Mandatory>Mandatory</Mandatory>
         <Type>Integer</Type>
-        <RangeEnumeration/>
-        <Units/>
-        <Description>Number of MAC transmissions aborted due to errors.</Description>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>MAC transmissions aborted due to errors.</Description>
       </Item>
       <Item ID="9">
         <Name>RX Error No Frame</Name>
@@ -107,9 +107,139 @@
         <MultipleInstances>Single</MultipleInstances>
         <Mandatory>Mandatory</Mandatory>
         <Type>Integer</Type>
-        <RangeEnumeration/>
-        <Units/>
-        <Description>Number of RX errors with no frame received.</Description>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>MAC RX errors with no frame received.</Description>
+      </Item>
+      <Item ID="10">
+        <Name>Uptime</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>s</Units>
+        <Description>Seconds since boot.</Description>
+      </Item>
+      <Item ID="11">
+        <Name>Reg Attempts</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Total lwm2m_rd_client_start() calls.</Description>
+      </Item>
+      <Item ID="12">
+        <Name>Reg Success</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>REGISTRATION_COMPLETE events.</Description>
+      </Item>
+      <Item ID="13">
+        <Name>Notify Emitted</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Cumulative notifications sent.</Description>
+      </Item>
+      <Item ID="14">
+        <Name>Notify Throttled</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Cumulative notifications throttled.</Description>
+      </Item>
+      <Item ID="15">
+        <Name>Recover Count</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>lwm2m_recover_work invocations.</Description>
+      </Item>
+      <Item ID="16">
+        <Name>Restart Success</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>REGISTRATION_COMPLETE after a recovery.</Description>
+      </Item>
+      <Item ID="17">
+        <Name>Last Error Code</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Last errno from rd_client_start, negative or 0.</Description>
+      </Item>
+      <Item ID="18">
+        <Name>Last Error Uptime</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>s</Units>
+        <Description>Uptime in seconds when the last error was recorded.</Description>
+      </Item>
+      <Item ID="19">
+        <Name>Watchdog Count</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Times the silence watchdog forced a recover.</Description>
+      </Item>
+      <Item ID="20">
+        <Name>Storm Backoff Applied</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Times backoff was doubled due to 5.xx/timeout responses.</Description>
+      </Item>
+      <Item ID="21">
+        <Name>Last Reset Reason</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>hwinfo_get_reset_cause() bitmap captured at boot; -1 if unavailable.</Description>
+      </Item>
+      <Item ID="22">
+        <Name>Total Resets</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Monotonic reset counter, persisted in NVS — un-fakeable proof of a watchdog-driven reboot.</Description>
       </Item>
     </Resources>
     <Description2/>

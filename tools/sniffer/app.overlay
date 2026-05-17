@@ -1,0 +1,13 @@
+/*
+ * AMI 802.15.4 Sniffer — devicetree overlay.
+ *
+ * Bump the console UART to 1 Mbaud. A busy Thread mesh produces frame
+ * bursts (MLE attach storms, SRP updates, neighbour discovery) that would
+ * overflow 115200 and cause dropped captures. The CH343 USB-UART bridge
+ * on the ESP32-C6 DevKit handles 1 Mbaud cleanly.
+ *
+ * The host tool tools/sniffer_capture.py opens the port at this same rate.
+ */
+&uart0 {
+	current-speed = <1000000>;
+};

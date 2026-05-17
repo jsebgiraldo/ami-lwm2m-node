@@ -164,7 +164,7 @@ After flashing, register the node in the **right TB Edge** UI:
 | Mesh | TB Edge URL | Port | Edge name in TB Central |
 |---|---|---|---|
 | `pi4` | `http://192.168.1.111:8090` | 8090 | `Edge Gateway OpenWrt` |
-| `r1000` | `http://192.168.1.175:8090` | 8090 | `edge-r1000-wm6108` |
+| `r1000` | `http://192.168.8.176:8090` | 8090 | `edge-r1000-wm6108` |
 
 Use `tools/provision_node.py --host <EDGE_IP> --port 8090 --endpoint ami-esp32c6-XXXX`
 adjusting `--host` per mesh.

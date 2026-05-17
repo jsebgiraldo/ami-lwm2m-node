@@ -4,7 +4,7 @@
 > Thread + LwM2M + ThingsBoard Edge usando los tools de `tools/`.
 >
 > **Default de producción**: mesh `r1000` (UNAL-R1000, channel 21,
-> Edge `192.168.1.175:8090`). Variant `med` (Minimal End Device).
+> Edge `192.168.8.176:8090`). Variant `med` (Minimal End Device).
 >
 > Mesh `pi4` (legacy UNAL-Thread, `192.168.1.111`) sigue soportada como
 > opción `--mesh pi4` para los nodos legacy aún sin migrar.
@@ -76,7 +76,7 @@ flowchart LR
     SM -. flash .-> EH
     PR -- REST 8090 --> TB
 
-    subgraph EDGE["Edge Box r1000 · 192.168.1.175"]
+    subgraph EDGE["Edge Box r1000 · 192.168.8.176"]
         OTBR[otbr-agent + RCP] --- WPAN[(wpan0)]
         SRP[SRP server<br/>thingsboard-edge → mleid] -.-> OTBR
         TB[TB Edge<br/>Docker · LwM2M:5683] -.-> OTBR
@@ -145,8 +145,8 @@ Si el hotplug script no está aún, lo instalas con:
 
 ```bash
 scp tools/otbr/wpan0_undeprecate.sh \
-    root@192.168.1.175:/etc/hotplug.d/iface/99-wpan0-undeprecate
-ssh root@192.168.1.175 'chmod +x /etc/hotplug.d/iface/99-wpan0-undeprecate \
+    root@192.168.8.176:/etc/hotplug.d/iface/99-wpan0-undeprecate
+ssh root@192.168.8.176 'chmod +x /etc/hotplug.d/iface/99-wpan0-undeprecate \
     && INTERFACE=wpan0 ACTION=ifup /etc/hotplug.d/iface/99-wpan0-undeprecate'
 ```
 

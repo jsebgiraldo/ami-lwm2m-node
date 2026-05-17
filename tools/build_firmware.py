@@ -8,7 +8,7 @@ Variants (Thread role — overlays/<variant>.conf):
        as routers in the mesh. ~700 KB.
 
 Mesh targets (which OTBR / Thread network — overlays/<mesh>.conf):
-  r1000  UNAL-R1000 on Seeed R1000 (192.168.1.175, channel 21) — production default.
+  r1000  UNAL-R1000 on Seeed R1000 (192.168.8.176, channel 21) — production default.
   pi4    UNAL-Thread on Pi4 EKH01 (192.168.1.111, channel 25) — legacy.
 
 Each combination produces its own artifact at

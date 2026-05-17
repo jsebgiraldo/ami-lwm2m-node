@@ -3,7 +3,7 @@
 > How to register a new (factory-fresh) node with ThingsBoard Edge.
 
 > ✅ **Production default (since 2026-04-29)**: mesh `r1000` (Seeed R1000 OTBR
-> at `192.168.1.175`, channel 21, network UNAL-R1000). Variant `med`
+> at `192.168.8.176`, channel 21, network UNAL-R1000). Variant `med`
 > (Minimal End Device).
 >
 > The legacy `pi4` mesh (Pi 4 EKH01 at `192.168.1.111`, channel 25, network
@@ -19,7 +19,7 @@
 [Meter]──RS485──[XIAO ESP32-C6]──Thread 802.15.4──[OTBR+TB Edge]──gRPC──[TB Central]
                  (this node)                       Seeed R1000 (default)    192.168.1.170
 
-  Seeed R1000:   192.168.1.175  channel 21  network UNAL-R1000   (default)
+  Seeed R1000:   192.168.8.176  channel 21  network UNAL-R1000   (default)
   Pi 4 EKH01:    192.168.1.111  channel 25  network UNAL-Thread  (legacy, --mesh pi4)
 ```
 
@@ -54,7 +54,7 @@ REGISTER.
 ### Manual fix (runtime, lost on `otbr-agent` restart)
 
 ```bash
-ssh root@<otbr-ip>     # 192.168.1.175 for r1000, 192.168.1.111 for pi4
+ssh root@<otbr-ip>     # 192.168.8.176 for r1000, 192.168.1.111 for pi4
 EID=$(ot-ctl ipaddr mleid | head -1)
 ip -6 addr change ${EID}/64 dev wpan0 preferred_lft forever valid_lft forever
 ```

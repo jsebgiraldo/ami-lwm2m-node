@@ -2,7 +2,7 @@
 import subprocess
 import sys
 
-HOST = "192.168.1.111"
+HOST = "192.168.8.176"
 USER = "root"
 # Commands to check Thread/OTBR status
 commands = [
