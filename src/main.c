@@ -403,11 +403,16 @@ static int64_t last_dlms_poll_ms;
 static const struct gpio_dt_spec led0 =
 	GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios, {0});
 /* WS2812 RGB brightness (0-255). Runtime-tunable via shell:
- *   ami led brightness <0..255>
+ *   ami brightness <0..255>
  *   ami led <color>          (color = off|red|green|blue|yellow|cyan|magenta|white)
  *   ami led off
- * Default 1 = ~0.4% of max (lowest practically visible). */
-#define AMI_RGB_BRIGHTNESS_DEFAULT 1
+ * v0.6.23: default 0 = LED fully OFF. SuperMini clones run hot in dense
+ * cluster (30 nodes); even at brightness=1 the boot/attach phase keeps
+ * the LED on for 30-60 s — small thermal contribution but every milliwatt
+ * counts. Operator can re-enable visibility on demand via shell:
+ *   ami brightness 4   (4/255 ~ 1.6%, clearly visible)
+ */
+#define AMI_RGB_BRIGHTNESS_DEFAULT 0
 static uint8_t ami_rgb_brightness = AMI_RGB_BRIGHTNESS_DEFAULT;
 
 enum ami_rgb_color {
