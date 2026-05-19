@@ -216,18 +216,36 @@ void init_thread_diag_object(void)
 	struct lwm2m_engine_obj_inst *obj_inst = NULL;
 
 	thread_diag_obj.obj_id = THREAD_DIAG_OBJECT_ID;
-	thread_diag_obj.version_major = 2;
-	/* Held at 2 for now (v0.6.19 rollback). The post_mortem fields
-	 * (RIDs 23-28) are populated and exposed as resources in the
-	 * `thread_diag_res[]` array, but the REGISTER payload advertises
-	 * ver=2.2 — Leshan falls back to OPAQUE for unknown RIDs which is
-	 * compatible with the v2.2 server-side XML. Bumping to 4 + matching
-	 * XML on the Pi4 Edge caused Leshan to silently drop REGISTERs in
-	 * the 2026-05-17 deploy (blockwise + new model lookup interaction
-	 * not yet diagnosed); rolling back to 2 restored the working
-	 * baseline. Re-bump to 4 only after the v2.4 path is validated end
-	 * to end on an isolated node. */
-	thread_diag_obj.version_minor = 2;
+	/* v0.6.20: pin object version to 1.0 to match the wire protocol.
+	 *
+	 * The firmware compiles with CONFIG_LWM2M_VERSION_1_0=y, so the
+	 * REGISTER payload's link-format CANNOT encode per-object ;ver=X.Y
+	 * attributes (that's a LwM2M 1.1 feature). When this object had
+	 * version_major=2; version_minor=2; the Zephyr engine emitted
+	 * `</33000>;ver=2.2` into a 1.0-protocol REGISTER payload. TB Edge /
+	 * Leshan rejected the malformed link-format silently for this single
+	 * object — Leshan's logs showed "Specified object id 33000 absent in
+	 * the list supported objects of the client". As a consequence TB Edge
+	 * never issued Observe requests for /33000_* and the entire fleet's
+	 * diagnostic story (recover_count, watchdog_count, last_reset_reason,
+	 * total_resets, etc. on RIDs 11-22) was invisible at the operator
+	 * layer for the full lifetime of v0.6.6-v0.6.19. We only found this
+	 * during the 2026-05-18 stability push.
+	 *
+	 * The TB Edge LWM2M_MODEL resource is uploaded as `33000_1.0` (see
+	 * tools/tb_edge_upload_models.py:xml_33000) and the profile observes
+	 * are at `/33000_1.0/0/N`.
+	 *
+	 * Future: only bump back to 2.x if/when we enable CONFIG_LWM2M_VERSION_1_1
+	 * in firmware *and* validate that the 1.1 wire path + per-object versions
+	 * + TB Edge model lookup all line up end-to-end on an isolated node.
+	 * Post_mortem fields (RIDs 23-28) remain present in `thread_diag_res[]`
+	 * and are populated, but the 1.0 model only advertises RIDs 0-22, so
+	 * Leshan will treat 23-28 as opaque (writable but not observed). That's
+	 * fine for now; once we move to model 1.1+ we can re-add them.
+	 */
+	thread_diag_obj.version_major = 1;
+	thread_diag_obj.version_minor = 0;
 	thread_diag_obj.is_core = false;
 	thread_diag_obj.fields = thread_diag_fields;
 	thread_diag_obj.field_count = ARRAY_SIZE(thread_diag_fields);

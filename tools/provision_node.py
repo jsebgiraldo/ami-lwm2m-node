@@ -216,7 +216,7 @@ def provision_single(tb: TBClient, endpoint: str, profile_name: str, dry_run: bo
 
     Returns: {"endpoint": ..., "device_id": ..., "status": "created"|"exists"|"error"}
     """
-    print(f"\n{'─'*60}")
+    print(f"\n{'-'*60}")
     print(f"  Endpoint : {endpoint}")
 
     # Resolve profile
@@ -357,7 +357,7 @@ def main():
             if args.delete:
                 delete_single(tb, ep)
             elif args.verify:
-                print(f"\n{'─'*60}")
+                print(f"\n{'-'*60}")
                 print(f"  Endpoint : {ep}")
                 verify_single(tb, ep)
             else:

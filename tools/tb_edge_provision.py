@@ -65,29 +65,29 @@ KEY_NAME = {
     "/10242_1.0/0/45": "apparentEnergy",
     "/10242_1.0/0/49": "frequency",
     # --- Object 33000 v2.2 : Thread + LwM2M diagnostics ---
-    "/33000_2.2/0/0": "thread_role",
-    "/33000_2.2/0/1": "thread_partition_id",
-    "/33000_2.2/0/2": "mac_tx_total",
-    "/33000_2.2/0/3": "mac_rx_total",
-    "/33000_2.2/0/4": "mac_tx_unicast",
-    "/33000_2.2/0/5": "mac_rx_unicast",
-    "/33000_2.2/0/6": "mac_tx_broadcast",
-    "/33000_2.2/0/7": "mac_rx_broadcast",
-    "/33000_2.2/0/8": "mac_tx_err_abort",
-    "/33000_2.2/0/9": "mac_rx_err_no_frame",
-    "/33000_2.2/0/10": "uptime_s",
-    "/33000_2.2/0/11": "reg_attempts",
-    "/33000_2.2/0/12": "reg_success",
-    "/33000_2.2/0/13": "notify_emitted",
-    "/33000_2.2/0/14": "notify_throttled",
-    "/33000_2.2/0/15": "recover_count",
-    "/33000_2.2/0/16": "restart_success",
-    "/33000_2.2/0/17": "last_error_code",
-    "/33000_2.2/0/18": "last_error_uptime_s",
-    "/33000_2.2/0/19": "watchdog_count",
-    "/33000_2.2/0/20": "storm_backoff_applied",
-    "/33000_2.2/0/21": "last_reset_reason",
-    "/33000_2.2/0/22": "total_resets",
+    "/33000_1.0/0/0": "thread_role",
+    "/33000_1.0/0/1": "thread_partition_id",
+    "/33000_1.0/0/2": "mac_tx_total",
+    "/33000_1.0/0/3": "mac_rx_total",
+    "/33000_1.0/0/4": "mac_tx_unicast",
+    "/33000_1.0/0/5": "mac_rx_unicast",
+    "/33000_1.0/0/6": "mac_tx_broadcast",
+    "/33000_1.0/0/7": "mac_rx_broadcast",
+    "/33000_1.0/0/8": "mac_tx_err_abort",
+    "/33000_1.0/0/9": "mac_rx_err_no_frame",
+    "/33000_1.0/0/10": "uptime_s",
+    "/33000_1.0/0/11": "reg_attempts",
+    "/33000_1.0/0/12": "reg_success",
+    "/33000_1.0/0/13": "notify_emitted",
+    "/33000_1.0/0/14": "notify_throttled",
+    "/33000_1.0/0/15": "recover_count",
+    "/33000_1.0/0/16": "restart_success",
+    "/33000_1.0/0/17": "last_error_code",
+    "/33000_1.0/0/18": "last_error_uptime_s",
+    "/33000_1.0/0/19": "watchdog_count",
+    "/33000_1.0/0/20": "storm_backoff_applied",
+    "/33000_1.0/0/21": "last_reset_reason",
+    "/33000_1.0/0/22": "total_resets",
     # (v0.6.19 rollback) Firmware still populates RIDs 23-28 (post_mortem)
     # but advertises Object 33000 ver=2.2 so they're seen as opaque by
     # Leshan. Once the v2.4 schema path is validated end-to-end on an
@@ -106,8 +106,8 @@ TELEMETRY = sorted(KEY_NAME.keys())
 # for these; the rest still arrive as Register-payload telemetry.
 OBSERVE = [
     "/10242_1.0/0/4", "/10242_1.0/0/5", "/10242_1.0/0/6",
-    "/33000_2.2/0/17", "/33000_2.2/0/18", "/33000_2.2/0/19",
-    "/33000_2.2/0/20", "/33000_2.2/0/21", "/33000_2.2/0/22",
+    "/33000_1.0/0/17", "/33000_1.0/0/18", "/33000_1.0/0/19",
+    "/33000_1.0/0/20", "/33000_1.0/0/21", "/33000_1.0/0/22",
     "/3303_1.1/0/5700", "/3303_1.1/0/5602",
 ]
 
@@ -120,10 +120,10 @@ for _p in ("/10242_1.0/0/4", "/10242_1.0/0/5", "/10242_1.0/0/6",
            "/10242_1.0/0/39", "/10242_1.0/0/41", "/10242_1.0/0/42",
            "/10242_1.0/0/45", "/10242_1.0/0/49"):
     ATTRIBUTE_LWM2M[_p] = {"pmin": 60, "pmax": 0}
-for _p in ("/33000_2.2/0/17", "/33000_2.2/0/18", "/33000_2.2/0/19",
-           "/33000_2.2/0/20"):
+for _p in ("/33000_1.0/0/17", "/33000_1.0/0/18", "/33000_1.0/0/19",
+           "/33000_1.0/0/20"):
     ATTRIBUTE_LWM2M[_p] = {"pmin": 300, "pmax": 900}
-for _p in ("/33000_2.2/0/21", "/33000_2.2/0/22"):
+for _p in ("/33000_1.0/0/21", "/33000_1.0/0/22"):
     ATTRIBUTE_LWM2M[_p] = {"pmin": 0, "pmax": 3600}
 ATTRIBUTE_LWM2M["/3303_1.1/0/5700"] = {"pmin": 60, "pmax": 900}
 ATTRIBUTE_LWM2M["/3303_1.1/0/5602"] = {"pmin": 300, "pmax": 3600}

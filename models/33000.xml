@@ -5,9 +5,9 @@
     <Name>Thread MAC + LwM2M Diagnostics</Name>
     <Description1>Custom AMI object combining Thread MAC counters, LwM2M client observability counters, and boot-reliability state for un-fakeable watchdog telemetry.</Description1>
     <ObjectID>33000</ObjectID>
-    <ObjectURN>urn:oma:lwm2m:x:33000:2.2</ObjectURN>
+    <ObjectURN>urn:oma:lwm2m:x:33000:1.0</ObjectURN>
     <LWM2MVersion>1.1</LWM2MVersion>
-    <ObjectVersion>2.2</ObjectVersion>
+    <ObjectVersion>1.0</ObjectVersion>
     <MultipleInstances>Single</MultipleInstances>
     <Mandatory>Optional</Mandatory>
     <Resources>

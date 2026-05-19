@@ -173,7 +173,18 @@ def xml_33000() -> str:
         # schema path is validated end-to-end on an isolated node we'll bump
         # this back to "2.4" and re-add the RID entries.
     ]
-    return _xml(33000, "2.2", "Thread MAC + LwM2M Diagnostics",
+    # ObjectVersion="1.0" deliberate: firmware compiles with
+    # CONFIG_LWM2M_VERSION_1_0=y so REGISTER payload omits per-object ;ver=
+    # attributes. TB Edge falls back to clientLwM2mSettings.defaultObjectIDVer
+    # ("1.0") for ALL objects and demands an EXACT model match for experimental
+    # object IDs (>=32768). With a 2.2 model uploaded, the firmware's bare
+    # `</33000>` advertisement matched nothing and TB silently skipped
+    # observes/telemetry for the entire object (no log line). Standard OMA
+    # IDs like 3303 use built-in fallback + any uploaded model is augmented,
+    # which is why 3303_1.1 worked. We keep our internal object_version=2.2
+    # in firmware (thread_conn_monitor.c) for evolution tracking; the wire
+    # version stays "1.0" to match the TB profile and uploaded model.
+    return _xml(33000, "1.0", "Thread MAC + LwM2M Diagnostics",
                 "Custom AMI object combining Thread MAC counters, LwM2M "
                 "client observability counters, and boot-reliability state "
                 "for un-fakeable watchdog telemetry.",

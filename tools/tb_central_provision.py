@@ -124,7 +124,7 @@ def normalize_edge_lwm2m_keys(dry: bool) -> None:
     # Keep this list aligned with the upload_model() calls in main().
     canonical = {
         "10242.xml": "10242_1.0",
-        "33000.xml": "33000_2.2",   # rolled 2.4 -> 2.2 (post-mortem opaque path)
+        "33000.xml": "33000_1.0",   # rolled 2.4 -> 2.2 (post-mortem opaque path)
         "3303.xml":  "3303_1.1",
     }
     if dry:

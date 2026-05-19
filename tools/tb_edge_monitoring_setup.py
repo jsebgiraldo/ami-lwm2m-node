@@ -176,8 +176,8 @@ OBSERVE_ADDITIONS = {
     # Object 33000 v2.2 RIDs 21/22 — boot reliability counters. total_resets
     # is the un-fakeable proof the v0.6.17 real-liveness watchdog fired; it
     # only changes on a reboot, so notify immediately, heartbeat hourly.
-    "/33000_2.2/0/21": ("last_reset_reason", 0, 3600),
-    "/33000_2.2/0/22": ("total_resets", 0, 3600),
+    "/33000_1.0/0/21": ("last_reset_reason", 0, 3600),
+    "/33000_1.0/0/22": ("total_resets", 0, 3600),
     # Object 3303 v1.1 — SoC die temperature. 5700 = current value,
     # 5602 = max measured since boot. Thermal headroom monitoring.
     "/3303_1.1/0/5700": ("temperature", 60, 900),
