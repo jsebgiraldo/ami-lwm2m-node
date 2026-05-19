@@ -2126,6 +2126,31 @@ int main(void)
 {
 	int ret;
 
+	/* v0.6.21: WS2812 LED init FIRST, before anything else.
+	 *
+	 * On power-up the WS2812 latches whatever data appears on GPIO8 from
+	 * boot ROM through main(). If the pin floats / glitches it commonly
+	 * locks to WHITE (all bits high). Without an early explicit OFF frame
+	 * the LED stays WHITE for the ~1-2 s of pre-main setup, AND stays
+	 * WHITE permanently if the boot path crashes before reaching
+	 * ami_led_init() down at line ~2203. Operators saw nodes "stuck in
+	 * white" because they hung in early boot (settings load, NVS init,
+	 * OpenThread bring-up) before the LED was ever explicitly addressed.
+	 *
+	 * Sending OFF here gives the WS2812 a known black frame within
+	 * microseconds of scheduler start, so:
+	 *  - successful boots: LED stays OFF briefly, then transitions to
+	 *    BLUE (waiting Thread), CYAN (mesh attached), GREEN (registered)
+	 *    via the normal state machine below.
+	 *  - early-boot crashes: LED stays OFF — operator can instantly tell
+	 *    "this board is dead in early boot" instead of confusing white.
+	 *
+	 * Cost: ~30 us of busy-wait for the WS2812 frame send. Safe at main()
+	 * entry because the GPIO driver is initialized at PRE_KERNEL_1.
+	 */
+	ami_led_init();
+	ami_set_rgb(AMI_RGB_OFF);
+
 	LOG_INF("=== AMI LwM2M Node v%s ===", CLIENT_FIRMWARE_VER);
 	LOG_INF("Board: %s", CONFIG_BOARD);
 	LOG_INF("Network: Thread Ch%d PAN 0x%04X",
@@ -2199,8 +2224,9 @@ int main(void)
 				  K_SECONDS(CONFIG_AMI_BOOT_REGISTER_DEADLINE_S));
 	}
 
-	/* LED init */
-	ami_led_init();
+	/* LED -> BLUE (waiting for Thread attach).
+	 * ami_led_init() already ran at main() entry to clear the WS2812 from
+	 * any boot-latched WHITE state — see comment at top of main(). */
 	ami_set_rgb(AMI_RGB_BLUE);
 
 	/* Apply OTBR dataset (mesh-local prefix + PSKc) before Thread attaches */
