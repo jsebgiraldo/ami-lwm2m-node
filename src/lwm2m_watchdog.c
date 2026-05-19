@@ -21,10 +21,28 @@ extern struct k_work_delayable lwm2m_recover_work;
 extern void lwm2m_diag_inc_watchdog_count(void);   /* defined in main.c */
 extern void lwm2m_diag_inc_recover_count(void);    /* Bug B */
 extern void lwm2m_diag_record_error(int err);
+/* v0.6.24: invoke from this dedicated watchdog thread so the cold reboot
+ * is independent of system_workq. ami_reboot_drain handles USB-Serial-JTAG
+ * drain + sys_reboot. */
+#include <zephyr/sys/reboot.h>
+extern void ami_reboot_drain(int reboot_type, const char *reason);
 
 /* Tunables */
 #define LWM2M_WATCHDOG_PERIOD_S       60   /* check cadence */
 #define LWM2M_WATCHDOG_BOOT_GRACE_S   60   /* don't bark before this uptime */
+
+/* v0.6.24: hard deadline for first REGISTER. If the engine has not produced
+ * a single REGISTRATION_COMPLETE / REG_UPDATE_COMPLETE event within this
+ * many seconds since boot, the dedicated watchdog thread forces a COLD
+ * reboot. This covers the failure mode we observed in production: node
+ * boots → REGISTER fails (DNS-SD timeout, mesh re-attach mid-flight, etc.)
+ * → engine retries internally, eventually goes silent → lwm2m_recover_work
+ * never fires (event handlers depend on engine emitting events) → silence
+ * watchdog stays idle (last_emit_uptime == 0) → node sits forever as a
+ * mesh-attached zombie. The PRIO 8 boot_watchdog covers the same window
+ * but lives on system_workq; if anything stalls that queue we lose its
+ * protection too. This dedicated-thread path has no such dependency. */
+#define LWM2M_WATCHDOG_FIRST_REGISTER_DEADLINE_S  300
 
 #define LWM2M_WATCHDOG_STACK_SZ       1024
 /* Cooperative thread (negative prio) cannot be preempted by other coop
@@ -72,18 +90,49 @@ static void lwm2m_watchdog_thread(void *p1, void *p2, void *p3)
 		uint32_t now_s = (uint32_t)(k_uptime_get() / 1000);
 		uint32_t last  = (uint32_t)atomic_get(&last_emit_uptime);
 
-		/* Watchdog idle until first liveness signal arrives.
-		 * lwm2m_watchdog_emit_event() is called from REGISTRATION_COMPLETE
-		 * (REG_UPDATE_COMPLETE) and from each PUSH_FIELD success. Until
-		 * the engine has registered at least once, there's nothing to
-		 * watch — the boot path may legitimately take >60s under mesh
-		 * attach contention, and complaining before first REGISTER would
-		 * be a false positive.
+		/* v0.6.24: ACTIVE-FROM-BOOT mode.
 		 *
-		 * Boot grace remains as a redundant lower bound for first emit.
+		 * Previously the watchdog was idle until the first
+		 * lwm2m_watchdog_emit_event() — which only fires on a
+		 * server-ACKed REGISTRATION_COMPLETE / REG_UPDATE_COMPLETE.
+		 * Field forensics on the 30-node fleet caught the failure case
+		 * that mode could not handle: three nodes booted, attempted
+		 * REGISTER once, failed silently (no event delivered to the
+		 * application layer), and then sat forever as zombies — silence
+		 * watchdog stayed idle (last == 0), recover_work never scheduled
+		 * (no event triggered it), and the PRIO 8 boot_watchdog (which
+		 * also fires SYS_REBOOT_WARM on first-register deadline) is
+		 * gated on system_workq which can itself stall. Net result: no
+		 * recovery path.
+		 *
+		 * New behavior:
+		 *   - last != 0 (we've been registered at least once):
+		 *       silence-since-last-emit must stay below SILENCE_S
+		 *       (same as before — 2× lifetime).
+		 *   - last == 0 (never registered):
+		 *       uptime must stay below FIRST_REGISTER_DEADLINE_S
+		 *       (300 s). Past that, force a COLD reboot directly from
+		 *       this thread. We use COLD (not WARM) here because the
+		 *       hang is pre-REGISTER, so NVS-preserved Thread state is
+		 *       not load-bearing — a full kernel reinit is the most
+		 *       robust recovery.
 		 */
 		if (last == 0) {
-			LOG_DBG("watchdog: idle (no emit yet, uptime=%us)", now_s);
+			if (now_s >= LWM2M_WATCHDOG_FIRST_REGISTER_DEADLINE_S) {
+				LOG_ERR("watchdog: %us without first REGISTER ACK "
+					"(deadline=%us) — forcing COLD reboot",
+					now_s,
+					LWM2M_WATCHDOG_FIRST_REGISTER_DEADLINE_S);
+				lwm2m_diag_inc_watchdog_count();
+				lwm2m_diag_record_error(-ETIMEDOUT);
+				/* Independent of system_workq — direct call. */
+				ami_reboot_drain(SYS_REBOOT_COLD,
+						 "no-first-register");
+				/* unreachable */
+			}
+			LOG_DBG("watchdog: pre-register guard (uptime=%us "
+				"deadline=%us)", now_s,
+				LWM2M_WATCHDOG_FIRST_REGISTER_DEADLINE_S);
 			continue;
 		}
 		if (now_s < LWM2M_WATCHDOG_BOOT_GRACE_S) {

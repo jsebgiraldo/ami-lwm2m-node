@@ -99,6 +99,15 @@ static uint8_t lwm2m_reg_failures;
  * Monotonic from boot. Snapshot read by thread_conn_monitor.c via the
  * getters below. atomic_t for safety with the work queue contexts.
  */
+/* v0.6.24: NVS keys for the persisted counters. Definitions match the
+ * settings load_cb / SETTINGS_STATIC_HANDLER_DEFINE below — kept up here
+ * because the increment helpers above the handler reference these. */
+#define AMI_RESETS_KEY            "ami/total_resets"
+#define AMI_WATCHDOG_KEY          "ami/watchdog_count"
+#define AMI_RECOVER_KEY           "ami/recover_count"
+#define AMI_REG_ATTEMPTS_KEY      "ami/reg_attempts"
+#define AMI_REG_SUCCESS_KEY       "ami/reg_success"
+
 static atomic_t lwm2m_diag_reg_attempts     = ATOMIC_INIT(0);
 static atomic_t lwm2m_diag_reg_success      = ATOMIC_INIT(0);
 static atomic_t lwm2m_diag_recover_count    = ATOMIC_INIT(0);
@@ -136,10 +145,16 @@ void lwm2m_diag_record_error(int err)
 	atomic_set(&lwm2m_diag_last_error_uptime, (uint32_t)(k_uptime_get() / 1000));
 }
 
+/* v0.6.24: forward-declare the persist helper. Full definition with the
+ * settings_save_one call lives below near the SETTINGS_STATIC_HANDLER —
+ * but the increment helpers (next) need to call it. */
+static void ami_persist_counter(const char *key, atomic_t *a);
+
 /* Helper: invoked by lwm2m_watchdog when it forces a recover. */
 void lwm2m_diag_inc_watchdog_count(void)
 {
 	atomic_inc(&lwm2m_diag_watchdog_count);
+	ami_persist_counter(AMI_WATCHDOG_KEY, &lwm2m_diag_watchdog_count);
 }
 
 /* Helper: invoked by recover/event paths when a registration storm is
@@ -158,6 +173,7 @@ void lwm2m_diag_inc_storm_backoff(void)
 void lwm2m_diag_inc_recover_count(void)
 {
 	atomic_inc(&lwm2m_diag_recover_count);
+	ami_persist_counter(AMI_RECOVER_KEY, &lwm2m_diag_recover_count);
 }
 
 /* Helper: increment reg_attempts at every call site that invokes
@@ -169,6 +185,7 @@ void lwm2m_diag_inc_recover_count(void)
 void lwm2m_diag_inc_reg_attempts(void)
 {
 	atomic_inc(&lwm2m_diag_reg_attempts);
+	ami_persist_counter(AMI_REG_ATTEMPTS_KEY, &lwm2m_diag_reg_attempts);
 }
 
 /* === v2.3 boot reliability counters (Object 33000 RIDs 21-22) ===
@@ -231,7 +248,9 @@ static atomic_t lwm2m_reached_network = ATOMIC_INIT(0);
  *
  * Use this helper for EVERY sys_reboot() in the firmware.
  */
-static void ami_reboot_drain(int reboot_type, const char *reason)
+/* Non-static so the dedicated lwm2m_watchdog thread can call it directly
+ * (v0.6.24) — see lwm2m_watchdog.c "no-first-register" branch. */
+void ami_reboot_drain(int reboot_type, const char *reason)
 {
 	LOG_WRN("REBOOT (%s): drain USB %dms then sys_reboot(%s)",
 		reason, CONFIG_AMI_REBOOT_USB_DRAIN_MS,
@@ -294,28 +313,66 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 	CODE_UNREACHABLE;
 }
 
-/* === Settings subsystem hooks for total_resets persistence ===
+/* === Settings subsystem hooks — persisted diagnostic counters ===
  *
- * Storage key: "ami/total_resets" (uint32_t little-endian).
- * Loaded once at boot; saved once after capture_reset_reason() bumps it.
+ * v0.6.24: All counters here are persisted across reboots so the operator
+ * can see fleet-wide forensics even after a watchdog/recover cycle resets
+ * the in-memory atomic_t values. The previous design (.bss-only) made it
+ * impossible to distinguish "watchdog never fired" from "watchdog fired
+ * and rebooted, losing the count" — three zombie nodes in the 30-node
+ * fleet showed identical 0/0 counters which would mean either case.
+ *
+ * Storage keys (uint32_t little-endian under "ami/"):
+ *   total_resets       — bumped EARLY in capture_reset_reason()
+ *   watchdog_count     — bumped by lwm2m_watchdog when silence detected
+ *   recover_count      — bumped by event handlers when recover_work scheduled
+ *   reg_attempts       — bumped by every lwm2m_rd_client_start call
+ *   reg_success        — bumped on REGISTRATION_COMPLETE
+ *
+ * Write strategy: persist on every increment via settings_save_one. NVS
+ * append-and-GC handles the wear: typical fleet rate is <10 increments/day
+ * per counter so even 5-year flash budget is fine.
  */
-#define AMI_RESETS_KEY "ami/total_resets"
+/* Key macros defined above near the counter declarations so they are
+ * available to the increment helpers earlier in the file. */
 
 static int ami_settings_load_cb(const char *name, size_t len,
 				settings_read_cb read_cb, void *cb_arg)
 {
-	if (strcmp(name, "total_resets") == 0 && len == sizeof(uint32_t)) {
-		uint32_t v = 0;
-		ssize_t got = read_cb(cb_arg, &v, sizeof(v));
-		if (got == sizeof(v)) {
-			atomic_set(&lwm2m_diag_total_resets, (atomic_val_t)v);
-		}
+	uint32_t v = 0;
+	if (len != sizeof(uint32_t)) {
+		return 0;  /* unknown size, skip */
+	}
+	ssize_t got = read_cb(cb_arg, &v, sizeof(v));
+	if (got != sizeof(v)) {
+		return 0;
+	}
+	if (strcmp(name, "total_resets") == 0) {
+		atomic_set(&lwm2m_diag_total_resets, (atomic_val_t)v);
+	} else if (strcmp(name, "watchdog_count") == 0) {
+		atomic_set(&lwm2m_diag_watchdog_count, (atomic_val_t)v);
+	} else if (strcmp(name, "recover_count") == 0) {
+		atomic_set(&lwm2m_diag_recover_count, (atomic_val_t)v);
+	} else if (strcmp(name, "reg_attempts") == 0) {
+		atomic_set(&lwm2m_diag_reg_attempts, (atomic_val_t)v);
+	} else if (strcmp(name, "reg_success") == 0) {
+		atomic_set(&lwm2m_diag_reg_success, (atomic_val_t)v);
 	}
 	return 0;
 }
 
 SETTINGS_STATIC_HANDLER_DEFINE(ami_settings, "ami", NULL,
 			       ami_settings_load_cb, NULL, NULL);
+
+/* Helper: snapshot-and-save a single counter. Called after each atomic_inc
+ * so the on-flash value matches the in-RAM one. Failure is non-fatal — the
+ * RAM value remains correct, we only lose the persisted record on this
+ * cycle. Forward-declared near the top of the file. */
+static void ami_persist_counter(const char *key, atomic_t *a)
+{
+	uint32_t v = (uint32_t)atomic_get(a);
+	(void)settings_save_one(key, &v, sizeof(v));
+}
 
 /* Capture reset cause + bump total_resets (PRIO 7).
  * Call once, very early, from main(). Failures are non-fatal.
@@ -881,6 +938,7 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		hw_watchdog_note_liveness();
 		pm_note_register_success();   /* v0.6.19: stamp last_reg in post-mortem */
 		atomic_inc(&lwm2m_diag_reg_success);   /* Object 33000 RID 12 */
+		ami_persist_counter(AMI_REG_SUCCESS_KEY, &lwm2m_diag_reg_success);
 		if (atomic_cas(&lwm2m_diag_in_recovery, 1, 0)) {
 			atomic_inc(&lwm2m_diag_restart_success);   /* Object 33000 RID 16 */
 		}
@@ -2332,6 +2390,7 @@ int main(void)
 	atomic_set(&lwm2m_reached_network, 1);
 
 	atomic_inc(&lwm2m_diag_reg_attempts);   /* Object 33000 RID 11 */
+	ami_persist_counter(AMI_REG_ATTEMPTS_KEY, &lwm2m_diag_reg_attempts);
 	lwm2m_rd_client_start(&client_ctx, endpoint_name, 0,
 			      rd_client_event, observe_cb);
 
