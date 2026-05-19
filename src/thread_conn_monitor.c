@@ -44,7 +44,24 @@ LOG_MODULE_REGISTER(thread_conn, LOG_LEVEL_INF);
  * Object 33000 — Thread MAC Diagnostics (Reduced v2.0)
  * ================================================================ */
 
-#define THREAD_DIAG_MAX_ID    23  /* resource IDs 0..22 (v2.3 boot reliability) */
+/* v0.6.22 fix: array MUST hold ALL resource slots that thread_diag_create()
+ * touches via INIT_OBJ_RES_DATA. v0.6.19 added RIDs 23-28 (hang_* post-mortem
+ * snapshot) — the field array thread_diag_fields[] was extended to 29 entries
+ * (TD_NUM_FIELDS), but THIS array stayed at 23. Every create_cb invocation
+ * therefore wrote 6 entries past the end of thread_diag_res[] /
+ * thread_diag_ri[], corrupting adjacent .bss. Symptom: the entire Object
+ * 33000 instance was silently malformed and Zephyr's engine omitted it from
+ * the REGISTER payload — operators saw no 33000/* observe activity in
+ * TB Edge for v0.6.6 - v0.6.21, and we burned hours hunting the wrong
+ * suspects (model version mismatch, profile cache, defaultObjectIDVer, etc).
+ * The 0.6.20 version-major/minor fix was necessary but not sufficient: it
+ * made TB Edge stop logging "absent in the list" by side-effect of the wire
+ * version change, but the underlying buffer-overflow root cause stayed.
+ *
+ * Must equal TD_NUM_FIELDS. Keep this assertion in step with the header. */
+#define THREAD_DIAG_MAX_ID    TD_NUM_FIELDS  /* 29 — RIDs 0..28 */
+BUILD_ASSERT(THREAD_DIAG_MAX_ID == TD_NUM_FIELDS,
+	     "thread_diag_res[] must cover every RID create_cb touches");
 #define THREAD_DIAG_MAX_INST  1
 
 /* Static data buffers — reduced: only Role, Partition ID, MAC counters */
