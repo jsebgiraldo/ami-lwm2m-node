@@ -2372,16 +2372,25 @@ int main(void)
 	/* Start LwM2M RD client */
 	memset(&client_ctx, 0, sizeof(client_ctx));
 
-	/* PRIO 6: initial-register jitter [0..30 s].
+	/* PRIO 6: initial-register jitter [0..CONFIG_AMI_BOOT_JITTER_MAX_S * 1000 ms].
 	 * Without this, 30 boards power-cycled by an OTBR restart would all
 	 * REGISTER within the same ~5 s window → server avalanche. The
-	 * jitter spreads them over ~30 s → 1 REGISTER/sec sustained,
-	 * which the TB Edge Leshan stack handles cleanly.
+	 * jitter spreads them over the configured window → 1 REGISTER/sec
+	 * sustained at default 30s, which the TB Edge Leshan stack handles
+	 * cleanly.
+	 *
+	 * v0.6.25: made Kconfig-driven (was hardcoded 30000U) so we can tune
+	 * for different fleet sizes. Also catches the case CONFIG_=0 (disabled,
+	 * for single-node lab work).
 	 */
-	uint32_t initial_jitter_ms = sys_rand32_get() % 30000U;
-	LOG_INF("LwM2M initial REGISTER jitter: %u ms (anti boot-storm)",
-		initial_jitter_ms);
-	k_sleep(K_MSEC(initial_jitter_ms));
+	uint32_t jitter_window_ms = (uint32_t)CONFIG_AMI_BOOT_JITTER_MAX_S * 1000U;
+	uint32_t initial_jitter_ms = jitter_window_ms ?
+		(sys_rand32_get() % jitter_window_ms) : 0U;
+	LOG_INF("LwM2M initial REGISTER jitter: %u ms (window=%us, anti boot-storm)",
+		initial_jitter_ms, CONFIG_AMI_BOOT_JITTER_MAX_S);
+	if (initial_jitter_ms > 0) {
+		k_sleep(K_MSEC(initial_jitter_ms));
+	}
 
 	/* v0.6.18: network path proven healthy (Thread attached + DNS-SD
 	 * resolved — a DNS-SD failure would have warm-rebooted already via

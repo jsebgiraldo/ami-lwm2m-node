@@ -77,11 +77,30 @@ static void hw_wdog_kernel_thread(void *p1, void *p2, void *p3)
 		uint32_t last  = (uint32_t)atomic_get(&last_liveness_uptime);
 		uint32_t now_s = (uint32_t)(k_uptime_get() / 1000);
 
-		/* Boot grace: until the first server-ACKed event, feed
-		 * unconditionally — the boot watchdog owns that window. */
-		bool liveness_ok =
-			(last == 0) ||
-			((now_s - last) < CONFIG_AMI_REAL_LIVENESS_TIMEOUT_S);
+		bool liveness_ok;
+		const char *reason = "";
+		if (last == 0) {
+			/* v0.6.25 HARD BOOT-GRACE CAP.
+			 *
+			 * Original behavior: while last_liveness_uptime == 0 (never
+			 * registered), feed unconditionally — boot watchdog owns
+			 * this window. But if boot_watchdog itself stalls (e.g.,
+			 * system_workq dead) the node stays here forever. Field
+			 * proof v0.6.24: 14/30 nodes dead-on-arrival, watchdog_count
+			 * stuck at 0 for hours.
+			 *
+			 * Cap: past BOOT_GRACE_HARD_S seconds without ANY server-ACK
+			 * event, stop feeding chan_kernel — TG0_WDT bites at the
+			 * hardware level. Final backstop against every software
+			 * recovery being dead. */
+			liveness_ok =
+				(now_s < CONFIG_AMI_HW_WATCHDOG_BOOT_GRACE_HARD_S);
+			reason = "boot-grace";
+		} else {
+			liveness_ok =
+				((now_s - last) < CONFIG_AMI_REAL_LIVENESS_TIMEOUT_S);
+			reason = "post-register-silence";
+		}
 
 		if (liveness_ok) {
 			if (chan_kernel >= 0) {
@@ -90,15 +109,23 @@ static void hw_wdog_kernel_thread(void *p1, void *p2, void *p3)
 			continue;
 		}
 
-		/* No server ACK for too long: the node is registered-but-cut-off
-		 * (wedged USB/radio peripheral, dead LwM2M engine, ...). Reboot
+		/* Liveness fail: either we never registered (boot-grace expired)
+		 * or we registered once and the server stopped ACKing us. Reboot
 		 * directly — dependency-free, does not go through system_workq
 		 * or ami_reboot_drain (either could itself be stuck). If even
 		 * sys_reboot stalls, chan_kernel is no longer fed, so the HW WDT
 		 * bites within the channel timeout as the final backstop. */
-		LOG_ERR("HW watchdog: no server ACK for %us (limit %us) — "
-			"node cut off, SOC cold reset",
-			now_s - last, CONFIG_AMI_REAL_LIVENESS_TIMEOUT_S);
+		if (last == 0) {
+			LOG_ERR("HW watchdog: %s expired at uptime=%us (hard cap=%us) — "
+				"no first REGISTER ever, SOC cold reset",
+				reason, now_s,
+				CONFIG_AMI_HW_WATCHDOG_BOOT_GRACE_HARD_S);
+		} else {
+			LOG_ERR("HW watchdog: %s for %us (limit %us) — "
+				"node cut off, SOC cold reset",
+				reason, now_s - last,
+				CONFIG_AMI_REAL_LIVENESS_TIMEOUT_S);
+		}
 		sys_reboot(SYS_REBOOT_COLD);
 	}
 }
