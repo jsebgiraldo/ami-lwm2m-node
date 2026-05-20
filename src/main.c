@@ -83,7 +83,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.29"
+#define CLIENT_FIRMWARE_VER     "0.6.30"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -110,6 +110,10 @@ static uint8_t lwm2m_reg_failures;
 #define AMI_RECOVER_KEY           "ami/recover_count"
 #define AMI_REG_ATTEMPTS_KEY      "ami/reg_attempts"
 #define AMI_REG_SUCCESS_KEY       "ami/reg_success"
+/* v0.6.30: consecutive boots that failed to reach a first REGISTER ACK.
+ * Drives the anti reboot-storm backoff in lwm2m_watchdog.c. Reset to 0 on
+ * the first server-ACKed registration. */
+#define AMI_NOREG_KEY             "ami/noreg_boots"
 
 static atomic_t lwm2m_diag_reg_attempts     = ATOMIC_INIT(0);
 static atomic_t lwm2m_diag_reg_success      = ATOMIC_INIT(0);
@@ -120,6 +124,8 @@ static atomic_t lwm2m_diag_last_error_code  = ATOMIC_INIT(0);   /* signed; store
 static atomic_t lwm2m_diag_last_error_uptime = ATOMIC_INIT(0);
 static atomic_t lwm2m_diag_watchdog_count   = ATOMIC_INIT(0);
 static atomic_t lwm2m_diag_storm_backoff    = ATOMIC_INIT(0);
+/* v0.6.30: consecutive no-first-register boots (persisted, see AMI_NOREG_KEY) */
+static atomic_t lwm2m_diag_noreg_boots      = ATOMIC_INIT(0);
 /* Set true while lwm2m_recover_work_fn is in flight; the next
  * REGISTRATION_COMPLETE counts as a successful restart. */
 static atomic_t lwm2m_diag_in_recovery = ATOMIC_INIT(0);
@@ -165,6 +171,31 @@ void lwm2m_diag_inc_watchdog_count(void)
 void lwm2m_diag_inc_storm_backoff(void)
 {
 	atomic_inc(&lwm2m_diag_storm_backoff);
+}
+
+/* v0.6.30: anti reboot-storm — consecutive no-first-register boots.
+ * lwm2m_watchdog.c reads this to back off + jitter the cold-reboot deadline
+ * and to stop rebooting once it gets large (a server-side outage cannot be
+ * fixed by rebooting; rebooting only wears flash). Reset to 0 on the first
+ * server-ACKed REGISTER. */
+uint32_t lwm2m_diag_get_noreg_boots(void)
+{
+	return (uint32_t)atomic_get(&lwm2m_diag_noreg_boots);
+}
+
+void lwm2m_diag_inc_noreg_boots(void)
+{
+	atomic_inc(&lwm2m_diag_noreg_boots);
+	ami_persist_counter(AMI_NOREG_KEY, &lwm2m_diag_noreg_boots);
+}
+
+void lwm2m_diag_reset_noreg_boots(void)
+{
+	/* Persist only on an actual 1->0 transition to avoid an NVS write on
+	 * every registration. atomic_set returns the previous value. */
+	if (atomic_set(&lwm2m_diag_noreg_boots, 0) != 0) {
+		ami_persist_counter(AMI_NOREG_KEY, &lwm2m_diag_noreg_boots);
+	}
 }
 
 /* Helper: invoked from any event handler that schedules lwm2m_recover_work
@@ -360,6 +391,8 @@ static int ami_settings_load_cb(const char *name, size_t len,
 		atomic_set(&lwm2m_diag_reg_attempts, (atomic_val_t)v);
 	} else if (strcmp(name, "reg_success") == 0) {
 		atomic_set(&lwm2m_diag_reg_success, (atomic_val_t)v);
+	} else if (strcmp(name, "noreg_boots") == 0) {
+		atomic_set(&lwm2m_diag_noreg_boots, (atomic_val_t)v);
 	}
 	return 0;
 }
@@ -947,6 +980,10 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		}
 		/* PRIO 8: cancel boot watchdog on first successful registration. */
 		if (atomic_cas(&lwm2m_first_register_complete, 0, 1)) {
+			/* v0.6.30: clear the anti-storm backoff — we proved the
+			 * server is reachable, so future boots start at the base
+			 * (300 s) deadline again. */
+			lwm2m_diag_reset_noreg_boots();
 			k_work_cancel_delayable(&boot_watchdog_work);
 			LOG_INF("Boot watchdog disarmed (first REGISTER complete)");
 #if defined(CONFIG_BOOTLOADER_MCUBOOT)

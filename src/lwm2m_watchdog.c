@@ -13,6 +13,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/atomic.h>
+#include <zephyr/random/random.h>
 
 LOG_MODULE_REGISTER(lwm2m_wdog, LOG_LEVEL_INF);
 
@@ -26,6 +27,11 @@ extern void lwm2m_diag_record_error(int err);
  * drain + sys_reboot. */
 #include <zephyr/sys/reboot.h>
 extern void ami_reboot_drain(int reboot_type, const char *reason);
+
+/* v0.6.30: anti reboot-storm — persisted count of consecutive boots that
+ * failed to reach a first REGISTER ACK (defined in main.c). */
+extern uint32_t lwm2m_diag_get_noreg_boots(void);
+extern void lwm2m_diag_inc_noreg_boots(void);
 
 /* Tunables */
 #define LWM2M_WATCHDOG_PERIOD_S       60   /* check cadence */
@@ -43,6 +49,16 @@ extern void ami_reboot_drain(int reboot_type, const char *reason);
  * but lives on system_workq; if anything stalls that queue we lose its
  * protection too. This dedicated-thread path has no such dependency. */
 #define LWM2M_WATCHDOG_FIRST_REGISTER_DEADLINE_S  300
+
+/* v0.6.30: anti reboot-storm tunables. The base 300 s deadline above is the
+ * FIRST-boot value; subsequent consecutive failures back it off exponentially
+ * (capped) and add per-node jitter so a fleet-wide server-side outage does NOT
+ * make all nodes cold-reboot in lockstep every 300 s. After
+ * NOREG_MAX_REBOOTS consecutive no-register boots we stop rebooting entirely
+ * and stay mesh-attached, nudging the recover path instead — rebooting cannot
+ * fix a server outage and only wears flash (it bricked a node in the field). */
+#define LWM2M_WATCHDOG_NOREG_MAX_REBOOTS   5
+#define LWM2M_WATCHDOG_NOREG_BACKOFF_CAP_S 3600
 
 #define LWM2M_WATCHDOG_STACK_SZ       1024
 /* Cooperative thread (negative prio) cannot be preempted by other coop
@@ -79,10 +95,22 @@ static void lwm2m_watchdog_thread(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p2);
 	ARG_UNUSED(p3);
 
+	/* v0.6.30: compute the (backed-off + jittered) first-register deadline
+	 * ONCE at boot, from the persisted consecutive-no-register count.
+	 * Multiplier sequence by noreg_boots: 1,2,4,8,12 (then held), i.e.
+	 * 300s, 600s, 1200s, 2400s, 3600s(capped). Jitter adds 0..25%. */
+	uint32_t noreg = lwm2m_diag_get_noreg_boots();
+	uint32_t mult = (noreg >= 4U) ? 12U : (1U << noreg);
+	uint32_t first_reg_deadline = LWM2M_WATCHDOG_FIRST_REGISTER_DEADLINE_S * mult;
+	if (first_reg_deadline > LWM2M_WATCHDOG_NOREG_BACKOFF_CAP_S) {
+		first_reg_deadline = LWM2M_WATCHDOG_NOREG_BACKOFF_CAP_S;
+	}
+	first_reg_deadline += sys_rand32_get() % (first_reg_deadline / 4U + 1U);
+
 	LOG_INF("LwM2M watchdog thread up: period=%us, silence_threshold=%us, "
-		"boot_grace=%us",
+		"boot_grace=%us, first_register_deadline=%us (noreg_boots=%u)",
 		LWM2M_WATCHDOG_PERIOD_S, LWM2M_WATCHDOG_SILENCE_S,
-		LWM2M_WATCHDOG_BOOT_GRACE_S);
+		LWM2M_WATCHDOG_BOOT_GRACE_S, first_reg_deadline, noreg);
 
 	for (;;) {
 		k_sleep(K_SECONDS(LWM2M_WATCHDOG_PERIOD_S));
@@ -118,12 +146,32 @@ static void lwm2m_watchdog_thread(void *p1, void *p2, void *p3)
 		 *       robust recovery.
 		 */
 		if (last == 0) {
-			if (now_s >= LWM2M_WATCHDOG_FIRST_REGISTER_DEADLINE_S) {
+			if (now_s >= first_reg_deadline) {
+				/* v0.6.30: once we've cold-rebooted enough times
+				 * without ever registering, stop — the cause is
+				 * almost certainly server-side (e.g. the Edge SRP
+				 * service not advertised after a power event), and
+				 * rebooting in a fleet-wide loop only wears flash.
+				 * Stay mesh-attached and keep nudging the recover
+				 * path; reset_noreg_boots() on the eventual first
+				 * REGISTER restores the base deadline. */
+				if (lwm2m_diag_get_noreg_boots() >=
+				    LWM2M_WATCHDOG_NOREG_MAX_REBOOTS) {
+					LOG_WRN("watchdog: %u consecutive no-register "
+						"boots — NOT rebooting (likely "
+						"server-side outage); staying up, "
+						"nudging recover.",
+						lwm2m_diag_get_noreg_boots());
+					k_work_reschedule(&lwm2m_recover_work,
+							  K_NO_WAIT);
+					continue;
+				}
 				LOG_ERR("watchdog: %us without first REGISTER ACK "
-					"(deadline=%us) — forcing COLD reboot",
-					now_s,
-					LWM2M_WATCHDOG_FIRST_REGISTER_DEADLINE_S);
+					"(deadline=%us, noreg_boots=%u) — forcing "
+					"COLD reboot", now_s, first_reg_deadline,
+					lwm2m_diag_get_noreg_boots());
 				lwm2m_diag_inc_watchdog_count();
+				lwm2m_diag_inc_noreg_boots();  /* persist backoff */
 				lwm2m_diag_record_error(-ETIMEDOUT);
 				/* Independent of system_workq — direct call. */
 				ami_reboot_drain(SYS_REBOOT_COLD,
@@ -131,8 +179,7 @@ static void lwm2m_watchdog_thread(void *p1, void *p2, void *p3)
 				/* unreachable */
 			}
 			LOG_DBG("watchdog: pre-register guard (uptime=%us "
-				"deadline=%us)", now_s,
-				LWM2M_WATCHDOG_FIRST_REGISTER_DEADLINE_S);
+				"deadline=%us)", now_s, first_reg_deadline);
 			continue;
 		}
 		if (now_s < LWM2M_WATCHDOG_BOOT_GRACE_S) {
