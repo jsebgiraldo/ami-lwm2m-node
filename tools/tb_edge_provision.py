@@ -165,7 +165,16 @@ def build_profile_body() -> dict:
                 "bootstrapServerUpdateEnable": False,
                 "bootstrap": [],
                 "clientLwM2mSettings": {
-                    "useObject19ForOtaInfo": True,
+                    # v0.6.27 OTA: our firmware (src/firmware_update.c) reports
+                    # update State/Result via Object 5 RID 3 / RID 5 — the LwM2M
+                    # native path — NOT Object 19 (Binary App Data Container).
+                    # With useObject19ForOtaInfo=True, TB Edge would poll a
+                    # nonexistent Object 19 for progress and the OTA state
+                    # machine would stall. Set False so TB Edge reads /5/0/3 and
+                    # /5/0/5 directly. fwUpdateStrategy=1 = PUSH: TB Edge writes
+                    # the image block-wise to /5/0/0, which block_received_cb
+                    # streams into slot1.
+                    "useObject19ForOtaInfo": False,
                     "fwUpdateStrategy": 1,
                     "swUpdateStrategy": 1,
                     "clientOnlyObserveAfterConnect": 1,
