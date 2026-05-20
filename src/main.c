@@ -16,6 +16,9 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_ctrl.h>
 #include <zephyr/sys/reboot.h>
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+#include <zephyr/dfu/mcuboot.h>   /* v0.6.27 OTA: boot_write_img_confirmed */
+#endif
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/hwinfo.h>           /* PRIO 7: reset cause */
 #include <zephyr/drivers/sensor.h>           /* v0.6.11: SoC die temp sensor */
@@ -946,6 +949,19 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		if (atomic_cas(&lwm2m_first_register_complete, 0, 1)) {
 			k_work_cancel_delayable(&boot_watchdog_work);
 			LOG_INF("Boot watchdog disarmed (first REGISTER complete)");
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+			/* v0.6.27 OTA: confirm the running image as permanent.
+			 * If we just booted a freshly-OTA'd image (MCUboot left it
+			 * in TEST/pending state), reaching a server-ACKed REGISTER
+			 * proves the new firmware can get online — make it stick.
+			 * If we DON'T reach here (new image can't register), MCUboot
+			 * reverts to the prior image on the next reset = free
+			 * rollback. Idempotent / cheap when already confirmed. */
+			if (!boot_is_img_confirmed()) {
+				int crc = boot_write_img_confirmed();
+				LOG_WRN("OTA: image confirmed permanent (rc=%d)", crc);
+			}
+#endif
 		}
 		k_work_cancel_delayable(&lwm2m_recover_work);
 		ami_set_rgb(AMI_RGB_GREEN);

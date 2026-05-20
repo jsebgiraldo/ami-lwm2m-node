@@ -14,6 +14,11 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net/lwm2m.h>
+#include <zephyr/sys/reboot.h>
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+#include <zephyr/dfu/flash_img.h>
+#include <zephyr/dfu/mcuboot.h>
+#endif
 
 LOG_MODULE_REGISTER(fw_update, LOG_LEVEL_INF);
 
@@ -25,6 +30,17 @@ static size_t total_bytes_received;
 
 /* Supported PULL protocol: 0 = CoAP */
 static uint8_t supported_protocol[1] = { 0 };
+
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+/* v0.6.27 real OTA: stream incoming blocks into slot1 (image-1) via the
+ * Zephyr flash_img / stream_flash helpers. On Execute (RID 2) we mark slot1
+ * as the pending upgrade and cold-reboot; MCUboot swaps it into slot0 and
+ * runs it. If the new image never confirms (see boot_write_img_confirmed in
+ * main once registered), MCUboot reverts to the previous image on the next
+ * reset — a free rollback safety net. */
+static struct flash_img_context fw_flash_ctx;
+static bool fw_flash_active;
+#endif
 
 /*
  * Pre-write callback — provides the engine with a buffer
@@ -49,18 +65,46 @@ static int firmware_block_received_cb(uint16_t obj_inst_id, uint16_t res_id,
 	if (offset == 0) {
 		total_bytes_received = 0;
 		LOG_INF("FW: Download started (total_size=%zu)", total_size);
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+		int rc = flash_img_init(&fw_flash_ctx);
+		if (rc != 0) {
+			LOG_ERR("FW: flash_img_init failed: %d", rc);
+			fw_flash_active = false;
+			return rc;
+		}
+		fw_flash_active = true;
+		LOG_INF("FW: slot1 stream init OK — writing to image-1");
+#endif
 	}
 
 	total_bytes_received += data_len;
+
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+	if (fw_flash_active) {
+		/* flash_img_buffered_write buffers internally and erases slot1
+		 * progressively (CONFIG_IMG_ERASE_PROGRESSIVELY). Flush on the
+		 * last block. */
+		int rc = flash_img_buffered_write(&fw_flash_ctx, data, data_len,
+						  last_block);
+		if (rc != 0) {
+			LOG_ERR("FW: flash write failed at offset=%zu: %d",
+				offset, rc);
+			fw_flash_active = false;
+			return rc;
+		}
+	}
+#endif
 
 	LOG_INF("FW: Block offset=%zu len=%u total_rx=%zu%s",
 		offset, data_len, total_bytes_received,
 		last_block ? " [LAST]" : "");
 
-	/*
-	 * TODO: With MCUboot enabled, write blocks to flash here:
-	 *   flash_img_buffered_write(&flash_ctx, data, data_len, last_block);
-	 */
+	if (last_block) {
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+		size_t written = flash_img_bytes_written(&fw_flash_ctx);
+		LOG_INF("FW: download complete — %zu bytes in slot1", written);
+#endif
+	}
 
 	return 0;
 }
@@ -75,18 +119,33 @@ static int firmware_update_cb(uint16_t obj_inst_id,
 	LOG_INF("FW: Update requested! Total bytes received: %zu",
 		total_bytes_received);
 
-	/*
-	 * TODO: With MCUboot enabled, apply the update:
-	 *   boot_request_upgrade(BOOT_UPGRADE_TEST);
-	 *   sys_reboot(SYS_REBOOT_COLD);
-	 *
-	 * For now (no MCUboot), simulate success:
-	 */
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+	/* Mark slot1 as the image to boot next (TEST mode → revertible).
+	 * MCUboot will swap slot1 into slot0 on the next boot and run it.
+	 * If the new firmware does NOT call boot_write_img_confirmed()
+	 * (we do that from main() after the first successful REGISTER),
+	 * MCUboot reverts to the prior image on the following reset. That
+	 * gives us automatic rollback if an OTA image can't get online. */
+	int rc = boot_request_upgrade(BOOT_UPGRADE_TEST);
+	if (rc != 0) {
+		LOG_ERR("FW: boot_request_upgrade failed: %d", rc);
+		lwm2m_set_u8(&LWM2M_OBJ(5, 0, 5), RESULT_UPDATE_FAILED);
+		return rc;
+	}
+	lwm2m_set_u8(&LWM2M_OBJ(5, 0, 5), RESULT_SUCCESS);
+	LOG_WRN("FW: slot1 marked for upgrade — cold reboot in 2s to apply");
+	/* Give the LwM2M stack a moment to ACK the Execute before we drop. */
+	k_sleep(K_SECONDS(2));
+	sys_reboot(SYS_REBOOT_COLD);
+	/* unreachable */
+	return 0;
+#else
+	/* No MCUboot in this build — simulate success (legacy/monolithic). */
 	lwm2m_set_u8(&LWM2M_OBJ(5, 0, 3), STATE_IDLE);
 	lwm2m_set_u8(&LWM2M_OBJ(5, 0, 5), RESULT_SUCCESS);
-
 	LOG_INF("FW: Update simulated OK (no MCUboot — not applied)");
 	return 0;
+#endif
 }
 
 /*
