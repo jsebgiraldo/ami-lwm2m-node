@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LWM2M xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:noNamespaceSchemaLocation="http://www.openmobilealliance.org/tech/profiles/LWM2M-v1_1.xsd">
+  <Object ObjectType="MODefinition">
+    <Name>Device</Name>
+    <Description1>OMA LwM2M Device object (standard) — re-uploaded to restore the wiped built-in model so TB can type /3/0/3 Firmware Version.</Description1>
+    <ObjectID>3</ObjectID>
+    <ObjectURN>urn:oma:lwm2m:oma:3:1.0</ObjectURN>
+    <LWM2MVersion>1.1</LWM2MVersion>
+    <ObjectVersion>1.0</ObjectVersion>
+    <MultipleInstances>Single</MultipleInstances>
+    <Mandatory>Optional</Mandatory>
+    <Resources>
+      <Item ID="0">
+        <Name>Manufacturer</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Manufacturer name.</Description>
+      </Item>
+      <Item ID="1">
+        <Name>Model Number</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Model identifier.</Description>
+      </Item>
+      <Item ID="2">
+        <Name>Serial Number</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Serial number.</Description>
+      </Item>
+      <Item ID="3">
+        <Name>Firmware Version</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Firmware version of the device.</Description>
+      </Item>
+      <Item ID="4">
+        <Name>Reboot</Name>
+        <Operations>E</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type></Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Reboot the device.</Description>
+      </Item>
+      <Item ID="5">
+        <Name>Factory Reset</Name>
+        <Operations>E</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type></Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Perform a factory reset.</Description>
+      </Item>
+      <Item ID="6">
+        <Name>Available Power Sources</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Multiple</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Available power sources.</Description>
+      </Item>
+      <Item ID="7">
+        <Name>Power Source Voltage</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Multiple</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>mV</Units>
+        <Description>Present voltage per power source.</Description>
+      </Item>
+      <Item ID="8">
+        <Name>Power Source Current</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Multiple</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>mA</Units>
+        <Description>Present current per power source.</Description>
+      </Item>
+      <Item ID="9">
+        <Name>Battery Level</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>%</Units>
+        <Description>Battery level percentage.</Description>
+      </Item>
+      <Item ID="10">
+        <Name>Memory Free</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>KB</Units>
+        <Description>Free memory.</Description>
+      </Item>
+      <Item ID="11">
+        <Name>Error Code</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Multiple</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Current error codes.</Description>
+      </Item>
+      <Item ID="12">
+        <Name>Reset Error Code</Name>
+        <Operations>E</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type></Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Clear the Error Code list.</Description>
+      </Item>
+      <Item ID="13">
+        <Name>Current Time</Name>
+        <Operations>RW</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Time</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Current UNIX time.</Description>
+      </Item>
+      <Item ID="14">
+        <Name>UTC Offset</Name>
+        <Operations>RW</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>UTC offset, e.g. +02:00.</Description>
+      </Item>
+      <Item ID="15">
+        <Name>Timezone</Name>
+        <Operations>RW</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>IANA timezone name.</Description>
+      </Item>
+      <Item ID="16">
+        <Name>Supported Binding and Modes</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Supported LwM2M bindings.</Description>
+      </Item>
+      <Item ID="17">
+        <Name>Device Type</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Type of device.</Description>
+      </Item>
+      <Item ID="18">
+        <Name>Hardware Version</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Hardware version.</Description>
+      </Item>
+      <Item ID="19">
+        <Name>Software Version</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Software version.</Description>
+      </Item>
+      <Item ID="20">
+        <Name>Battery Status</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Battery status enum.</Description>
+      </Item>
+      <Item ID="21">
+        <Name>Memory Total</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>KB</Units>
+        <Description>Total memory.</Description>
+      </Item>
+    </Resources>
+    <Description2/>
+  </Object>
+</LWM2M>

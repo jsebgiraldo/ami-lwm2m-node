@@ -218,6 +218,72 @@ def xml_3303() -> str:
                 res, urn_ns="ext")
 
 
+# ─────────────────────── 3 v1.0 (OMA Device) ────────────────────────────
+def xml_3() -> str:
+    # OMA standard Device object. Wiped by the TB Edge re-install along with
+    # every other built-in model; the firmware advertises it at the profile
+    # default version 1.0, so TB needs an exact id=3 ver=1.0 model or it logs
+    # "Tenant hasn't such the resource: Object model with id [3] version [1.0]"
+    # and can't type /3/0/3 (Firmware Version) — which breaks the OTA version
+    # comparison.
+    res = [
+        (0,  "Manufacturer", "R", "Optional", "String", "Manufacturer name."),
+        (1,  "Model Number", "R", "Optional", "String", "Model identifier."),
+        (2,  "Serial Number", "R", "Optional", "String", "Serial number."),
+        (3,  "Firmware Version", "R", "Optional", "String", "Firmware version of the device."),
+        (4,  "Reboot", "E", "Mandatory", "", "Reboot the device."),
+        (5,  "Factory Reset", "E", "Optional", "", "Perform a factory reset."),
+        (6,  "Available Power Sources", "R", "Optional", "Integer", "Available power sources.", "", "Multiple"),
+        (7,  "Power Source Voltage", "R", "Optional", "Integer", "Present voltage per power source.", "mV", "Multiple"),
+        (8,  "Power Source Current", "R", "Optional", "Integer", "Present current per power source.", "mA", "Multiple"),
+        (9,  "Battery Level", "R", "Optional", "Integer", "Battery level percentage.", "%"),
+        (10, "Memory Free", "R", "Optional", "Integer", "Free memory.", "KB"),
+        (11, "Error Code", "R", "Mandatory", "Integer", "Current error codes.", "", "Multiple"),
+        (12, "Reset Error Code", "E", "Optional", "", "Clear the Error Code list."),
+        (13, "Current Time", "RW", "Optional", "Time", "Current UNIX time."),
+        (14, "UTC Offset", "RW", "Optional", "String", "UTC offset, e.g. +02:00."),
+        (15, "Timezone", "RW", "Optional", "String", "IANA timezone name."),
+        (16, "Supported Binding and Modes", "R", "Mandatory", "String", "Supported LwM2M bindings."),
+        (17, "Device Type", "R", "Optional", "String", "Type of device."),
+        (18, "Hardware Version", "R", "Optional", "String", "Hardware version."),
+        (19, "Software Version", "R", "Optional", "String", "Software version."),
+        (20, "Battery Status", "R", "Optional", "Integer", "Battery status enum."),
+        (21, "Memory Total", "R", "Optional", "Integer", "Total memory.", "KB"),
+    ]
+    return _xml(3, "1.0", "Device",
+                "OMA LwM2M Device object (standard) — re-uploaded to restore "
+                "the wiped built-in model so TB can type /3/0/3 Firmware Version.",
+                res, urn_ns="oma")
+
+
+# ─────────────────────── 5 v1.0 (OMA Firmware Update) ────────────────────
+def xml_5() -> str:
+    # OMA standard Firmware Update object. THIS is the one that blocks OTA:
+    # with no id=5 ver=1.0 model TB cannot encode the block-write to /5/0/0
+    # nor observe /5/0/3 (State) / /5/0/5 (Result), so fw_state jumps straight
+    # to FAILED and zero blocks are ever sent.
+    res = [
+        (0, "Package", "W", "Mandatory", "Opaque", "Firmware package pushed block-wise."),
+        (1, "Package URI", "W", "Mandatory", "String", "URI to pull the firmware from."),
+        (2, "Update", "E", "Mandatory", "", "Execute to apply the downloaded firmware."),
+        (3, "State", "R", "Mandatory", "Integer",
+         "FW update state: 0=Idle,1=Downloading,2=Downloaded,3=Updating.", "", "Single", "0..3"),
+        (5, "Update Result", "R", "Mandatory", "Integer",
+         "Result of the last update: 0=initial,1=success,...", "", "Single", "0..9"),
+        (6, "PkgName", "R", "Optional", "String", "Name of the firmware package."),
+        (7, "PkgVersion", "R", "Optional", "String", "Version of the firmware package."),
+        (8, "Firmware Update Protocol Support", "R", "Optional", "Integer",
+         "Supported transport protocols (0=CoAP).", "", "Multiple"),
+        (9, "Firmware Update Delivery Method", "R", "Mandatory", "Integer",
+         "0=Pull only,1=Push only,2=both."),
+    ]
+    return _xml(5, "1.0", "Firmware Update",
+                "OMA LwM2M Firmware Update object (standard) — re-uploaded to "
+                "restore the wiped built-in model so TB Edge can drive the "
+                "block-wise OTA push to /5/0/0.",
+                res, urn_ns="oma")
+
+
 # ─────────────────────── upload ─────────────────────────────────────────
 def login(host, port, user, password) -> requests.Session:
     s = requests.Session()
@@ -267,6 +333,8 @@ def main() -> int:
 
     MODELS_DIR.mkdir(exist_ok=True)
     artefacts = [
+        ("Object 3 v1.0 - Device",                  "3.xml",     xml_3()),
+        ("Object 5 v1.0 - Firmware Update",         "5.xml",     xml_5()),
         ("Object 10242 v1.0 - 3-Phase Power Meter", "10242.xml", xml_10242()),
         ("Object 33000 v2.2 - Thread + LwM2M Diag", "33000.xml", xml_33000()),
         ("Object 3303 v1.1 - IPSO Temperature",     "3303.xml",  xml_3303()),
