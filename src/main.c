@@ -2276,6 +2276,16 @@ int main(void)
 	 * Armed BEFORE Thread attach so any boot-path hang is also covered. */
 	hw_watchdog_init();
 
+	/* v0.6.26: tell the HW watchdog we cleared the early-boot NVS danger
+	 * zone (settings_load + post_mortem above). This feeds the boot-survival
+	 * task_wdt channel that hw_watchdog_boot_arm() armed at POST_KERNEL,
+	 * BEFORE this main() ran. If settings_load_subtree had hung (corrupt
+	 * NVS), we would never have reached this line, the channel would have
+	 * stayed unfed, and TG0_WDT would have reset the SoC — closing the
+	 * "dead-on-arrival, reg_success=0, silent forever" hole seen in the
+	 * v0.6.25 fleet soak. */
+	hw_watchdog_note_boot_survived();
+
 	/* PRIO 8: boot watchdog ARMED here, BEFORE Thread attach starts.
 	 * Cancelled in REGISTRATION_COMPLETE handler. If the boot path takes
 	 * longer than CONFIG_AMI_BOOT_REGISTER_DEADLINE_S to register, the

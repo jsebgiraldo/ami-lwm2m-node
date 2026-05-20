@@ -28,6 +28,25 @@
 void hw_watchdog_init(void);
 
 /*
+ * v0.6.26: Signal that main() has safely passed the early-boot danger zone
+ * (settings_subsys_init + settings_load + post_mortem deserialization). Call
+ * this ONCE from main() as early as possible after those NVS operations
+ * complete.
+ *
+ * Why: a corrupt NVS / settings partition can hang settings_load_subtree()
+ * indefinitely. That hang happens in main() BEFORE hw_watchdog_init() ran,
+ * so historically no watchdog was armed and the node sat dead forever
+ * (field proof v0.6.25: nodes with reg_success=0, last_reset_reason=POR,
+ * silent for hours). hw_watchdog_boot_arm() (a SYS_INIT at POST_KERNEL)
+ * now arms a "boot survival" task_wdt channel BEFORE main() runs. That
+ * channel is fed for the first and only time here. If main() hangs in the
+ * NVS path, the channel is never fed → TG0_WDT bites at
+ * CONFIG_AMI_HW_WATCHDOG_TIMEOUT_S → SoC reset. After this call the normal
+ * kernel/workq feeders (started by hw_watchdog_init) keep it alive.
+ */
+void hw_watchdog_note_boot_survived(void);
+
+/*
  * Report end-to-end liveness: the LwM2M server has just ACKed us.
  *
  * Call ONLY from events that prove the full radio + mesh + routing +

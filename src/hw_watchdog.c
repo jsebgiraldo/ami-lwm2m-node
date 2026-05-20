@@ -27,6 +27,7 @@
 #include <zephyr/task_wdt/task_wdt.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/init.h>
 
 LOG_MODULE_REGISTER(hw_wdog, LOG_LEVEL_INF);
 
@@ -39,6 +40,17 @@ LOG_MODULE_REGISTER(hw_wdog, LOG_LEVEL_INF);
 
 static int chan_kernel = -1;
 static int chan_workq  = -1;
+/* v0.6.26: boot-survival channel, armed at SYS_INIT(POST_KERNEL) BEFORE
+ * main() touches NVS. Fed exactly once from hw_watchdog_note_boot_survived()
+ * when main() proves it cleared settings_load + post_mortem. If main() hangs
+ * there, this channel never gets that first feed and TG0_WDT bites. After
+ * the first feed the kernel feeder keeps it alive (redundant with chan_kernel
+ * but harmless). -1 until armed. */
+static int chan_boot = -1;
+static bool wdt_inited;
+/* Set true once main() passes the NVS danger zone; gates the feeder so it
+ * keeps chan_boot fed only after the one-shot survival feed. */
+static atomic_t boot_survived = ATOMIC_INIT(0);
 
 /* ── Real-liveness gate (v0.6.17) ──────────────────────────────────
  * The original two channels only proved "the kernel scheduler runs" and
@@ -102,6 +114,13 @@ static void hw_wdog_kernel_thread(void *p1, void *p2, void *p3)
 			reason = "post-register-silence";
 		}
 
+		/* v0.6.26: keep chan_boot alive once main() proved boot survival.
+		 * Before that one-shot signal we must NOT feed it — that's the
+		 * whole point (a hung NVS load leaves it unfed → TG0_WDT bites). */
+		if (chan_boot >= 0 && atomic_get(&boot_survived)) {
+			(void)task_wdt_feed(chan_boot);
+		}
+
 		if (liveness_ok) {
 			if (chan_kernel >= 0) {
 				(void)task_wdt_feed(chan_kernel);
@@ -159,6 +178,48 @@ static void hw_wdog_timeout(int channel_id, void *user_data)
 	sys_reboot(SYS_REBOOT_COLD);
 }
 
+/* ── v0.6.26: earliest-possible HW watchdog arming ──────────────────
+ * Runs at POST_KERNEL — BEFORE main() and therefore before main()'s
+ * settings_subsys_init / settings_load / post_mortem deserialization.
+ * Arms task_wdt + a single "boot" channel. That channel is intentionally
+ * left UNFED here: main() must call hw_watchdog_note_boot_survived() to
+ * feed it the first time. A hang in the NVS path → channel never fed →
+ * TG0_WDT bites. This is the only watchdog layer that covers code running
+ * before hw_watchdog_init().
+ */
+static int hw_watchdog_boot_arm(void)
+{
+	const struct device *wdt = DEVICE_DT_GET(DT_NODELABEL(wdt0));
+	if (!device_is_ready(wdt)) {
+		/* Can't log reliably this early on all backends; main() will
+		 * also try to init and will log there. */
+		return 0;
+	}
+
+	int ret = task_wdt_init(wdt);
+	if (ret < 0) {
+		return 0;
+	}
+	wdt_inited = true;
+
+	chan_boot = task_wdt_add(HW_WDOG_TIMEOUT_MS, hw_wdog_timeout,
+				 (void *)"boot");
+	return 0;
+}
+SYS_INIT(hw_watchdog_boot_arm, POST_KERNEL, 90);
+
+void hw_watchdog_note_boot_survived(void)
+{
+	/* One-shot: feed chan_boot now (proves NVS path cleared), then let
+	 * the kernel feeder keep it alive. */
+	if (chan_boot >= 0) {
+		(void)task_wdt_feed(chan_boot);
+	}
+	atomic_set(&boot_survived, 1);
+	LOG_INF("HW watchdog: boot survival confirmed (chan_boot=%d fed)",
+		chan_boot);
+}
+
 /* ── Public init ───────────────────────────────────────────────── */
 void hw_watchdog_init(void)
 {
@@ -168,10 +229,16 @@ void hw_watchdog_init(void)
 		return;
 	}
 
-	int ret = task_wdt_init(wdt);
-	if (ret < 0) {
-		LOG_ERR("task_wdt_init failed: %d — HW watchdog NOT armed", ret);
-		return;
+	/* task_wdt may already be initialized by hw_watchdog_boot_arm()
+	 * (SYS_INIT POST_KERNEL). Re-initializing would re-arm the HW timer
+	 * and double-install — skip it in that case. */
+	if (!wdt_inited) {
+		int ret = task_wdt_init(wdt);
+		if (ret < 0) {
+			LOG_ERR("task_wdt_init failed: %d — HW watchdog NOT armed", ret);
+			return;
+		}
+		wdt_inited = true;
 	}
 
 	chan_kernel = task_wdt_add(HW_WDOG_TIMEOUT_MS, hw_wdog_timeout,
