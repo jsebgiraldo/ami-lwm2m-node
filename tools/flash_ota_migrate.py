@@ -55,7 +55,16 @@ def ota_artifacts(env: fc.ToolEnv, build_dir: str = "build_ota") -> tuple[Path, 
 
 
 def flash_ota(env: fc.ToolEnv, com: str, baud: str = "460800",
-              build_dir: str = "build_ota") -> None:
+              build_dir: str = "build_ota",
+              flash_mode: str = "dout", flash_freq: str = "20m") -> None:
+    # NOTE on flash_mode/flash_freq defaults (dout/20m, NOT dio/40m):
+    # The SuperMini's BOYA flash (mfr 0x46) varies unit-to-unit. With dio/40m
+    # in the bootloader header, the ESP32-C6 BOOT ROM on marginal units reads
+    # the flash unreliably -> "Checksum failure ... ets_main.c 331" -> TG0_WDT
+    # boot-loop (soft-brick). esptool's own write+verify still passes (it reads
+    # via the stub at safe speed), so the brick is invisible until first boot.
+    # dout (single-data-line) + 20 MHz is the most compatible ROM read and
+    # boots reliably on every unit tested. Override via --flash-mode/--flash-freq.
     mcuboot, app = ota_artifacts(env, build_dir)
     for p in (mcuboot, app):
         if not p.exists():
@@ -69,10 +78,10 @@ def flash_ota(env: fc.ToolEnv, com: str, baud: str = "460800",
            "--chip", "esp32c6", "--port", com, "--baud", baud,
            "--before", "default-reset", "--after", "hard-reset",
            "write-flash", "--erase-all",
-           "--flash-freq", "40m", "--flash-mode", "dio",
+           "--flash-freq", flash_freq, "--flash-mode", flash_mode,
            "0x0", str(mcuboot),
            "0x20000", str(app)]
-    print(f"\n[ota-flash] {com}: mcuboot@0x0 + app.signed@0x20000 (40m DIO)")
+    print(f"\n[ota-flash] {com}: mcuboot@0x0 + app.signed@0x20000 ({flash_freq} {flash_mode.upper()})")
     print(f"  mcuboot: {mcuboot.stat().st_size} B")
     print(f"  app:     {app.stat().st_size} B")
     res = subprocess.run(cmd, env=env.env_for_subprocess())
@@ -95,6 +104,10 @@ def main() -> int:
     ap.add_argument("--build-dir", default="build_ota",
                     help="west build dir / variant: build_ota (MED, default) "
                          "or build_ota_ftd (FTD router-eligible)")
+    ap.add_argument("--flash-mode", default="dout",
+                    help="flash mode (default dout — most compatible; dio/40m "
+                         "soft-bricks marginal BOYA units via ROM read failure)")
+    ap.add_argument("--flash-freq", default="20m", help="flash freq (default 20m)")
     args = ap.parse_args()
 
     mesh_host, mesh_port = fc.edge_for_mesh(args.mesh)
@@ -111,7 +124,7 @@ def main() -> int:
     endpoint = fc.mac_to_endpoint(mac)
     print(f"[ota-migrate] mac={mac}  endpoint={endpoint}")
 
-    flash_ota(env, com, args.baud, args.build_dir)
+    flash_ota(env, com, args.baud, args.build_dir, args.flash_mode, args.flash_freq)
 
     if not args.skip_provision:
         tb = TBClient(args.host, args.port, args.user, args.password)
