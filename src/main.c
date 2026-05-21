@@ -83,7 +83,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.31"
+#define CLIENT_FIRMWARE_VER     "0.6.32"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -529,11 +529,22 @@ static const char *rgb_color_name(enum ami_rgb_color c)
 
 static enum ami_rgb_color ami_rgb_last_color = AMI_RGB_OFF;
 
+/* v0.6.32: serialize WS2812 access. ami_set_rgb is called from FOUR thread
+ * contexts — the LwM2M engine thread (events), the OpenThread role-change
+ * callback, the system workq (led_tx_off/led_auto_off) and the meter thread
+ * (ami_led_tx_pulse). Concurrent led_strip/RMT updates raced and hung the node
+ * after ~120 s (the v0.6.31 per-TX blink made the contention frequent enough to
+ * hit reliably in the field — nodes froze with the LED stuck on its last color).
+ * All callers are thread context (no ISR), so a k_mutex is safe; the WS2812
+ * update may sleep on RMT completion, which a mutex holder is allowed to do. */
+static K_MUTEX_DEFINE(ami_led_lock);
+
 static void ami_set_rgb(enum ami_rgb_color color)
 {
 	const uint8_t br = ami_rgb_brightness;
-	ami_rgb_last_color = color;
 
+	k_mutex_lock(&ami_led_lock, K_FOREVER);
+	ami_rgb_last_color = color;
 	LOG_INF("LED -> %s (brightness=%u)", rgb_color_name(color), br);
 
 	if (rgb_led_is_ready()) {
@@ -548,14 +559,12 @@ static void ami_set_rgb(enum ami_rgb_color color)
 		case AMI_RGB_OFF:
 		default:              rgb_led_off();           break;
 		}
-		return;
+	} else if (gpio_is_ready_dt(&led0)) {
+		/* Fallback for boards that only expose led0. */
+		gpio_pin_set_dt(&led0, (color != AMI_RGB_OFF) ? 1 : 0);
 	}
 
-	/* Fallback for boards that only expose led0. */
-	if (gpio_is_ready_dt(&led0)) {
-		bool on = (color != AMI_RGB_OFF);
-		gpio_pin_set_dt(&led0, on ? 1 : 0);
-	}
+	k_mutex_unlock(&ami_led_lock);
 }
 
 static void ami_led_init(void)
