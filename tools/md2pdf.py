@@ -8,8 +8,10 @@ Usage: python tools/md2pdf.py docs/FILE.md   ->  docs/FILE.pdf
 import re, sys, subprocess, os
 
 UNI = {
-    '→': r'$\rightarrow$', '←': r'$\leftarrow$', '↔': r'$\leftrightarrow$',
-    '≥': r'$\geq$', '≤': r'$\leq$', '×': r'$\times$', '·': '-',
+    # plain-ASCII (NOT LaTeX math) — these are replaced before esc(), so any
+    # backslash/$ would be re-escaped into garbage. Keep them text.
+    '→': ' -> ', '←': ' <- ', '↔': ' <-> ',
+    '≥': '>=', '≤': '<=', '×': 'x', '·': '-',
     '…': '...', '–': '--', '—': '---', '•': '-',
     '“': '``', '”': "''", '‘': '`', '’': "'",
     '✅': '[OK]', '❌': '[X]', '⚠': '(!)', '️': '',
@@ -41,12 +43,20 @@ def esc(s):
         s = s.replace(k, v)
     return s
 
+def _breakable(s):
+    """Allow line breaks inside long monospace tokens (paths, hex, IDENTIFIERS)
+    so they don't overflow narrow columns / lines."""
+    s = s.replace(r'\_', r'\_\allowbreak{}')
+    for ch in '/.:;,-':
+        s = s.replace(ch, ch + r'\allowbreak{}')
+    return s
+
 def inline(s):
     """Process inline code, bold, links; escape the rest."""
     out, i, ph = [], 0, []
     # protect inline code `...`
     def repl_code(m):
-        ph.append(r'\texttt{' + esc(m.group(1)) + '}')
+        ph.append(r'\texttt{' + _breakable(esc(m.group(1))) + '}')
         return f'\x00{len(ph)-1}\x00'
     s = re.sub(r'`([^`]+)`', repl_code, s)
     # links [text](url) -> \href{url}{text}
@@ -92,15 +102,33 @@ def convert(md):
             while i < n and lines[i].lstrip().startswith('|'):
                 body.append([c.strip() for c in lines[i].strip().strip('|').split('|')])
                 i += 1
-            colspec = '|' + '|'.join(['X'] * ncol) + '|'
+            # weighted X-columns: width proportional to (clamped) max content
+            # length per column, so "#"/"COM" stay narrow and descriptions get
+            # the room. The hsize weights must sum to ncol for tabularx.
+            def _vislen(c):
+                return len(re.sub(r'[*`]', '', c))
+            maxlen = []
+            for j in range(ncol):
+                cells = [header[j]] + [r[j] for r in body if j < len(r)]
+                maxlen.append(max((_vislen(c) for c in cells), default=1))
+            clamp = [min(max(m, 5), 55) for m in maxlen]
+            tot = sum(clamp) or 1
+            w = [max(0.45, min(2.8, c / tot * ncol)) for c in clamp]
+            sw = sum(w)
+            w = [x / sw * ncol for x in w]
+            w[-1] = ncol - sum(w[:-1])  # exact sum = ncol
+            colspec = '|' + ''.join(
+                r'>{\hsize=%.4f\hsize\raggedright\arraybackslash}X|' % x for x in w)
+            fs = r'\footnotesize' if ncol >= 4 else r'\small'
+            out.append('{' + fs)
             out.append(r'\begin{tabularx}{\linewidth}{' + colspec + '}')
             out.append(r'\hline')
             out.append(' & '.join(r'\textbf{' + inline(sanitize_unicode(h)) + '}' for h in header) + r' \\ \hline')
             for row in body:
                 row = (row + [''] * ncol)[:ncol]
                 out.append(' & '.join(inline(sanitize_unicode(c)) for c in row) + r' \\ \hline')
-            out.append(r'\end{tabularx}')
-            out.append(r'\vspace{4pt}')
+            out.append(r'\end{tabularx}}')
+            out.append(r'\vspace{5pt}')
             continue
         s = sanitize_unicode(ln)
         st = s.strip()
