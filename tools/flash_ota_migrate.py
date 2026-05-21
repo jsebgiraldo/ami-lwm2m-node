@@ -45,15 +45,18 @@ from provision_node import TBClient, provision_single  # noqa: E402
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 # build_ota lives in the west workspace next to the legacy build dirs.
-def ota_artifacts(env: fc.ToolEnv) -> tuple[Path, Path]:
+# build_dir selects the variant: "build_ota" (MED, default fleet) or
+# "build_ota_ftd" (FTD router-eligible — flash ~5-10% of the fleet as routers).
+def ota_artifacts(env: fc.ToolEnv, build_dir: str = "build_ota") -> tuple[Path, Path]:
     ws = env.west_workspace
-    mcuboot = ws / "build_ota" / "mcuboot" / "zephyr" / "zephyr.bin"
-    app = ws / "build_ota" / "ami-lwm2m-node" / "zephyr" / "zephyr.signed.bin"
+    mcuboot = ws / build_dir / "mcuboot" / "zephyr" / "zephyr.bin"
+    app = ws / build_dir / "ami-lwm2m-node" / "zephyr" / "zephyr.signed.bin"
     return mcuboot, app
 
 
-def flash_ota(env: fc.ToolEnv, com: str, baud: str = "460800") -> None:
-    mcuboot, app = ota_artifacts(env)
+def flash_ota(env: fc.ToolEnv, com: str, baud: str = "460800",
+              build_dir: str = "build_ota") -> None:
+    mcuboot, app = ota_artifacts(env, build_dir)
     for p in (mcuboot, app):
         if not p.exists():
             raise SystemExit(
@@ -89,6 +92,9 @@ def main() -> int:
     ap.add_argument("--mesh", default=fc.DEFAULT_MESH, choices=fc.MESH_TARGETS)
     ap.add_argument("--skip-provision", action="store_true")
     ap.add_argument("--verify-timeout", type=int, default=180)
+    ap.add_argument("--build-dir", default="build_ota",
+                    help="west build dir / variant: build_ota (MED, default) "
+                         "or build_ota_ftd (FTD router-eligible)")
     args = ap.parse_args()
 
     mesh_host, mesh_port = fc.edge_for_mesh(args.mesh)
@@ -105,7 +111,7 @@ def main() -> int:
     endpoint = fc.mac_to_endpoint(mac)
     print(f"[ota-migrate] mac={mac}  endpoint={endpoint}")
 
-    flash_ota(env, com, args.baud)
+    flash_ota(env, com, args.baud, args.build_dir)
 
     if not args.skip_provision:
         tb = TBClient(args.host, args.port, args.user, args.password)
