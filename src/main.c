@@ -83,7 +83,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.30"
+#define CLIENT_FIRMWARE_VER     "0.6.31"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -660,6 +660,41 @@ static void led_auto_off_fn(struct k_work *w)
 }
 static K_WORK_DELAYABLE_DEFINE(led_auto_off_work, led_auto_off_fn);
 
+/* v0.6.31 — TX-activity LED mode. Once the node reaches steady operation
+ * (first REGISTER complete) the LED goes OFF (idle) and only blinks briefly
+ * on each real LwM2M transmission, i.e. "LED OFF idle, LED ON TX". The boot
+ * UI (BLUE/CYAN/GREEN) still owns the LED during startup until ami_in_operation
+ * is set. Error states (RED) are NOT masked by the TX blink so faults stay
+ * visible. Pulse width is intentionally short to minimise WS2812 current. */
+#define AMI_LED_TX_PULSE_MS 90
+static atomic_t ami_in_operation = ATOMIC_INIT(0);
+
+static void led_tx_off_fn(struct k_work *w)
+{
+	ARG_UNUSED(w);
+	/* Return to idle (OFF) only in operation mode and only if we're not
+	 * currently showing an error (RED) — don't clobber a fault indicator. */
+	if (atomic_get(&ami_in_operation) && ami_rgb_last_color != AMI_RGB_RED) {
+		ami_set_rgb(AMI_RGB_OFF);
+	}
+}
+static K_WORK_DELAYABLE_DEFINE(led_tx_off_work, led_tx_off_fn);
+
+/* Public (called from dlms_meter.c on each data push): blink the LED for a
+ * transmission. No-op during startup (boot UI owns the LED) and while a fault
+ * (RED) is displayed. */
+void ami_led_tx_pulse(void)
+{
+	if (!atomic_get(&ami_in_operation)) {
+		return;                       /* startup UI owns the LED */
+	}
+	if (ami_rgb_last_color == AMI_RGB_RED) {
+		return;                       /* keep fault visible, don't blink */
+	}
+	ami_set_rgb(AMI_RGB_GREEN);
+	k_work_reschedule(&led_tx_off_work, K_MSEC(AMI_LED_TX_PULSE_MS));
+}
+
 /* v0.6.14 — Thread role-change callback: drive LED RED on detach so the
  * operator can spot a mesh loss visually even after the post-REGISTER
  * auto-off. Quiet until first REGISTER complete so it doesn't fight the
@@ -1001,15 +1036,13 @@ static void rd_client_event(struct lwm2m_ctx *client,
 #endif
 		}
 		k_work_cancel_delayable(&lwm2m_recover_work);
+		/* v0.6.31 — enter steady-operation LED mode: brief GREEN flash to
+		 * confirm "registered", then the LED goes OFF (idle) and only blinks
+		 * on each TX (ami_led_tx_pulse from the meter push). This replaces the
+		 * old GREEN steady-state. Boot UI no longer owns the LED past here. */
+		atomic_set(&ami_in_operation, 1);
 		ami_set_rgb(AMI_RGB_GREEN);
-		/* v0.6.3 thermal mitigation: schedule LED auto-off N seconds
-		 * later to reduce continuous WS2812 current draw. Only on the
-		 * GREEN steady-state path — RED/YELLOW error states are not
-		 * affected since this only schedules from the GREEN branch. */
-		if (CONFIG_AMI_RGB_AUTO_OFF_AFTER_REGISTER_S > 0) {
-			k_work_reschedule(&led_auto_off_work,
-				K_SECONDS(CONFIG_AMI_RGB_AUTO_OFF_AFTER_REGISTER_S));
-		}
+		k_work_reschedule(&led_tx_off_work, K_MSEC(800));
 		break;
 	case LWM2M_RD_CLIENT_EVENT_REGISTRATION_FAILURE:
 		LOG_ERR("LwM2M Registration FAILED");

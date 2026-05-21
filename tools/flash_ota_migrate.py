@@ -108,6 +108,8 @@ def main() -> int:
                     help="flash mode (default dout — most compatible; dio/40m "
                          "soft-bricks marginal BOYA units via ROM read failure)")
     ap.add_argument("--flash-freq", default="20m", help="flash freq (default 20m)")
+    ap.add_argument("--map-csv", default="tools/mac_com_map.csv",
+                    help="append COM<->MAC<->endpoint mapping here for record-keeping")
     args = ap.parse_args()
 
     mesh_host, mesh_port = fc.edge_for_mesh(args.mesh)
@@ -123,6 +125,21 @@ def main() -> int:
     mac = fc.read_mac(env, com)
     endpoint = fc.mac_to_endpoint(mac)
     print(f"[ota-migrate] mac={mac}  endpoint={endpoint}")
+
+    # Record-keeping: tie this COM/MAC to its endpoint + variant so the fleet
+    # (physically numbered 1..30) can be mapped after a flashing round.
+    try:
+        import csv as _csv, os as _os, datetime as _dt
+        _new = not _os.path.exists(args.map_csv)
+        with open(args.map_csv, "a", newline="") as _f:
+            _w = _csv.writer(_f)
+            if _new:
+                _w.writerow(["ts_iso", "com", "mac", "endpoint", "variant", "flash"])
+            _w.writerow([_dt.datetime.now().isoformat(timespec="seconds"), com, mac,
+                         endpoint, args.build_dir, f"{args.flash_freq}/{args.flash_mode}"])
+        print(f"[ota-migrate] mapping appended -> {args.map_csv}")
+    except Exception as _e:
+        print(f"[ota-migrate] map csv skip: {_e}")
 
     flash_ota(env, com, args.baud, args.build_dir, args.flash_mode, args.flash_freq)
 

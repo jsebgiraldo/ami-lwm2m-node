@@ -1146,6 +1146,13 @@ void meter_push_to_lwm2m(const struct meter_readings *readings)
 		readings->total_active_power, readings->active_energy,
 		readings->frequency);
 
+	/* v0.6.31 — blink the LED only when we actually transmitted resources
+	 * this cycle (LED OFF idle, LED ON TX). No-op until steady operation. */
+	if (pushed > 0) {
+		extern void ami_led_tx_pulse(void);
+		ami_led_tx_pulse();
+	}
+
 	#undef TOTAL_RESOURCES
 }
 
