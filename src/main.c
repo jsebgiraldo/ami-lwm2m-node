@@ -83,7 +83,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.33"
+#define CLIENT_FIRMWARE_VER     "0.6.34"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -476,7 +476,13 @@ int32_t ami_read_die_temp_mc(void)
 }
 
 /* Sensor update intervals */
-#define DLMS_POLL_INTERVAL_DEFAULT  15   /* seconds — default DLMS meter poll */
+#define DLMS_POLL_INTERVAL_DEFAULT  60   /* seconds — default DLMS meter poll.
+   * v0.6.34: 15 -> 60s to cut self-heating/load. The per-resource Notify
+   * throttle is 60s (CONFIG_AMI_LWM2M_NOTIFY_MIN_INTERVAL_MS, v0.6.33), so
+   * polling the meter faster than 60s only burns RS485/UART/CPU cycles on
+   * readings that get throttled away before they can Notify. 60s also matches
+   * CONN_UPDATE_INTERVAL_S. Override at runtime with the shell if finer
+   * granularity is needed for a specific node. */
 #define CONN_UPDATE_INTERVAL_S     60   /* seconds — RSSI/LQI/Thread update (v0.18.0) */
 #define LOOP_TICK              K_MSEC(500)     /* Main loop tick */
 
