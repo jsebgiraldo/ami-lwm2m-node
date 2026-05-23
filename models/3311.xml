@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LWM2M xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:noNamespaceSchemaLocation="http://www.openmobilealliance.org/tech/profiles/LWM2M-v1_1.xsd">
+  <Object ObjectType="MODefinition">
+    <Name>Light Control</Name>
+    <Description1>IPSO Light Control object (3311) — server-controlled RGB LED on AMI nodes.</Description1>
+    <ObjectID>3311</ObjectID>
+    <ObjectURN>urn:oma:lwm2m:oma:3311:1.0</ObjectURN>
+    <LWM2MVersion>1.1</LWM2MVersion>
+    <ObjectVersion>1.0</ObjectVersion>
+    <MultipleInstances>Single</MultipleInstances>
+    <Mandatory>Optional</Mandatory>
+    <Resources>
+      <Item ID="5706">
+        <Name>Colour</Name>
+        <Operations>RW</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Color of the light, e.g. #RRGGBB or named color.</Description>
+      </Item>
+      <Item ID="5750">
+        <Name>Application Type</Name>
+        <Operations>RW</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Application type.</Description>
+      </Item>
+      <Item ID="5805">
+        <Name>Cumulative active power</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>Wh</Units>
+        <Description>Cumulative active power in Wh.</Description>
+      </Item>
+      <Item ID="5820">
+        <Name>Power factor</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Float</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Power factor (-1.0 .. 1.0).</Description>
+      </Item>
+      <Item ID="5850">
+        <Name>On/Off</Name>
+        <Operations>RW</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Boolean</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>On/Off control.</Description>
+      </Item>
+      <Item ID="5851">
+        <Name>Dimmer</Name>
+        <Operations>RW</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration>0..100</RangeEnumeration>
+        <Units>%</Units>
+        <Description>Brightness 0..100.</Description>
+      </Item>
+      <Item ID="5852">
+        <Name>On time</Name>
+        <Operations>RW</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>s</Units>
+        <Description>Seconds the light has been on.</Description>
+      </Item>
+    </Resources>
+    <Description2/>
+  </Object>
+</LWM2M>
