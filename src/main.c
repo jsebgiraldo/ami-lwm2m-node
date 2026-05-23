@@ -46,6 +46,7 @@
 #include "lwm2m_obj_thread_neighbor.h"
 #include "lwm2m_obj_thread_commission.h"
 #include "lwm2m_obj_thread_cli.h"
+#include "lwm2m_obj_light_control.h"
 #include "lwm2m_observation.h"
 #include "dlms_meter.h"
 #include "rgb_led.h"
@@ -83,7 +84,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.34"
+#define CLIENT_FIRMWARE_VER     "0.6.35"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -544,6 +545,24 @@ static enum ami_rgb_color ami_rgb_last_color = AMI_RGB_OFF;
  * All callers are thread context (no ISR), so a k_mutex is safe; the WS2812
  * update may sleep on RMT completion, which a mutex holder is allowed to do. */
 static K_MUTEX_DEFINE(ami_led_lock);
+
+/* v0.6.35: public, mutex-protected raw RGB setter used by the LwM2M Light
+ * Control object (3311). The IPSO Light Control resources Colour (/5706),
+ * On/Off (/5850) and Dimmer (/5851) compute a final (R,G,B) and call here.
+ * Goes through the SAME k_mutex as the enum setter so a server-driven write
+ * doesn't race the system status colors / TX pulse. Pass (0,0,0) to turn off. */
+void ami_led_set_raw(uint8_t r, uint8_t g, uint8_t b)
+{
+	k_mutex_lock(&ami_led_lock, K_FOREVER);
+	if (rgb_led_is_ready()) {
+		if (r | g | b) {
+			rgb_led_set(r, g, b);
+		} else {
+			rgb_led_off();
+		}
+	}
+	k_mutex_unlock(&ami_led_lock);
+}
 
 static void ami_set_rgb(enum ami_rgb_color color)
 {
@@ -1285,6 +1304,13 @@ static int lwm2m_setup(void)
 	init_thread_neighbor_object();
 	init_thread_commission_object();
 	init_thread_cli_object();
+
+	/* v0.6.35: IPSO Object 3311 Light Control — server-controlled RGB LED.
+	 * Uses Zephyr's built-in ipso_light_control (CONFIG_LWM2M_IPSO_LIGHT_CONTROL),
+	 * we only register the post-write callbacks for /5706 Colour, /5850 On/Off,
+	 * /5851 Dimmer. Writes go through ami_led_set_raw() (same mutex as the
+	 * system colors). */
+	light_control_init();
 
 	LOG_INF("LwM2M objects configured");
 	LOG_INF("  Server (DNS-SD):   %s", lwm2m_server_uri);
