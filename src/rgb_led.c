@@ -45,14 +45,15 @@ LOG_MODULE_REGISTER(rgb_led, LOG_LEVEL_INF);
 #define GPIO_OUT_W1TS_REG  (*(volatile uint32_t *)0x60091008)
 #define GPIO_OUT_W1TC_REG  (*(volatile uint32_t *)0x6009100C)
 
-/* ESP32-C6 CPU frequency. v0.6.34: dropped 160 -> 80 MHz to cut self-heating
- * (see boards/xiao_esp32c6_hpcore.overlay &cpu0). MUST match the actual clock
- * set in the overlay — the WS2812 bit-bang below derives its cycle counts from
+/* ESP32-C6 CPU frequency. v0.6.36: restored to 160 MHz (v0.6.34 had dropped
+ * to 80 to cut heat, but that halved OTA throughput and broke the rollout —
+ * see boards/xiao_esp32c6_hpcore.overlay note). MUST match the actual clock
+ * the SoC runs at — the WS2812 bit-bang below derives its cycle counts from
  * this, and a mismatch corrupts the LED timing. */
-#define CPU_FREQ_MHZ  80
+#define CPU_FREQ_MHZ  160
 
 /* Nanosecond timing targets → CPU cycle counts at CPU_FREQ_MHZ.
- * At 80 MHz: T0H=32, T0L=68, T1H=64, T1L=36 cycles (1 cyc = 12.5 ns). */
+ * At 160 MHz: T0H=64, T0L=136, T1H=128, T1L=72 cycles (1 cyc = 6.25 ns). */
 #define T0H_CYC  ((400 * CPU_FREQ_MHZ) / 1000)   /* 400 ns */
 #define T0L_CYC  ((850 * CPU_FREQ_MHZ) / 1000)   /* 850 ns */
 #define T1H_CYC  ((800 * CPU_FREQ_MHZ) / 1000)   /* 800 ns */

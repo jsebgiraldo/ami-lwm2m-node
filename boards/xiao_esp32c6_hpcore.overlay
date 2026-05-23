@@ -53,19 +53,16 @@
 	status = "okay";
 };
 
-/* v0.6.34: drop CPU clock 160 -> 80 MHz to cut self-heating.
- * Field die temps measured avg 71C / max 82C (17/30 nodes >70C) with the
- * always-on (rx-on MED) radio + 160 MHz CPU. Halving the CPU clock lowers
- * CPU dynamic power without touching the radio duty cycle, so the node stays
- * always-attached and fully reachable (RPC/OTA latency unchanged) — unlike a
- * sleepy (SED/CSL) conversion. The esp32 clock driver reads this property at
- * init and calls rtc_clk_cpu_freq_set_config (drivers/clock_control/
- * clock_control_esp32.c:883,762-770), so this actually reprograms the PLL.
- * NOTE: rgb_led.c WS2812 bit-bang timing is cycle-count based and is kept in
- * sync via CPU_FREQ_MHZ=80 there. 80 MHz is a valid C6 CPU freq (80/120/160). */
-&cpu0 {
-	clock-frequency = <80000000>;
-};
+/* v0.6.34 dropped CPU to 80 MHz to cut self-heating; v0.6.36 REVERTED to
+ * 160 MHz (no override here — falls back to the SoC default in
+ * esp32c6_common.dtsi). Reason: 80 MHz roughly halves blockwise CoAP/MCUboot
+ * throughput, pushing single-node OTA from ~10 min (160) to >50 min (80) —
+ * past the Edge's LWM2M_TIMEOUT=600000 (10 min), so transfers loop in state=1
+ * Downloading and never reach Downloaded. Measured A/B: d2b4 @ 160MHz reached
+ * Downloaded in 10.3 min; c61c @ 80MHz never finished in 50+ min over two
+ * attempts. The thermal gain was only ~2C avg (radio rx-on dominates heat),
+ * not worth losing fleet OTA. Keeping DLMS_POLL=60s + NOTIFY=60s for the mesh
+ * load reduction (those don't affect CPU throughput). */
 
 /* Enable UART1 for RS485 DLMS communication */
 &uart1 {

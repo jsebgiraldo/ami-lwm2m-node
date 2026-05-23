@@ -33,7 +33,7 @@ LOG_MODULE_REGISTER(light_control, LOG_LEVEL_INF);
 #define RES_ON_OFF	5850
 #define RES_DIMMER	5851
 #define RES_COLOUR	5706
-#define RES_APP_TYPE	5750
+/* RES_APP_TYPE (5750) intentionally not used — see init note. */
 
 /* Defaults: ON, 30% brightness (visible but not blinding), GREEN at boot. */
 static bool light_on = true;
@@ -164,11 +164,17 @@ int light_control_init(void)
 		LOG_ERR("Failed to create /3311/0 (%d)", ret);
 		return ret;
 	}
-	/* Seed initial values so observers see something coherent. */
+	/* Seed initial values so observers see something coherent.
+	 *
+	 * v0.6.36: do NOT lwm2m_set_string(/5750). Zephyr's ipso_light_control.c
+	 * only allocates static buffers for /5706 (Colour, 64B) and /5701 (Units,
+	 * 8B) — see LIGHT_STRING_LONG / LIGHT_STRING_SHORT. /5750 has NO buffer,
+	 * so the set wrote to an uninitialised pointer → memory corruption →
+	 * silent fault during MCUboot confirm window → revert (v0.6.35 bug, found
+	 * via d2b4: state 1->2->0, fw stayed 0.6.33, total_resets bumped). */
 	lwm2m_set_bool(&LWM2M_OBJ(LIGHT_OBJ_ID, 0, RES_ON_OFF), light_on);
 	lwm2m_set_s32(&LWM2M_OBJ(LIGHT_OBJ_ID, 0, RES_DIMMER), dimmer_pct);
 	lwm2m_set_string(&LWM2M_OBJ(LIGHT_OBJ_ID, 0, RES_COLOUR), colour_buf);
-	lwm2m_set_string(&LWM2M_OBJ(LIGHT_OBJ_ID, 0, RES_APP_TYPE), "AMI Node Status");
 
 	lwm2m_register_post_write_callback(&LWM2M_OBJ(LIGHT_OBJ_ID, 0, RES_ON_OFF), on_off_cb);
 	lwm2m_register_post_write_callback(&LWM2M_OBJ(LIGHT_OBJ_ID, 0, RES_DIMMER), dimmer_cb);
