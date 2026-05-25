@@ -84,7 +84,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.36"
+#define CLIENT_FIRMWARE_VER     "0.6.37"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -567,6 +567,16 @@ void ami_led_set_raw(uint8_t r, uint8_t g, uint8_t b)
 static void ami_set_rgb(enum ami_rgb_color color)
 {
 	const uint8_t br = ami_rgb_brightness;
+
+	/* v0.6.37: once the server has written /3311 (Light Control), the
+	 * operator owns the LED. Skip the system-status update so a TX pulse
+	 * or registration callback doesn't overwrite the manual colour every
+	 * minute. We still track ami_rgb_last_color so the shell command keeps
+	 * working, but we don't touch the WS2812. */
+	if (light_control_manual_mode()) {
+		ami_rgb_last_color = color;
+		return;
+	}
 
 	k_mutex_lock(&ami_led_lock, K_FOREVER);
 	ami_rgb_last_color = color;

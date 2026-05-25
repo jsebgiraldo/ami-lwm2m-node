@@ -41,6 +41,12 @@ static uint8_t dimmer_pct = 30;
 static uint8_t color_r = 0, color_g = 255, color_b = 0;
 static char colour_buf[16] = "#00FF00";
 
+/* v0.6.37: latches true on the first /3311 Write so main.c's ami_set_rgb()
+ * stops fighting our apply_light() on every TX pulse / status change. */
+static bool manual_mode = false;
+
+bool light_control_manual_mode(void) { return manual_mode; }
+
 extern void ami_led_set_raw(uint8_t r, uint8_t g, uint8_t b);
 
 static void apply_light(void)
@@ -115,7 +121,8 @@ static int on_off_cb(uint16_t obj_inst_id, uint16_t res_id, uint16_t res_inst_id
 		     size_t total_size, size_t offset)
 {
 	light_on = (data_len > 0) && (*(uint8_t *)data != 0);
-	LOG_INF("On/Off write -> %s", light_on ? "ON" : "OFF");
+	manual_mode = true;
+	LOG_INF("On/Off write -> %s (manual_mode=on)", light_on ? "ON" : "OFF");
 	apply_light();
 	return 0;
 }
@@ -133,7 +140,8 @@ static int dimmer_cb(uint16_t obj_inst_id, uint16_t res_id, uint16_t res_inst_id
 	if (v < 0) v = 0;
 	if (v > 100) v = 100;
 	dimmer_pct = (uint8_t)v;
-	LOG_INF("Dimmer write -> %u%%", dimmer_pct);
+	manual_mode = true;
+	LOG_INF("Dimmer write -> %u%% (manual_mode=on)", dimmer_pct);
 	apply_light();
 	return 0;
 }
@@ -148,7 +156,8 @@ static int colour_cb(uint16_t obj_inst_id, uint16_t res_id, uint16_t res_inst_id
 		size_t n = MIN(data_len, sizeof(colour_buf) - 1);
 		memcpy(colour_buf, data, n);
 		colour_buf[n] = '\0';
-		LOG_INF("Colour write -> (%u,%u,%u)", r, g, b);
+		manual_mode = true;
+		LOG_INF("Colour write -> (%u,%u,%u) (manual_mode=on)", r, g, b);
 		apply_light();
 	} else {
 		LOG_WRN("Colour write: unrecognised '%.*s'", data_len, (const char *)data);
