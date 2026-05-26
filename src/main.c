@@ -47,6 +47,7 @@
 #include "lwm2m_obj_thread_commission.h"
 #include "lwm2m_obj_thread_cli.h"
 #include "lwm2m_obj_light_control.h"
+#include "lwm2m_obj_thread_role.h"
 #include "lwm2m_observation.h"
 #include "dlms_meter.h"
 #include "rgb_led.h"
@@ -84,7 +85,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.37"
+#define CLIENT_FIRMWARE_VER     "0.6.38"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -1321,6 +1322,12 @@ static int lwm2m_setup(void)
 	 * /5851 Dimmer. Writes go through ami_led_set_raw() (same mutex as the
 	 * system colors). */
 	light_control_init();
+
+	/* v0.6.38: Object 33001 Thread Role Control — runtime become_router /
+	 * become_child plus router_upgrade/downgrade thresholds, so the server can
+	 * optimise the router set without USB reflash. Requires FTD compile-time
+	 * (CONFIG_OPENTHREAD_FTD) for become_router to actually work. */
+	thread_role_init();
 
 	LOG_INF("LwM2M objects configured");
 	LOG_INF("  Server (DNS-SD):   %s", lwm2m_server_uri);

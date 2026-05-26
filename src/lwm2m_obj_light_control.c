@@ -182,7 +182,10 @@ int light_control_init(void)
 	 * silent fault during MCUboot confirm window → revert (v0.6.35 bug, found
 	 * via d2b4: state 1->2->0, fw stayed 0.6.33, total_resets bumped). */
 	lwm2m_set_bool(&LWM2M_OBJ(LIGHT_OBJ_ID, 0, RES_ON_OFF), light_on);
-	lwm2m_set_s32(&LWM2M_OBJ(LIGHT_OBJ_ID, 0, RES_DIMMER), dimmer_pct);
+	/* v0.6.38: do NOT seed /5851 — Zephyr's ipso_light_control allocates a
+	 * 1-byte buffer for Dimmer and lwm2m_set_s32 writes 4 bytes -> harmless
+	 * but noisy "Incorrect buffer length" error at boot. Our C variable
+	 * dimmer_pct already defaults to 30 and is what apply_light reads. */
 	lwm2m_set_string(&LWM2M_OBJ(LIGHT_OBJ_ID, 0, RES_COLOUR), colour_buf);
 
 	lwm2m_register_post_write_callback(&LWM2M_OBJ(LIGHT_OBJ_ID, 0, RES_ON_OFF), on_off_cb);

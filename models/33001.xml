@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LWM2M xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:noNamespaceSchemaLocation="http://www.openmobilealliance.org/tech/profiles/LWM2M-v1_1.xsd">
+  <Object ObjectType="MODefinition">
+    <Name>Thread Role Control</Name>
+    <Description1>Custom object exposing runtime control of the Thread mesh role: become_router, become_child, upgrade/downgrade thresholds. Drives the server-side fleet topology optimizer.</Description1>
+    <ObjectID>33001</ObjectID>
+    <ObjectURN>urn:oma:lwm2m:x:33001:1.0</ObjectURN>
+    <LWM2MVersion>1.1</LWM2MVersion>
+    <ObjectVersion>1.0</ObjectVersion>
+    <MultipleInstances>Single</MultipleInstances>
+    <Mandatory>Optional</Mandatory>
+    <Resources>
+      <Item ID="0">
+        <Name>Become Router</Name>
+        <Operations>E</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type></Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Execute -> otThreadBecomeRouter (only effective on FTD-compiled nodes)</Description>
+      </Item>
+      <Item ID="1">
+        <Name>Become Child</Name>
+        <Operations>E</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type></Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Execute -> otThreadBecomeChild (force demote, also valid on FTD)</Description>
+      </Item>
+      <Item ID="2">
+        <Name>Router Upgrade Threshold</Name>
+        <Operations>RW</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration>1..32</RangeEnumeration>
+        <Units></Units>
+        <Description>OT router_upgrade_threshold 1..32, default 16</Description>
+      </Item>
+      <Item ID="3">
+        <Name>Router Downgrade Threshold</Name>
+        <Operations>RW</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Optional</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration>1..32</RangeEnumeration>
+        <Units></Units>
+        <Description>OT router_downgrade_threshold 1..32, default 23</Description>
+      </Item>
+      <Item ID="4">
+        <Name>Current Role</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>String</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Disabled / Detached / Child / Router / Leader</Description>
+      </Item>
+      <Item ID="5">
+        <Name>Is Router Eligible</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Boolean</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>True iff this node is compiled as FTD</Description>
+      </Item>
+    </Resources>
+    <Description2/>
+  </Object>
+</LWM2M>

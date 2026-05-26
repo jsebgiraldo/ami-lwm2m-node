@@ -101,9 +101,12 @@ def main() -> int:
     ap.add_argument("--mesh", default=fc.DEFAULT_MESH, choices=fc.MESH_TARGETS)
     ap.add_argument("--skip-provision", action="store_true")
     ap.add_argument("--verify-timeout", type=int, default=180)
-    ap.add_argument("--build-dir", default="build_ota",
-                    help="west build dir / variant: build_ota (MED, default) "
-                         "or build_ota_ftd (FTD router-eligible)")
+    ap.add_argument("--build-dir", default="build_ota_ftd",
+                    help="west build dir / variant. v0.6.38+ default = "
+                         "build_ota_ftd (all-FTD: every node router-eligible so "
+                         "the server can dynamically promote/demote via Object "
+                         "33001 Thread Role Control). build_ota = MED (MTD "
+                         "compile-time) only for power-constrained deployments.")
     ap.add_argument("--flash-mode", default="dout",
                     help="flash mode (default dout — most compatible; dio/40m "
                          "soft-bricks marginal BOYA units via ROM read failure)")
