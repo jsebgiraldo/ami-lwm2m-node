@@ -2604,6 +2604,7 @@ int main(void)
 			update_connectivity_metrics();
 			update_thread_network();
 			update_thread_neighbors();
+			thread_role_refresh();   /* v0.6.39: keep /33001/0/4 current */
 			meter_dump_throttle_stats();   /* v0.20.0 — visibility on suppression rate */
 			last_conn_update_ms = now;
 			conn_update_interval_ms = conn_update_next_interval_ms();
