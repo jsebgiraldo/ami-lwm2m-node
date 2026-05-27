@@ -74,14 +74,31 @@ def flash_ota(env: fc.ToolEnv, com: str, baud: str = "460800",
                 f"-b xiao_esp32c6/esp32c6/hpcore <app> -- "
                 f'-DEXTRA_CONF_FILE="med.conf;r1000.conf;ota.conf"'
             )
+    # CRITICAL: full chip erase as a SEPARATE pre-step. write-flash --erase-all
+    # in esptool 5.x respects partition table and was leaving the NVS partition
+    # un-erased on this chip. Persistent NVS corruption was the root cause of:
+    #   - "fleet goes mute overnight" (whole fleet stuck in fs_nvs init hang)
+    #   - 15d8 Illegal-Instruction panic stack rooted in ot_setting_read_cb
+    #   - Chronic "marginal" nodes that never recovered across reflashes
+    # esptool erase-flash blindly nukes the entire 4 MB regardless of partition
+    # table, so this is the only reliable way to guarantee a clean NVS.
+    print(f"\n[ota-flash] {com}: full chip erase (nukes NVS too)")
+    erase_cmd = ["python", "-m", "esptool",
+                 "--chip", "esp32c6", "--port", com, "--baud", baud,
+                 "--before", "default-reset", "--after", "hard-reset",
+                 "erase-flash"]
+    res = subprocess.run(erase_cmd, env=env.env_for_subprocess())
+    if res.returncode != 0:
+        raise RuntimeError(f"esptool erase-flash failed (rc={res.returncode})")
+
     cmd = ["python", "-m", "esptool",
            "--chip", "esp32c6", "--port", com, "--baud", baud,
            "--before", "default-reset", "--after", "hard-reset",
-           "write-flash", "--erase-all",
+           "write-flash",
            "--flash-freq", flash_freq, "--flash-mode", flash_mode,
            "0x0", str(mcuboot),
            "0x20000", str(app)]
-    print(f"\n[ota-flash] {com}: mcuboot@0x0 + app.signed@0x20000 ({flash_freq} {flash_mode.upper()})")
+    print(f"[ota-flash] {com}: write mcuboot@0x0 + app.signed@0x20000 ({flash_freq} {flash_mode.upper()})")
     print(f"  mcuboot: {mcuboot.stat().st_size} B")
     print(f"  app:     {app.stat().st_size} B")
     res = subprocess.run(cmd, env=env.env_for_subprocess())
