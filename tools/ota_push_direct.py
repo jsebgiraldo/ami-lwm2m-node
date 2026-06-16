@@ -163,7 +163,7 @@ def main() -> int:
         ver = e.read_str(did, "/3/0/3")
         print(f"[ota] [{time.strftime('%H:%M:%S')}] /3/0/3 = {ver!r}")
         if ver == args.version:
-            print(f"\n[ota] ✅ OTA COMPLETE — {args.device} now reports {ver}")
+            print(f"\n[ota] OK OTA COMPLETE - {args.device} now reports {ver}")
             return 0
     print("[ota] target version not confirmed within window (node may still be swapping)")
     return 4

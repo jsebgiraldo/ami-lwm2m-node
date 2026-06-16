@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(ami-lwm2m-client
-    VERSION 0.6.39
+    VERSION 0.6.43
     DESCRIPTION "AMI Node: LwM2M client over Thread (ESP32-C6)"
     LANGUAGES C
 )
@@ -28,6 +28,7 @@ target_sources(app PRIVATE
     src/post_mortem.c
     src/lwm2m_obj_light_control.c
     src/lwm2m_obj_thread_role.c
+    src/coap_keepalive.c
 )
 
 # Include path for custom LwM2M object internal headers

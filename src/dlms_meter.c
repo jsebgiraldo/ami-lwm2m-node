@@ -362,7 +362,11 @@ int meter_init(void)
 	LOG_INF("DLMS Meter Reader initialized");
 	LOG_INF("  Client SAP: %u, Server: logical=%u physical=%u",
 		cfg.client_sap, cfg.server_logical, cfg.server_physical);
-	LOG_INF("  Password: %s", cfg.password);
+	/* v0.6.46: bounded %.*s — cfg.password is a fixed 16-byte buffer that
+	 * may not be NUL-terminated when strncpy'd from an exact-16-byte source.
+	 * Unbounded %s in CONFIG_LOG_MODE_DEFERRED walks until NUL → off-the-end
+	 * read → CPU exception (Zephyr #57867, WONTFIX upstream). */
+	LOG_INF("  Password: %.*s", (int)sizeof(cfg.password), cfg.password);
 	LOG_INF("  OBIS codes to read: %u", (unsigned)OBIS_TABLE_SIZE);
 
 	return 0;

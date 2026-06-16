@@ -82,7 +82,52 @@
 #define TD_HANG_LWM2M_STATE_RID        27   /* U8 : PM_LWM2M_STATE_* bitmap (see post_mortem.h) */
 #define TD_HANG_THREAD_ROLE_RID        28   /* U8 : OT role at snapshot */
 
-#define TD_NUM_FIELDS             29
-#define TD_RES_INST_COUNT         29
+/* === v2.5 deadlock observability — v0.6.69 audit P3 (RIDs 29-32) ===
+ * Added 2026-06-06 after the v0.6.67 soak left 8/30 boards stuck and we
+ * could only diagnose them via physical JTAG access. These four RIDs
+ * surface the keepalive + recovery state that's currently invisible:
+ *   29: keepalive_emit_count        — heartbeat the silence watchdog uses
+ *   30: keepalive_consec_fail       — failures the engine is hiding
+ *   31: last_emit_uptime_s          — when did the watchdog last see life
+ *   32: noreg_boots                 — consecutive boots that never registered
+ *   33: in_recovery (bool)          — recover_work_fn currently running
+ * Together they let TB Edge dashboards distinguish:
+ *   - alive but engine-suspended (high emit / high consec_fail)
+ *   - server outage (low emit / 0 consec_fail / high noreg_boots)
+ *   - boot loop (low uptime / high total_resets / high noreg_boots)
+ */
+#define TD_KEEPALIVE_EMIT_RID          29   /* U32: coap_keepalive_get_emit_count() */
+#define TD_KEEPALIVE_CONSEC_FAIL_RID   30   /* U32: coap_keepalive_get_consec_fail() */
+#define TD_LAST_EMIT_UPTIME_RID        31   /* U32: lwm2m_watchdog_get_last_emit_uptime() */
+#define TD_NOREG_BOOTS_RID             32   /* U32: lwm2m_diag_get_noreg_boots() */
+#define TD_IN_RECOVERY_RID             33   /* U8 : lwm2m_diag_in_recovery atomic */
+
+/* === v2.6 field-robust observability — v0.6.71 audit P2.7 (RIDs 34-36) ===
+ * At-risk indicators that surface a board "trending toward brick" before
+ * it actually fails. Operations dashboards can alarm on these crossing
+ * thresholds (boot_burst >= 5, detached_total >= 1800, etc).
+ *   34: boot_burst        — consecutive unstable boots; 0 = healthy.
+ *                          When approaches CONFIG_AMI_BOOT_BURST_MAX, the
+ *                          board is about to enter throttle mode.
+ *   35: detached_total_s  — cumulative seconds in Thread DETACHED role
+ *                          across this boot. Mesh-alone watchdog fires
+ *                          when this exceeds CONFIG_AMI_MESH_ALONE_MAX_S.
+ *   36: heap_min_free     — lifetime minimum free heap bytes. Drops below
+ *                          ~4 KB = OOM imminent.
+ */
+#define TD_BOOT_BURST_RID              34   /* U32: lwm2m_diag_get_boot_burst() */
+#define TD_DETACHED_TOTAL_S_RID        35   /* U32: lwm2m_diag_get_detached_total_s() */
+#define TD_HEAP_MIN_FREE_LIVE_RID      36   /* U32: pm_get_live_heap_min_free() */
+#define TD_LAST_REBOOT_CODE_RID        37   /* U32: ami_reboot_get_last_code() — which
+                                             * reboot path caused THIS boot. 0=power-on/
+                                             * external/HW (no SW-drain tag). Codes:
+                                             * 1 boot-watchdog, 2 mesh-alone, 3 conn-mon-
+                                             * no-first-tick, 4 conn-mon-wedged, 5 max-
+                                             * recover-attempts, 6 lwm2m-device-reboot,
+                                             * 7 shell, 8 ip6-enable-fail, 9 thread-enable-
+                                             * fail, 10 dns-sd-boot-fail, 11 panic, 99 other */
+
+#define TD_NUM_FIELDS             38
+#define TD_RES_INST_COUNT         38
 
 #endif /* LWM2M_OBJ_THREAD_DIAG_H */

@@ -90,4 +90,8 @@ void pm_note_register_success(void);
  * to throttle. */
 void pm_snapshot(void);
 
+/* v0.6.71 P2.7: lifetime min free heap bytes (live). 0 if heap stats are
+ * not compiled in or no sample taken yet. Surfaced as Object 33000 RID 36. */
+uint32_t pm_get_live_heap_min_free(void);
+
 #endif /* POST_MORTEM_H */

@@ -1,0 +1,31 @@
+{
+  "annotations": {"list": []},
+  "title": "AMI - Docker Containers",
+  "uid": "ami-containers",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "timezone": "browser",
+  "panels": [
+    {"id": 1, "title": "CPU usage per container (cores)", "type": "timeseries",
+     "gridPos": {"x": 0, "y": 0, "w": 24, "h": 10},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [{"expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name!=\"\"}[1m]))", "refId": "A", "legendFormat": "{{name}}"}]},
+    {"id": 2, "title": "Memory RSS per container", "type": "timeseries",
+     "gridPos": {"x": 0, "y": 10, "w": 24, "h": 10},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [{"expr": "container_memory_rss{name!=\"\"}", "refId": "A", "legendFormat": "{{name}}"}],
+     "fieldConfig": {"defaults": {"unit": "bytes"}}},
+    {"id": 3, "title": "Network RX per container", "type": "timeseries",
+     "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [{"expr": "sum by (name) (rate(container_network_receive_bytes_total{name!=\"\"}[1m]))", "refId": "A", "legendFormat": "{{name}}"}],
+     "fieldConfig": {"defaults": {"unit": "Bps"}}},
+    {"id": 4, "title": "Network TX per container", "type": "timeseries",
+     "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8},
+     "datasource": {"type": "prometheus", "uid": "prometheus"},
+     "targets": [{"expr": "sum by (name) (rate(container_network_transmit_bytes_total{name!=\"\"}[1m]))", "refId": "A", "legendFormat": "{{name}}"}],
+     "fieldConfig": {"defaults": {"unit": "Bps"}}}
+  ]
+}

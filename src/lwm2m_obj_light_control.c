@@ -35,11 +35,15 @@ LOG_MODULE_REGISTER(light_control, LOG_LEVEL_INF);
 #define RES_COLOUR	5706
 /* RES_APP_TYPE (5750) intentionally not used — see init note. */
 
-/* Defaults: ON, 30% brightness (visible but not blinding), GREEN at boot. */
-static bool light_on = true;
-static uint8_t dimmer_pct = 30;
-static uint8_t color_r = 0, color_g = 255, color_b = 0;
-static char colour_buf[16] = "#00FF00";
+/* v0.6.42: LED OFF default. Operators report nodes feel hot; saving the ~3-5 mA
+ * of continuous LED current cuts a couple of degrees and turns the LED into a
+ * *fault indicator* — it lights up RED only when the previous reset was a
+ * BROWNOUT (see light_control_set_brownout_indicator below). Everything OK = LED
+ * stays dark. Server-driven writes via /3311 still override on demand. */
+static bool light_on = false;
+static uint8_t dimmer_pct = 0;
+static uint8_t color_r = 0, color_g = 0, color_b = 0;
+static char colour_buf[16] = "off";
 
 /* v0.6.37: latches true on the first /3311 Write so main.c's ami_set_rgb()
  * stops fighting our apply_light() on every TX pulse / status change. */
@@ -51,6 +55,18 @@ extern void ami_led_set_raw(uint8_t r, uint8_t g, uint8_t b);
 
 static void apply_light(void)
 {
+#ifdef CONFIG_AMI_LED_QUIET_MODE
+	/* v0.6.51: production-quiet contract -- the LwM2M /3311 callbacks still
+	 * accept server writes (so the object model stays correct and observable),
+	 * but apply_light no-ops the physical write so the WS2812 stays dark
+	 * regardless of TB Edge's persisted light_on / colour values. To re-enable
+	 * server-driven LED control for diagnostics, rebuild with
+	 * CONFIG_AMI_LED_QUIET_MODE=n. */
+	LOG_INF("QUIET_MODE: apply_light no-op (on=%d dim=%u color=%s)",
+		light_on, dimmer_pct, colour_buf);
+	ami_led_set_raw(0, 0, 0);
+	return;
+#else
 	if (!light_on || dimmer_pct == 0) {
 		ami_led_set_raw(0, 0, 0);
 		return;
@@ -62,6 +78,7 @@ static void apply_light(void)
 	LOG_INF("Light apply: on=%d dim=%u%% color=(%u,%u,%u) -> (%u,%u,%u)",
 		light_on, dimmer_pct, color_r, color_g, color_b, r, g, b);
 	ami_led_set_raw(r, g, b);
+#endif
 }
 
 struct named_color {
@@ -194,6 +211,25 @@ int light_control_init(void)
 
 	LOG_INF("Object 3311 Light Control initialised (on=%d dim=%u%% color=%s)",
 		light_on, dimmer_pct, colour_buf);
-	apply_light();
+	/* v0.6.42: do NOT apply_light at boot — defaults now OFF, leave LED dark
+	 * unless an operator writes /3311 or main.c flags brownout via
+	 * light_control_set_brownout_indicator(). */
 	return 0;
+}
+
+/* v0.6.42: visible fault indicator — turn LED RED and lock manual_mode so the
+ * system-status path can't overwrite. Operator can spot brownout-bound nodes
+ * at a glance across the fleet (the only nodes with LED on = the failing ones).
+ * Called from main.c after capture_reset_reason() if the previous reset
+ * carried the BROWNOUT bit. Resets to OFF on a clean boot (defaults). */
+void light_control_set_brownout_indicator(void)
+{
+	light_on = true;
+	dimmer_pct = 30;
+	color_r = 255; color_g = 0; color_b = 0;
+	strncpy(colour_buf, "red", sizeof(colour_buf) - 1);
+	colour_buf[sizeof(colour_buf) - 1] = '\0';
+	manual_mode = true;
+	apply_light();
+	LOG_INF("BROWNOUT detected from previous reset -> LED RED indicator on");
 }

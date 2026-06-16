@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-05-28T21:00:00.000Z" agent="board_acceptance" version="24.0.0">
+  <diagram name="v0.6.46 Action Plan" id="action_plan">
+    <mxGraphModel dx="2400" dy="1750" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2400" pageHeight="1750" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- ===================== TITLE ===================== -->
+        <mxCell id="2" value="AMI LwM2M v0.6.46 — Action Plan: cbprintf_package_convert Crash" style="text;html=1;align=center;verticalAlign=middle;fontSize=24;fontStyle=1;fontColor=#1A1A1A;" vertex="1" parent="1">
+          <mxGeometry x="80" y="30" width="2260" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="3" value="Magic-workflow synthesis: code-archaeology + upstream research + mitigation matrix → layered defense" style="text;html=1;align=center;verticalAlign=middle;fontSize=12;fontColor=#555555;" vertex="1" parent="1">
+          <mxGeometry x="80" y="90" width="2260" height="20" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== LAYER 0 — ROOT CAUSE ===================== -->
+        <mxCell id="10" value="ROOT CAUSE" style="text;html=1;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#CC0000;" vertex="1" parent="1">
+          <mxGeometry x="80" y="115" width="300" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="11" value="&lt;b&gt;Crash Signature&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;ZEPHYR FATAL ERROR 0&lt;br/&gt;CPU exception on CPU 0&lt;br/&gt;Thread: main&lt;br/&gt;&lt;br/&gt;Stack:&lt;br/&gt;cbprintf_package_convert&lt;br/&gt;← otPlatSettingsGet&lt;br/&gt;← settings_load_subtree_direct" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#CC0000;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="80" y="145" width="360" height="160" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="12" value="&lt;b&gt;Zephyr Issue #57867&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;cbprintf packaging uses strlen() instead of strnlen() on %s arguments.&lt;br/&gt;&lt;br/&gt;Non-NUL-terminated buffer → walks off → CPU exception.&lt;br/&gt;&lt;br/&gt;Status: &lt;b&gt;WONTFIX upstream&lt;/b&gt;&lt;br/&gt;(caller responsibility)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#CC0000;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="460" y="145" width="360" height="160" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="13" value="&lt;b&gt;Why we cant flip to IMMEDIATE&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;CONFIG_LOG_MODE_DEFERRED is LOCKED-IN because LOG_MODE_IMMEDIATE caused permanent USB CDC deadlock after backpressure buildup (documented in prj.conf:11).&lt;br/&gt;&lt;br/&gt;Mitigation must work WITHIN deferred mode." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="840" y="145" width="360" height="160" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="14" value="&lt;b&gt;Triple Convergence&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Code-archaeology agent → 5 suspects identified in OUR src/&lt;br/&gt;&lt;br/&gt;Upstream agent → matches Zephyr #57867 + #83671&lt;br/&gt;&lt;br/&gt;Mitigation agent → confirms %s + non-NUL buffer pattern" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="145" width="360" height="160" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="15" value="&lt;b&gt;Already Tried (v0.6.46-pre)&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;CONFIG_NVS_LOOKUP_CACHE=y SIZE=128&lt;br/&gt;CONFIG_SETTINGS_NVS_NAME_CACHE=y SIZE=32&lt;br/&gt;CONFIG_AMI_HW_WATCHDOG_TIMEOUT_S 180→300&lt;br/&gt;&lt;br/&gt;Cost: +8 KB BSS. Necessary but NOT sufficient — caches reduce frequency, dont eliminate." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1600" y="145" width="360" height="160" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== LAYER 1 — SURGICAL CODE FIX ===================== -->
+        <mxCell id="20" value="LAYER 1 — SURGICAL CODE FIX  (HIGH confidence)" style="text;html=1;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#D79B00;" vertex="1" parent="1">
+          <mxGeometry x="80" y="340" width="600" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="21" value="&lt;b&gt;Suspect #1 — HIGHEST&lt;/b&gt;&lt;br/&gt;src/dlms_meter.c:365&lt;br/&gt;&lt;br/&gt;LOG_INF(&quot;Password: %s&quot;, cfg.password);&lt;br/&gt;&lt;br/&gt;cfg.password is fixed 16B, filled by strncpy at :272 which does NOT NUL-terminate if source ≥16B.&lt;br/&gt;&lt;br/&gt;&lt;b&gt;FIX:&lt;/b&gt; LOG_INF(&quot;Password: %.15s&quot;, cfg.password);" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="80" y="375" width="360" height="200" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="22" value="&lt;b&gt;Suspect #2 — DNS-SD path&lt;/b&gt;&lt;br/&gt;src/main.c:667&lt;br/&gt;&lt;br/&gt;LOG_INF(&quot;DNS-SD resolved: %s&quot;, lwm2m_server_uri);&lt;br/&gt;&lt;br/&gt;lwm2m_server_uri written by strncpy from DNS-SD resolver. Malformed resolver response → unterminated.&lt;br/&gt;&lt;br/&gt;&lt;b&gt;FIX:&lt;/b&gt; LOG_INF(&quot;DNS-SD: %.*s&quot;, (int)sizeof(lwm2m_server_uri), lwm2m_server_uri);" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="460" y="375" width="360" height="200" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="23" value="&lt;b&gt;Suspect #3 — recovery path&lt;/b&gt;&lt;br/&gt;src/main.c:938&lt;br/&gt;&lt;br/&gt;LOG_INF(&quot;restart attempt %d/%d (server=%s)&quot;, ..., lwm2m_server_uri);&lt;br/&gt;&lt;br/&gt;Same buffer as #2, executed during recovery — race window wider when engine restart fires.&lt;br/&gt;&lt;br/&gt;&lt;b&gt;FIX:&lt;/b&gt; same %.*s pattern with sizeof bound." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="840" y="375" width="360" height="200" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="24" value="&lt;b&gt;Suspect #4 — CLI result&lt;/b&gt;&lt;br/&gt;src/lwm2m_obj_thread_cli.c:232&lt;br/&gt;&lt;br/&gt;LOG_INF(&quot;CLI Result: %.80s%s&quot;, cli_result, ...);&lt;br/&gt;&lt;br/&gt;Buffer 256B but handle_command() may return early leaving cli_result partially uninit.&lt;br/&gt;&lt;br/&gt;&lt;b&gt;FIX:&lt;/b&gt; bound with strnlen — LOG %.*s with MIN(80, strnlen(cli_result, 256))." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="375" width="360" height="200" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="25" value="&lt;b&gt;Pattern — Universal Rule&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;In CONFIG_LOG_MODE_DEFERRED, EVERY LOG_*  %s argument MUST satisfy ONE of:&lt;br/&gt;&lt;br/&gt;(a) String literal — safe&lt;br/&gt;(b) NUL-guaranteed buffer (snprintk has NUL)&lt;br/&gt;(c) Bounded %.Ns or %.*s — uses strnlen&lt;br/&gt;&lt;br/&gt;Add to coding guidelines.&lt;br/&gt;Audit ALL LOG_* with %s." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1600" y="375" width="360" height="200" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== LAYER 2 — KCONFIG DEFENSE IN DEPTH ===================== -->
+        <mxCell id="30" value="LAYER 2 — KCONFIG DEFENSE IN DEPTH  (MEDIUM confidence, low risk)" style="text;html=1;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#0066CC;" vertex="1" parent="1">
+          <mxGeometry x="80" y="610" width="700" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="31" value="&lt;b&gt;LOG_RUNTIME_FILTERING&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;CONFIG_LOG_RUNTIME_FILTERING=y&lt;br/&gt;&lt;br/&gt;Allows log_filter_set() at runtime to silence ot_platform_settings or net_lwm2m sources during boot window — surgical kill switch without recompile.&lt;br/&gt;&lt;br/&gt;Cost: ~4B per source × N sources" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#0066CC;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="80" y="645" width="360" height="180" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="32" value="&lt;b&gt;LOG_PROCESS_THREAD_STACK&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;CONFIG_LOG_PROCESS_THREAD_STACK_SIZE 768 → 4096&lt;br/&gt;&lt;br/&gt;cbprintf_package_convert is RECURSIVE during arg walk. Stack overflow on log thread manifests as random fault elsewhere.&lt;br/&gt;&lt;br/&gt;Cost: +3 KiB RAM" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#0066CC;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="460" y="645" width="360" height="180" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="33" value="&lt;b&gt;THREAD_ANALYZER + AUTO&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;CONFIG_THREAD_ANALYZER=y&lt;br/&gt;CONFIG_THREAD_ANALYZER_AUTO=y&lt;br/&gt;CONFIG_THREAD_STACK_INFO=y&lt;br/&gt;&lt;br/&gt;Periodic high-water-mark logging per thread. We see WHEN a thread approaches its stack ceiling — diagnostic gold.&lt;br/&gt;&lt;br/&gt;Cost: ~32 B per thread + periodic log lines" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#0066CC;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="840" y="645" width="360" height="180" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="34" value="&lt;b&gt;HW_STACK_PROTECTION&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;CONFIG_HW_STACK_PROTECTION=y&lt;br/&gt;&lt;br/&gt;MPU-backed guard page after every thread stack. Overflow → deterministic fault (not silent corruption).&lt;br/&gt;&lt;br/&gt;Converts random faults into pinpointed crashes.&lt;br/&gt;&lt;br/&gt;Cost: minimal" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#0066CC;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="645" width="360" height="180" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="35" value="&lt;b&gt;STACK_SENTINEL&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;CONFIG_STACK_SENTINEL=y&lt;br/&gt;&lt;br/&gt;Canary check at every context switch. Catches overflows BETWEEN MPU faults if HW_STACK_PROTECTION misses a corner case.&lt;br/&gt;&lt;br/&gt;Belt-and-suspenders with #34.&lt;br/&gt;&lt;br/&gt;Cost: 4 B per thread" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#0066CC;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1600" y="645" width="360" height="180" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== LAYER 3 — FORENSIC UPGRADE ===================== -->
+        <mxCell id="40" value="LAYER 3 — FORENSIC UPGRADE  (sustaining)" style="text;html=1;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#9673A6;" vertex="1" parent="1">
+          <mxGeometry x="80" y="860" width="600" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="41" value="&lt;b&gt;QA: capture thread stack stats&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Extend board_acceptance.py:&lt;br/&gt;at end of soak, parse serial log for thread_analyzer high-water marks.&lt;br/&gt;&lt;br/&gt;Add to results CSV: max_stack_hwm column per thread (engine, main, log, system_workq)." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="80" y="895" width="360" height="200" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="42" value="&lt;b&gt;QA: auto-classify panic vs WDT&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Add grep patterns to grep_serial_for_red_flags():&lt;br/&gt;&lt;br/&gt;• rst:0x7 (TG0_WDT_HPSYS) → WDT&lt;br/&gt;• rst:0xc (SW_CPU) → panic&lt;br/&gt;• &quot;CPU exception&quot; → panic&lt;br/&gt;• &quot;FATAL panic (reason=N)&quot; → record reason&lt;br/&gt;• &quot;Saved PC: 0xNNN&quot; → extract for addr2line" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="460" y="895" width="360" height="200" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="43" value="&lt;b&gt;Stack &gt;75% → auto WARN&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;If thread_analyzer reports any thread at &gt;75% of allocated stack, board is downgraded to WARN even if soak had 0 resets.&lt;br/&gt;&lt;br/&gt;Catches marginal boards BEFORE they crash in production.&lt;br/&gt;&lt;br/&gt;Threshold tunable via --stack-warn-pct flag." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="840" y="895" width="360" height="200" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="44" value="&lt;b&gt;Crash detail JSON&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;On any FAIL/WARN, emit:&lt;br/&gt;tools/board_qa/&lt;endpoint&gt;_&lt;sid&gt;_crash.json&lt;br/&gt;&lt;br/&gt;Contains: full stack trace, saved PC, decoded addr2line results, stack-water marks, last 50 lines of serial.&lt;br/&gt;&lt;br/&gt;Auto-attachable to GitHub issue." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="895" width="360" height="200" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="45" value="&lt;b&gt;Memory updates&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Persist findings:&lt;br/&gt;&lt;br/&gt;• memory/project_cbprintf_crash.md — root cause + fix recipe&lt;br/&gt;&lt;br/&gt;• Update project_tb_observe_list_bug.md with v0.6.46 stack rules&lt;br/&gt;&lt;br/&gt;• MEMORY.md index entry" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1600" y="895" width="360" height="200" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== LAYER 4 — VALIDATION STRATEGY ===================== -->
+        <mxCell id="50" value="LAYER 4 — VALIDATION STRATEGY  (staged rollout)" style="text;html=1;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#82B366;" vertex="1" parent="1">
+          <mxGeometry x="80" y="1130" width="600" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="51" value="&lt;b&gt;Step 1&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Build v0.6.46-rc1&lt;br/&gt;&lt;br/&gt;Layer 1 ONLY&lt;br/&gt;(3 code fixes)&lt;br/&gt;&lt;br/&gt;Smallest possible diff to confirm hypothesis." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="80" y="1165" width="290" height="180" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="52" value="&lt;b&gt;Step 2&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Flash 1 canary&lt;br/&gt;&lt;br/&gt;COM24 (f79c)&lt;br/&gt;&lt;br/&gt;Cleanest baseline from prior QA. Full chip erase via flash_ota_migrate." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="390" y="1165" width="290" height="180" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="53" value="&lt;b&gt;Step 3&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;QA 30 min&lt;br/&gt;&lt;br/&gt;board_acceptance.py with --soak-seconds 1800&lt;br/&gt;&lt;br/&gt;Target: tr +0, recover +0, no serial flags." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="700" y="1165" width="290" height="180" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="54" value="&lt;b&gt;Step 4&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Add Layer 2+3&lt;br/&gt;&lt;br/&gt;Build v0.6.46-final with Kconfig defense + QA forensic upgrade. Flash 3 nodes, 1h soak each (sequential)." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="1165" width="290" height="180" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="55" value="&lt;b&gt;Step 5&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Rollout 6 USB&lt;br/&gt;&lt;br/&gt;Flash remaining nodes via flash_ota_migrate.py for-loop. Allow 30 min stabilization." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="1165" width="290" height="180" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="56" value="&lt;b&gt;Step 6&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Re-QA all 6&lt;br/&gt;&lt;br/&gt;Run board_acceptance.py --skip-flash on each. Target: ≥5/6 APTO PSU verdict. Update fleet_map.csv." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1630" y="1165" width="290" height="180" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="57" value="&lt;b&gt;Step 7&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Decision gate&lt;br/&gt;&lt;br/&gt;If ≥5/6 APTO → scale to PSU.&lt;br/&gt;If &lt;5/6 → analyze crash JSONs, iterate to v0.6.47." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=11;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1940" y="1165" width="290" height="180" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== OUTCOME ===================== -->
+        <mxCell id="60" value="OUTCOME" style="text;html=1;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;fontColor=#4D7A2D;" vertex="1" parent="1">
+          <mxGeometry x="80" y="1390" width="300" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="61" value="&lt;b style=&quot;font-size:18px&quot;&gt;Production-Ready Fleet&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;6 USB nodes APTO PSU verdict — ready for thesis production deployment&lt;br/&gt;&lt;br/&gt;Pattern documented for future boards. board_acceptance.py becomes the gate for every new board entering the fleet." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#9DC18E;strokeColor=#4D7A2D;fontSize=12;align=center;verticalAlign=middle;fontStyle=1;fontColor=#1A1A1A;" vertex="1" parent="1">
+          <mxGeometry x="600" y="1425" width="1200" height="120" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== FLOW ARROWS ===================== -->
+        <!-- Layer-to-layer flow is implied by vertical stacking + consistent color band per layer. -->
+        <!-- Only the explicit sequential arrows in Layer 4 (step-by-step) are kept below. -->
+
+        <!-- Step 1 → Step 2 → Step 3 → Step 4 → Step 5 → Step 6 → Step 7 -->
+        <mxCell id="210" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82B366;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="51" target="52">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="211" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82B366;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="52" target="53">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="212" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82B366;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="53" target="54">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="213" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82B366;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="54" target="55">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="214" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82B366;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="55" target="56">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="215" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82B366;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="56" target="57">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Step 7 → Outcome -->
+        <mxCell id="220" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#4D7A2D;strokeWidth=3;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=1;entryY=0.5;" edge="1" parent="1" source="57" target="61">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="2085" y="1410"/>
+              <mxPoint x="1800" y="1410"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

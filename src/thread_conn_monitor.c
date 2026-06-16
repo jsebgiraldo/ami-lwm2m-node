@@ -105,6 +105,19 @@ static uint32_t hang_reg_age_s;
 static uint8_t  hang_lwm2m_state;
 static uint8_t  hang_thread_role;
 
+/* v2.5 (v0.6.69 audit P3) — deadlock observability counters. */
+static uint32_t keepalive_emit_val;
+static uint32_t keepalive_consec_fail_val;
+static uint32_t last_emit_uptime_val;
+static uint32_t noreg_boots_val;
+static uint8_t  in_recovery_val;
+/* v2.6 (v0.6.71 audit P2.7) — field-robust at-risk indicators. */
+static uint32_t boot_burst_val;
+static uint32_t detached_total_s_val;
+static uint32_t heap_min_free_live_val;
+/* v0.7.4 — which reboot path caused this boot (RID 37). */
+static uint32_t last_reboot_code_val;
+
 /* LwM2M object structures */
 static struct lwm2m_engine_obj thread_diag_obj;
 
@@ -142,6 +155,18 @@ static struct lwm2m_engine_obj_field thread_diag_fields[] = {
 	OBJ_FIELD_DATA(TD_HANG_REG_AGE_S_RID, R, U32),
 	OBJ_FIELD_DATA(TD_HANG_LWM2M_STATE_RID, R, U8),
 	OBJ_FIELD_DATA(TD_HANG_THREAD_ROLE_RID, R, U8),
+	/* v2.5 (v0.6.69 audit P3) — deadlock observability */
+	OBJ_FIELD_DATA(TD_KEEPALIVE_EMIT_RID, R, U32),
+	OBJ_FIELD_DATA(TD_KEEPALIVE_CONSEC_FAIL_RID, R, U32),
+	OBJ_FIELD_DATA(TD_LAST_EMIT_UPTIME_RID, R, U32),
+	OBJ_FIELD_DATA(TD_NOREG_BOOTS_RID, R, U32),
+	OBJ_FIELD_DATA(TD_IN_RECOVERY_RID, R, U8),
+	/* v2.6 (v0.6.71 audit P2.7) — field-robust at-risk indicators */
+	OBJ_FIELD_DATA(TD_BOOT_BURST_RID, R, U32),
+	OBJ_FIELD_DATA(TD_DETACHED_TOTAL_S_RID, R, U32),
+	OBJ_FIELD_DATA(TD_HEAP_MIN_FREE_LIVE_RID, R, U32),
+	/* v0.7.4 — reboot-path code that caused this boot */
+	OBJ_FIELD_DATA(TD_LAST_REBOOT_CODE_RID, R, U32),
 };
 
 static struct lwm2m_engine_obj_inst thread_diag_inst;
@@ -220,6 +245,28 @@ static struct lwm2m_engine_obj_inst *thread_diag_create(uint16_t obj_inst_id)
 			  &hang_lwm2m_state, sizeof(hang_lwm2m_state));
 	INIT_OBJ_RES_DATA(TD_HANG_THREAD_ROLE_RID, thread_diag_res, i, thread_diag_ri, j,
 			  &hang_thread_role, sizeof(hang_thread_role));
+
+	/* v2.5 (v0.6.69 audit P3) — deadlock observability */
+	INIT_OBJ_RES_DATA(TD_KEEPALIVE_EMIT_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &keepalive_emit_val, sizeof(keepalive_emit_val));
+	INIT_OBJ_RES_DATA(TD_KEEPALIVE_CONSEC_FAIL_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &keepalive_consec_fail_val, sizeof(keepalive_consec_fail_val));
+	INIT_OBJ_RES_DATA(TD_LAST_EMIT_UPTIME_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &last_emit_uptime_val, sizeof(last_emit_uptime_val));
+	INIT_OBJ_RES_DATA(TD_NOREG_BOOTS_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &noreg_boots_val, sizeof(noreg_boots_val));
+	INIT_OBJ_RES_DATA(TD_IN_RECOVERY_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &in_recovery_val, sizeof(in_recovery_val));
+
+	/* v2.6 (v0.6.71 audit P2.7) — field-robust at-risk indicators */
+	INIT_OBJ_RES_DATA(TD_BOOT_BURST_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &boot_burst_val, sizeof(boot_burst_val));
+	INIT_OBJ_RES_DATA(TD_DETACHED_TOTAL_S_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &detached_total_s_val, sizeof(detached_total_s_val));
+	INIT_OBJ_RES_DATA(TD_HEAP_MIN_FREE_LIVE_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &heap_min_free_live_val, sizeof(heap_min_free_live_val));
+	INIT_OBJ_RES_DATA(TD_LAST_REBOOT_CODE_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &last_reboot_code_val, sizeof(last_reboot_code_val));
 
 	thread_diag_inst.resources = thread_diag_res;
 	thread_diag_inst.resource_count = i;
@@ -395,6 +442,11 @@ void update_connectivity_metrics(void)
 	const char *role_name = role_to_str(role);
 	lwm2m_set_string(&LWM2M_OBJ(THREAD_DIAG_OBJECT_ID, 0, TD_ROLE_RID),
 			 role_name);
+	/* v0.6.65 A1 fix: notify on every role transition (Detached/Child/Router/
+	 * Leader). Without this the server's dashboard shows stale role until
+	 * the next REG_UPDATE, which masks Child↔Router transitions during
+	 * mesh re-balancing — exactly what we need to observe live. */
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_ROLE_RID);
 
 	/* ---- Partition ID ---- */
 	partition_id_val = otThreadGetPartitionId(ot);
@@ -509,6 +561,7 @@ void update_connectivity_metrics(void)
 	lwm2m_notify_observer(4, 0, 3);   /* Link Quality */
 	lwm2m_notify_observer(4, 0, 4);   /* IP Addresses */
 	lwm2m_notify_observer(4, 0, 5);   /* Router IP */
+	lwm2m_notify_observer(4, 0, 8);   /* v0.6.65 A1: Cell ID / Thread partition */
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_TX_TOTAL_RID);
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_RX_TOTAL_RID);
 
@@ -527,6 +580,12 @@ void update_connectivity_metrics(void)
 	extern uint32_t lwm2m_diag_get_storm_backoff(void);
 	extern int32_t  lwm2m_diag_get_last_reset_reason(void);   /* v2.3 */
 	extern uint32_t lwm2m_diag_get_total_resets(void);        /* v2.3 */
+	/* v2.5 (v0.6.69 audit P3) — deadlock observability sources */
+	extern uint32_t coap_keepalive_get_emit_count(void);
+	extern uint32_t coap_keepalive_get_consec_fail(void);
+	extern uint32_t lwm2m_watchdog_get_last_emit_uptime(void);
+	extern uint32_t lwm2m_diag_get_noreg_boots(void);
+	extern bool     lwm2m_diag_get_in_recovery(void);
 
 	lwm2m_uptime_s         = (uint32_t)(k_uptime_get() / 1000);
 	lwm2m_reg_attempts     = lwm2m_diag_get_reg_attempts();
@@ -541,6 +600,21 @@ void update_connectivity_metrics(void)
 	lwm2m_storm_backoff    = lwm2m_diag_get_storm_backoff();
 	boot_last_reset_reason = lwm2m_diag_get_last_reset_reason();
 	boot_total_resets      = lwm2m_diag_get_total_resets();
+	/* v2.5 deadlock observability snapshots */
+	keepalive_emit_val        = coap_keepalive_get_emit_count();
+	keepalive_consec_fail_val = coap_keepalive_get_consec_fail();
+	last_emit_uptime_val      = lwm2m_watchdog_get_last_emit_uptime();
+	noreg_boots_val           = lwm2m_diag_get_noreg_boots();
+	in_recovery_val           = (uint8_t)lwm2m_diag_get_in_recovery();
+	/* v2.6 (v0.6.71 audit P2.7) — field-robust at-risk indicators */
+	extern uint32_t lwm2m_diag_get_boot_burst(void);
+	extern uint32_t lwm2m_diag_get_detached_total_s(void);
+	extern uint32_t pm_get_live_heap_min_free(void);
+	boot_burst_val          = lwm2m_diag_get_boot_burst();
+	detached_total_s_val    = lwm2m_diag_get_detached_total_s();
+	heap_min_free_live_val  = pm_get_live_heap_min_free();
+	extern uint32_t ami_reboot_get_last_code(void);
+	last_reboot_code_val    = ami_reboot_get_last_code();
 
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_UPTIME_S_RID);
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_REG_ATTEMPTS_RID);
@@ -555,6 +629,17 @@ void update_connectivity_metrics(void)
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_STORM_BACKOFF_RID);
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_BOOT_LAST_RESET_REASON_RID);
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_BOOT_TOTAL_RESETS_RID);
+	/* v2.5 (v0.6.69 audit P3) — deadlock observability notifies */
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_KEEPALIVE_EMIT_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_KEEPALIVE_CONSEC_FAIL_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LAST_EMIT_UPTIME_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_NOREG_BOOTS_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_IN_RECOVERY_RID);
+	/* v2.6 (v0.6.71 audit P2.7) — field-robust at-risk indicators */
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_BOOT_BURST_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_DETACHED_TOTAL_S_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_HEAP_MIN_FREE_LIVE_RID);
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LAST_REBOOT_CODE_RID);
 
 	LOG_INF("Obj4: RSSI=%ddBm LQI=%u%% IPs=%d router=%s",
 		best_rssi, lqi_to_percent(best_lqi), ip_count, router_ip_str);
@@ -578,8 +663,13 @@ void update_connectivity_metrics(void)
 	if (die_mc != INT32_MIN) {
 		LOG_INF("Obj33000(diag): die_temp=%d.%03d C",
 			die_mc / 1000, die_mc < 0 ? -die_mc % 1000 : die_mc % 1000);
-		/* Push to IPSO 3303/0/5700 (Sensor Value, Float) */
+		/* Push to IPSO 3303/0/5700 (Sensor Value, Float).
+		 * v0.6.65 A1 fix: explicit lwm2m_notify_observer paired with set —
+		 * Zephyr's set_* does NOT auto-notify observers; without this the
+		 * server-side OBSERVE never receives the temp updates and dashboards
+		 * show stale values until the next REG_UPDATE cycle. */
 		double temp_c = (double)die_mc / 1000.0;
 		lwm2m_set_f64(&LWM2M_OBJ(3303, 0, 5700), temp_c);
+		lwm2m_notify_observer(3303, 0, 5700);
 	}
 }

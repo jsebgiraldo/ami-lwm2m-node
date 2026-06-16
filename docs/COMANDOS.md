@@ -205,3 +205,8 @@ gcc -o run_tests.exe test_main.c test_hdlc.c test_cosem.c `
     - `CONFIG_AMI_LWM2M_SERVER_IPV6_PRIMARY="..."`
     - `CONFIG_AMI_LWM2M_SERVER_IPV6_SECONDARY="..."`
     The node switches automatically after repeated registration failures.
+
+
+´´´
+python tools/flash_ota_migrate.py --com COMxx                      # MED (default)
+python tools/flash_ota_migrate.py --com COMxx --build-dir build_ota_ftd   # FTD router

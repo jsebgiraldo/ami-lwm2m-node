@@ -15,6 +15,7 @@
 #include <zephyr/dt-bindings/pinctrl/esp-pinctrl-common.h>
 #include <zephyr/dt-bindings/pinctrl/esp32c6-pinctrl.h>
 #include <zephyr/dt-bindings/pinctrl/esp32c6-gpio-sigmap.h>
+#include <zephyr/dt-bindings/led/led.h>
 
 /* Add UART1 pin configuration */
 &pinctrl {
@@ -29,6 +30,9 @@
 			bias-pull-up;
 		};
 	};
+
+	/* v0.6.54: SPI2 binding REVERTED -- enabling SPI was breaking the
+	 * 802.15.4 radio attach. WS2812 reverts to custom bit-bang in rgb_led.c. */
 };
 
 /* Disable I2C0 since GPIO22/23 are now used for UART1 (RS485) */
@@ -85,4 +89,9 @@
 	aliases {
 		rs485-uart = &uart1;
 	};
+
 };
+
+/* v0.6.54: WS2812 SPI binding REVERTED -- v0.6.53 enabling CONFIG_SPI=y broke
+ * the 802.15.4 radio attach across all 30 nodes (1h soak collapsed mesh from
+ * 15 active to 0). LED driver returns to custom bit-bang in src/rgb_led.c. */

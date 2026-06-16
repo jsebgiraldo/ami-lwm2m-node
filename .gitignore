@@ -192,3 +192,19 @@ plink_in.txt
 # Deployment ledger (operator-specific runtime state, not firmware code)
 tools/deployment_ledger.csv
 soak_logs/
+
+# ---- v0.7.5 session cleanup (2026-06-16) ----
+# Vendored OpenOCD/ESP toolchain (13 MB of binaries — NEVER commit)
+tools/openocd-esp32/
+*.exe
+# Runtime logs/captures directory
+logs/
+# Per-board QA + benchmark + soak RESULT data (outputs, regenerable — not source)
+tools/board_qa/
+tools/board_qa_results.csv
+tools/bench_*.csv
+tools/bench_*.json
+tools/*_results.csv
+tools/rotation_watch*.csv
+tools/phase0_report.csv
+tools/soak_*.csv

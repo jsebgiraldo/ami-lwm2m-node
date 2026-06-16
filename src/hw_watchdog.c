@@ -35,7 +35,13 @@ LOG_MODULE_REGISTER(hw_wdog, LOG_LEVEL_INF);
 /* Feed at 1/3 the timeout so we tolerate two missed wakeups. */
 #define HW_WDOG_FEED_PERIOD  K_SECONDS(CONFIG_AMI_HW_WATCHDOG_TIMEOUT_S / 3)
 
-#define HW_WDOG_STACK_SZ     768
+/* v0.6.69: was 768 — code-review audit flagged this as the last line of
+ * defense and noted that hw_wdog_kernel_thread emits LOG_ERR with multiple
+ * arguments on the liveness-fail path. cbprintf_package_convert recursion
+ * during that LOG_ERR could overflow 768 B and crash the thread before
+ * sys_reboot fires — the only fallback would then be the HW TG0_WDT
+ * timeout. Bumped to 2048 to give cbprintf headroom while staying lean. */
+#define HW_WDOG_STACK_SZ     2048
 #define HW_WDOG_PRIO         K_PRIO_PREEMPT(4)
 
 static int chan_kernel = -1;

@@ -74,6 +74,25 @@ config AMI_BOOT_REGISTER_DEADLINE_S
 
 	  Setting to 0 disables the boot watchdog (not recommended in fleet).
 
+config AMI_LWM2M_SEND
+	bool "Push billing/PQ resources via LwM2M Send (1.1) instead of relying on server Observe"
+	default n
+	depends on LWM2M_VERSION_1_1
+	help
+	  When y, after each DLMS poll the client proactively SENDs the
+	  minimal AMI resource set (voltage, active power, power factor,
+	  active energy, frequency) to the server using the LwM2M 1.1 Send
+	  operation. This GUARANTEES per-poll cadence regardless of whether
+	  the server successfully established an Observe on each resource.
+
+	  Motivation (2026-06-11): TB Edge's per-resource Observe/Write-
+	  Attributes application is unreliable — voltage and activePower
+	  observes failed to establish on a 30-node fleet, so their notifies
+	  went nowhere and TB showed them frozen at the registration read
+	  while frequency/powerFactor (whose observes did establish) updated
+	  every minute. Send removes the dependency on the server-side
+	  Observe entirely: the firmware owns the cadence.
+
 config AMI_TX_POWER_DBM
 	int "OpenThread TX power (dBm)"
 	default 4
@@ -95,6 +114,60 @@ config AMI_TX_POWER_DBM
 	             retry-expiry rate to drop by >5x at this density.
 
 	  Raise to 8 for spread deployments (>5 m), 20 for outdoor/long-range.
+
+config AMI_MINIMAL_AMI
+	bool "Minimalist AMI: keep only Power Meter + FW update"
+	default n
+	help
+	  Skip all non-essential LwM2M object setups so the periodic observe
+	  pushes shrink to just V / I / P from the Power Meter object. Used to
+	  keep the LwM2M TX burst short enough that USB host overcurrent
+	  protection doesn't trip the chronic VBUS-cut events on SuperMini boards.
+
+	  Objects DISABLED when y:
+	    - 3303 IPSO Temperature
+	    - 33000 thread/lwm2m diagnostic (36 RIDs)
+	    - 33001 Thread Role Control
+	    - 3311 Light Control
+	    - 10483-10486 Thread net/neighbor/commission/cli
+
+	  Objects KEPT:
+	    - 10242 Power Meter (V / I / P)
+	    - 5     Firmware Update (OTA)
+	    - 3     Device (standard)
+
+config AMI_BRN_TEST_NO_LWM2M
+	bool "Diag: skip LwM2M client start (brownout isolation test)"
+	default n
+	help
+	  When y, main.c skips lwm2m_rd_client_start() and all observe/register
+	  paths. Thread still attaches, watchdogs still run, NVS still writes
+	  occasional counters. Used to isolate whether LwM2M CoAP block
+	  transfers / observe pushes / register exchanges are what triggers
+	  the chronic USB-VBUS-cut events on SuperMini boards.
+
+config AMI_POST_BRN_REDUCE_TX
+	bool "Reduce TX power after a brownout reset"
+	default n
+	help
+	  Mirrors Espressif's CONFIG_ESP_PHY_REDUCE_TX_POWER (which Zephyr's
+	  SoC layer does not source). At boot, if the post-mortem rr is BRN
+	  (last reset was brownout), main.c drops the OpenThread TX power to
+	  AMI_POST_BRN_TX_POWER_DBM for this boot. The board re-boots into
+	  weak-TX mode, makes the next radio bursts much less likely to dip
+	  the rail again, and recovers without sliding into another BOD reset.
+	  On a clean boot (POR/SW/WDOG) the standard AMI_TX_POWER_DBM is used.
+
+config AMI_POST_BRN_TX_POWER_DBM
+	int "TX power after BRN reset (dBm)"
+	default -8
+	range -16 4
+	depends on AMI_POST_BRN_REDUCE_TX
+	help
+	  Floor TX power applied for one boot after the BOD trips. -8 dBm cuts
+	  the radio peak current by roughly 60 mA vs +4 dBm. Range is short
+	  (a few meters indoor) but enough to remain attached to a nearby
+	  parent and let the chip stabilize before the next clean reboot.
 
 config AMI_BOOT_JITTER_MAX_S
 	int "Random jitter (s) before initial REGISTER on cold boot"
@@ -213,6 +286,140 @@ config AMI_LWM2M_SERVER_IPV6_SECONDARY
 	help
 	  DEPRECATED in v0.6.0. See AMI_LWM2M_SERVER_IPV6_PRIMARY.
 
+config AMI_CONN_MONITOR_WDOG_S
+	int "conn_monitor cycle-silence watchdog threshold (v0.6.73)"
+	default 300
+	range 60 1800
+	help
+	  After the first conn_monitor cycle has fired, the cycle is expected
+	  to run at least every CONN_UPDATE_INTERVAL_S (~60 s) with jitter. If
+	  the gap between cycles exceeds this threshold, the main loop is
+	  wedged and the board is COLD-rebooted.
+
+	  Catches the "alive but mute" zombie state where Thread/LwM2M
+	  REG_UPDATE keeps refreshing the silence_watchdog (it's fed by
+	  REGISTRATION_COMPLETE / REG_UPDATE_COMPLETE events), but the
+	  main-loop conn_monitor thread has wedged on a deadlock, stack
+	  overflow, or similar — so telemetry stops flowing while TB still
+	  marks the board active.
+
+	  Default 300 s (5 cycles). Lower for aggressive recovery; raise to
+	  ~600 s in environments where conn_monitor legitimately stalls on
+	  expensive operations (large meter polls, blocking peripherals).
+
+config AMI_CONN_MONITOR_BOOT_GRACE_S
+	int "conn_monitor watchdog boot grace (v0.6.73)"
+	default 240
+	range 60 900
+	help
+	  Until the first conn_monitor cycle has fired, the watchdog silently
+	  heartbeats — first cycle requires Thread attach + DNS-SD + REGISTER
+	  and can legitimately take >60 s on slow attaches. After this many
+	  seconds with zero cycles, the watchdog declares the boot wedged and
+	  forces a COLD reboot.
+
+	  Default 240 s — generous for normal field attaches but still bounded.
+
+config AMI_BOOT_STAGGER_MAX_MS
+	int "Random boot-stagger window in milliseconds (v0.6.72)"
+	default 30000
+	range 0 120000
+	help
+	  Maximum random delay (uniform 0..MAX) applied at the very start of
+	  main(), BEFORE any peripheral init. Prevents coordinated boot inrush
+	  when N boards share a power rail or USB hub: without stagger, all N
+	  boards reach Thread radio init within milliseconds of each other,
+	  causing simultaneous current peaks that brownout the shared rail and
+	  trigger cascading reboot loops.
+
+	  Set 0 to disable (single-board lab work). 30000 (30 s) is the
+	  field-tested default — even with 30 boards on one rail, the chance
+	  of two hitting radio init in the same 100 ms window is <0.3%.
+
+	  Costs 0..MAX ms of additional boot latency per board. Operator-
+	  invisible because boards are not registered to TB during boot;
+	  they appear "boot stagger" delayed in TB only as a later first
+	  registration, which is what the existing watchdog logic expects.
+
+	  Requires CONFIG_ENTROPY_GENERATOR=y for actual randomness; otherwise
+	  sys_rand32_get() returns deterministic values and stagger collapses.
+
+config AMI_BOOT_BURST_MAX
+	int "Boot-burst limiter threshold — consecutive unstable boots (v0.6.71)"
+	default 10
+	range 3 50
+	help
+	  Anti-brick rate limiter. The boot_burst counter is incremented on
+	  every boot, and reset to 0 only when the board reaches a sustained-
+	  healthy state (see CONFIG_AMI_OTA_CONFIRM_DELAY_S — same gate).
+	  If the counter reaches this threshold before reset, the next boot
+	  performs CONFIG_AMI_BOOT_BURST_THROTTLE_S of pre-init sleep before
+	  touching anything else.
+
+	  Purpose: bound the NVS-write rate so a fast crash loop cannot wear
+	  out flash. ESP32-C6 NVS sectors are rated for ~100k erase cycles.
+	  Without this limiter, a board crashing every 5 min could hit that
+	  limit in <1 year. The throttle also gives operators a quiet window
+	  to physically intervene without the board destroying itself.
+
+	  Default 10 — needs to be higher than the noreg_boots cap (5) so the
+	  noreg_boots backoff has room to do its work first. Lower (e.g. 5)
+	  for aggressive wear protection on volatile field deployments;
+	  higher (e.g. 20) for development boards where crashes are expected.
+
+config AMI_BOOT_BURST_THROTTLE_S
+	int "Pre-init throttle sleep when boot-burst limit hit (v0.6.71)"
+	default 300
+	range 30 1800
+	help
+	  Seconds the firmware sleeps at the very start of main() when the
+	  boot-burst counter is at or above CONFIG_AMI_BOOT_BURST_MAX. Long
+	  enough that an external observer notices the board is in
+	  protective-throttle mode (no LED activity, no log output) and can
+	  physically intervene. Also clamps the NVS-write rate to at most
+	  one cycle per (this delay + boot time).
+
+	  Default 300 s (5 min). Operators see "board boots once every 5 min"
+	  in TB Edge attribute updates and know to investigate.
+
+config AMI_OTA_CONFIRM_DELAY_S
+	int "Sustained-connectivity delay before MCUboot confirm (v0.6.71)"
+	default 600
+	range 60 3600
+	help
+	  After the first REGISTRATION_COMPLETE event on a fresh OTA image,
+	  the firmware schedules a delayed work that re-checks lwm2m_connected
+	  AND keepalive_emit_count >= 1 before writing the MCUboot confirm
+	  flag. If either check fails at trigger time (or the board reboots
+	  before this delay elapses), MCUboot reverts to the prior image on
+	  next boot — automatic rollback for OTAs that pass the first
+	  REGISTER but fail sustained operation (DLMS deadlock, late race,
+	  late OOM, etc.).
+
+	  Default 600 s (10 min) — long enough for at least 2 keepalive
+	  cycles (~300 s each) so we have strong evidence of sustained
+	  health. Lower bound 60 s for testing, upper bound 3600 s for
+	  conservative deployments.
+
+config AMI_MESH_ALONE_MAX_S
+	int "Max cumulative Thread-detached seconds before COLD reboot (v0.6.71)"
+	default 3600
+	range 300 14400
+	help
+	  Mesh-alone watchdog threshold. If the board spends this many cumulative
+	  seconds in OT_DEVICE_ROLE_DETACHED across the lifetime of the boot,
+	  the radio/mesh stack is considered wedged and a COLD reboot is
+	  triggered. This complements the LwM2M silence watchdog (which fires
+	  on emit silence) and noreg_boots throttle (which prevents reboot
+	  storms on server outages). Mesh-alone catches the case where the
+	  Thread attach itself is broken — no other layer covers that.
+
+	  Default 3600 s (1 hour) — generous for steady-state operation where
+	  a healthy board spends ~0 s detached after first attach. Lower (e.g.
+	  600 s) for aggressive recovery on volatile RF environments; higher
+	  (e.g. 7200 s) when an OTBR outage is expected to be long-lived and
+	  reboots are wasteful.
+
 config AMI_HW_WATCHDOG_TIMEOUT_S
 	int "Hardware watchdog channel timeout (seconds)"
 	default 180
@@ -280,6 +487,22 @@ config AMI_LWM2M_DNS_SD_RETRY_MAX
 	  backoff (5s, 10s, 20s, ..., capped at 60s). Default 10 → max ~9 min
 	  before reboot. Tunable for harsh mesh-attach environments.
 
+config AMI_COAP_KEEPALIVE_PERIOD_S
+	int "CoAP keepalive period (seconds)"
+	default 300
+	range 60 3600
+	help
+	  Period at which src/coap_keepalive.c fires a Notify on
+	  /33000/0/uptime_s. The Zephyr LwM2M engine emits a confirmable CoAP
+	  message every time; on a dead socket the 3-retry budget exhausts in
+	  ~270 s and triggers lwm2m_rd_client_timeout() -> automatic re-
+	  registration. Without this we'd have to wait 2 * LIFETIME (= 48 h
+	  with the v0.6.66 CONFIG_LWM2M_ENGINE_DEFAULT_LIFETIME=86400) for
+	  the silence watchdog. 300 s is the sweet spot: short enough that
+	  TB Edge restart recovery converges in <5 min, long enough that
+	  pmin/pmax write-attributes (typically pmin=30, pmax=300 on Object
+	  33000) never suppress us.
+
 config AMI_LWM2M_DNS_SD_TIMEOUT_MS
 	int "Per-attempt DNS-SD lookup timeout (milliseconds)"
 	default 7000
@@ -328,6 +551,18 @@ config AMI_MESH_PI4
 	  on channel 25 — see docs/architecture/edge-thingsboard.md.
 
 endchoice
+
+config AMI_LED_QUIET_MODE
+	bool "Production-quiet LED mode"
+	default y
+	help
+	  Suppress all firmware-driven LED state (boot UI, TX-blink, detach-RED).
+	  Only Object 3311 server-driven writes via ami_led_set_raw() can light
+	  the LED, so the fleet looks visually identical (all OFF) by default.
+	  Recommended for production deployments — reduces visual noise, removes
+	  WS2812 current cost, and avoids the "some green / some off" effect
+	  caused by nodes being in different lifecycle phases.
+	  Disable (=n) only for QA/development where you want boot-state visibility.
 
 endmenu
 

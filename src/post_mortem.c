@@ -38,9 +38,20 @@ LOG_MODULE_REGISTER(post_mortem, LOG_LEVEL_INF);
 #define PM_SETTINGS_PREFIX   "pm"
 #define PM_SETTINGS_KEY      PM_SETTINGS_PREFIX "/last_hang"
 
-/* Periodic snapshot interval. 60 s gives ~1440 writes/day — comfortably
- * inside NVS wear budget while keeping diagnostic resolution tight. */
-#define PM_SNAPSHOT_PERIOD   K_SECONDS(60)
+/* v0.6.69: bumped from 60 s to 300 s.
+ *
+ * Code-review audit P2 caught NVS write density during reboot storms — the
+ * 60 s post_mortem combined with persist_counter calls in main.c (every
+ * watchdog hit, noreg boot, recover_count++, reg_attempt, reg_success)
+ * piled up many NVS erases per minute while a board cycled through
+ * recovery on marginal Vbus. Each erase is ~40 mA spike and a ms-scale
+ * window vulnerable to brownout-induced sector corruption (especially
+ * before v0.6.69 enabled CONFIG_SPI_FLASH_BROWNOUT_RESET=y).
+ *
+ * 300 s matches the keepalive cadence — post-mortem is forensic, the 5x
+ * lower density still captures state changes worth recording.
+ */
+#define PM_SNAPSHOT_PERIOD   K_SECONDS(300)
 
 /* Loaded record from the previous boot (valid only after pm_init()). */
 static struct pm_record pm_last;
@@ -63,6 +74,15 @@ static struct pm_record pm_cached_write;
  * compiled in; the snapshot then reports heap_free=0/heap_min_free=0,
  * which is the documented "stats not available" indicator. */
 static atomic_t pm_heap_min_free = ATOMIC_INIT(0xFFFFFFFF);
+
+/* v0.6.71 P2.7: live accessor for telemetry. Returns the lifetime minimum
+ * free heap bytes seen this boot (0 if heap stats are not compiled in or
+ * no sample has been taken yet). Surfaced as Object 33000 RID 36. */
+uint32_t pm_get_live_heap_min_free(void)
+{
+	uint32_t mn = (uint32_t)atomic_get(&pm_heap_min_free);
+	return (mn == 0xFFFFFFFF) ? 0U : mn;
+}
 
 static uint32_t pm_now_s(void)
 {
@@ -124,8 +144,16 @@ static K_WORK_DELAYABLE_DEFINE(pm_periodic_work, pm_periodic_fn);
 static void pm_periodic_fn(struct k_work *w)
 {
 	ARG_UNUSED(w);
+#ifdef CONFIG_AMI_BRN_TEST_NO_LWM2M
+	/* In brownout isolation builds, skip periodic NVS writes too — every
+	 * settings_save_one is a SPI flash transaction (~25 mA peak) and we want
+	 * to rule out whether the chronic USB-VBUS-cut events are triggered by
+	 * those flash bursts rather than radio TX. */
+	return;
+#else
 	(void)pm_write_now();
 	k_work_reschedule(&pm_periodic_work, PM_SNAPSHOT_PERIOD);
+#endif
 }
 
 /* ───────────────────────── settings hooks ──────────────────────────── */

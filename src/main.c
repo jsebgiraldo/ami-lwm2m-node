@@ -32,6 +32,7 @@
 #include <string.h>
 #include <openthread.h>
 #include <openthread/thread.h>
+#include <openthread/thread_ftd.h>
 #include <openthread/instance.h>
 #include <openthread/dataset.h>
 #include <openthread/ip6.h>
@@ -39,6 +40,7 @@
 
 #include "lwm2m_discover.h"
 #include "lwm2m_watchdog.h"
+#include "coap_keepalive.h"
 #include "hw_watchdog.h"
 #include "lwm2m_obj_power_meter.h"
 #include "lwm2m_obj_thread_diag.h"
@@ -85,7 +87,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.6.39"
+#define CLIENT_FIRMWARE_VER     "0.7.5-live"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -116,6 +118,17 @@ static uint8_t lwm2m_reg_failures;
  * Drives the anti reboot-storm backoff in lwm2m_watchdog.c. Reset to 0 on
  * the first server-ACKed registration. */
 #define AMI_NOREG_KEY             "ami/noreg_boots"
+/* v0.6.71 P0.1: boot-burst counter — anti-brick rate limiter.
+ * Incremented on every boot. Reset to 0 only when the board reaches a
+ * "stable" state (uptime > CONFIG_AMI_BOOT_BURST_STABLE_S AND lwm2m_connected
+ * AND keepalive_emit_count >= 1).
+ *
+ * If this value exceeds CONFIG_AMI_BOOT_BURST_MAX at the very start of
+ * main(), the board has been crash-looping. Force a long pre-init sleep
+ * (CONFIG_AMI_BOOT_BURST_THROTTLE_S) to prevent NVS wear runaway. The
+ * sleep also gives the operator a window to physically intervene without
+ * the board destroying its flash. */
+#define AMI_BOOT_BURST_KEY        "ami/boot_burst"
 
 static atomic_t lwm2m_diag_reg_attempts     = ATOMIC_INIT(0);
 static atomic_t lwm2m_diag_reg_success      = ATOMIC_INIT(0);
@@ -128,6 +141,8 @@ static atomic_t lwm2m_diag_watchdog_count   = ATOMIC_INIT(0);
 static atomic_t lwm2m_diag_storm_backoff    = ATOMIC_INIT(0);
 /* v0.6.30: consecutive no-first-register boots (persisted, see AMI_NOREG_KEY) */
 static atomic_t lwm2m_diag_noreg_boots      = ATOMIC_INIT(0);
+/* v0.6.71 P0.1: persisted boot-burst counter (see AMI_BOOT_BURST_KEY). */
+static atomic_t lwm2m_diag_boot_burst       = ATOMIC_INIT(0);
 /* Set true while lwm2m_recover_work_fn is in flight; the next
  * REGISTRATION_COMPLETE counts as a successful restart. */
 static atomic_t lwm2m_diag_in_recovery = ATOMIC_INIT(0);
@@ -183,6 +198,38 @@ void lwm2m_diag_inc_storm_backoff(void)
 uint32_t lwm2m_diag_get_noreg_boots(void)
 {
 	return (uint32_t)atomic_get(&lwm2m_diag_noreg_boots);
+}
+
+/* v0.6.69 audit P3: expose in_recovery so thread_conn_monitor can publish
+ * it as Object 33000 RID 33. Previously this atomic was set/cleared but
+ * inaccessible to telemetry — TB couldn't tell "recovering" from "stuck".
+ */
+bool lwm2m_diag_get_in_recovery(void)
+{
+	return atomic_get(&lwm2m_diag_in_recovery) != 0;
+}
+
+/* v0.6.71 P0.1: boot-burst counter — number of boots in a row that did
+ * NOT reach a "stable" state (uptime > BOOT_BURST_STABLE_S AND
+ * lwm2m_connected AND keepalive_emit_count >= 1). Exposed for telemetry
+ * (Object 33000 RID, see thread_conn_monitor) so operators see at-risk
+ * boards. */
+uint32_t lwm2m_diag_get_boot_burst(void)
+{
+	return (uint32_t)atomic_get(&lwm2m_diag_boot_burst);
+}
+
+static void lwm2m_diag_inc_boot_burst(void)
+{
+	atomic_inc(&lwm2m_diag_boot_burst);
+	ami_persist_counter(AMI_BOOT_BURST_KEY, &lwm2m_diag_boot_burst);
+}
+
+static void lwm2m_diag_reset_boot_burst(void)
+{
+	if (atomic_set(&lwm2m_diag_boot_burst, 0) != 0) {
+		ami_persist_counter(AMI_BOOT_BURST_KEY, &lwm2m_diag_boot_burst);
+	}
 }
 
 void lwm2m_diag_inc_noreg_boots(void)
@@ -284,10 +331,60 @@ static atomic_t lwm2m_reached_network = ATOMIC_INIT(0);
  *
  * Use this helper for EVERY sys_reboot() in the firmware.
  */
+/* === v0.7.4: persist the reboot CAUSE across the SW reset ===
+ *
+ * On serial-less SuperMini we can't watch the LOG, so we can't see which path
+ * rebooted us. A __noinit tag survives sys_reboot (SRAM is retained through a
+ * digital reset; only a power-cycle clears it, which the magic guards against).
+ * ami_reboot_drain() and the panic handler stamp it; the next boot reads it
+ * (ami_reboot_get_last_code) and publishes it as Object 33000 RID 37. We
+ * INVALIDATE the magic at boot so a subsequent NON-software reset (HW watchdog,
+ * brownout, external) reads back 0 instead of a stale prior cause. */
+#define AMI_REBOOT_TAG_MAGIC 0x52424F54U   /* 'R','B','O','T' */
+struct ami_reboot_tag { uint32_t magic; uint32_t code; };
+__noinit static struct ami_reboot_tag ami_reboot_tag;
+
+static uint32_t ami_reboot_reason_to_code(const char *reason)
+{
+	static const struct { const char *s; uint32_t c; } map[] = {
+		{ "boot-watchdog", 1 }, { "mesh-alone-watchdog", 2 },
+		{ "conn-monitor-no-first-tick", 3 }, { "conn-monitor-wedged", 4 },
+		{ "max-recover-attempts", 5 }, { "lwm2m-device-reboot", 6 },
+		{ "shell-command", 7 }, { "ip6-enable-failed", 8 },
+		{ "thread-enable-failed", 9 }, { "dns-sd-boot-fail", 10 },
+	};
+	for (size_t i = 0; i < ARRAY_SIZE(map); i++) {
+		if (reason && strcmp(reason, map[i].s) == 0) {
+			return map[i].c;
+		}
+	}
+	return 99U;   /* unknown reason string */
+}
+
+void ami_reboot_set_tag(uint32_t code)
+{
+	ami_reboot_tag.magic = AMI_REBOOT_TAG_MAGIC;
+	ami_reboot_tag.code = code;
+}
+
+/* Reboot-path code that caused THIS boot, or 0 if the tag is invalid
+ * (power-on, or a HW/external reset that didn't go through our drain). Latched
+ * at boot by ami_reboot_capture_boot_code(). */
+static uint32_t ami_boot_reboot_code;
+uint32_t ami_reboot_get_last_code(void) { return ami_boot_reboot_code; }
+
+void ami_reboot_capture_boot_code(void)
+{
+	ami_boot_reboot_code = (ami_reboot_tag.magic == AMI_REBOOT_TAG_MAGIC)
+				? ami_reboot_tag.code : 0U;
+	ami_reboot_tag.magic = 0U;   /* invalidate: next reset must re-stamp */
+}
+
 /* Non-static so the dedicated lwm2m_watchdog thread can call it directly
  * (v0.6.24) — see lwm2m_watchdog.c "no-first-register" branch. */
 void ami_reboot_drain(int reboot_type, const char *reason)
 {
+	ami_reboot_set_tag(ami_reboot_reason_to_code(reason));
 	LOG_WRN("REBOOT (%s): drain USB %dms then sys_reboot(%s)",
 		reason, CONFIG_AMI_REBOOT_USB_DRAIN_MS,
 		reboot_type == SYS_REBOOT_WARM ? "WARM" : "COLD");
@@ -337,6 +434,7 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 	atomic_set(&lwm2m_diag_last_error_code, (atomic_val_t)(-EFAULT));
 	atomic_set(&lwm2m_diag_last_error_uptime,
 		   (atomic_val_t)(uint32_t)(k_uptime_get() / 1000));
+	ami_reboot_set_tag(11U);   /* v0.7.4: panic path (RID 37) */
 
 	/* Busy-wait drain — interrupt-safe alternative to k_sleep().
 	 * k_busy_wait works even if interrupts are disabled by the panic path. */
@@ -395,6 +493,9 @@ static int ami_settings_load_cb(const char *name, size_t len,
 		atomic_set(&lwm2m_diag_reg_success, (atomic_val_t)v);
 	} else if (strcmp(name, "noreg_boots") == 0) {
 		atomic_set(&lwm2m_diag_noreg_boots, (atomic_val_t)v);
+	} else if (strcmp(name, "boot_burst") == 0) {
+		/* v0.6.71 P0.1: persisted boot-burst counter. */
+		atomic_set(&lwm2m_diag_boot_burst, (atomic_val_t)v);
 	}
 	return 0;
 }
@@ -579,6 +680,18 @@ static void ami_set_rgb(enum ami_rgb_color color)
 		return;
 	}
 
+	/* v0.6.48: production-quiet LED mode. Suppress all firmware-driven LED
+	 * state so the fleet looks visually identical (all OFF). Object 3311
+	 * server-driven writes via ami_led_set_raw() still work for diagnostics.
+	 * Disable CONFIG_AMI_LED_QUIET_MODE for QA where boot-state matters. */
+#ifdef CONFIG_AMI_LED_QUIET_MODE
+	ami_rgb_last_color = color;  /* keep state for `ami brightness` shell */
+	if (color != AMI_RGB_OFF) {
+		return;
+	}
+	/* Fall through for AMI_RGB_OFF so explicit OFF still clears the WS2812 */
+#endif
+
 	k_mutex_lock(&ami_led_lock, K_FOREVER);
 	ami_rgb_last_color = color;
 	LOG_INF("LED -> %s (brightness=%u)", rgb_color_name(color), br);
@@ -638,6 +751,53 @@ static struct lwm2m_ctx client_ctx;
 static bool lwm2m_connected;
 static atomic_t lwm2m_recovering;
 
+/* v0.6.71 P0.3 + P0.1: sustained-stable work — does TWO things at the
+ * same logical "this boot is good" moment:
+ *   (1) MCUboot confirm (if running an unconfirmed image)
+ *   (2) Reset the boot-burst counter (P0.1 NVS-wear protection)
+ *
+ * Set when the FIRST REGISTRATION_COMPLETE event schedules the delayed
+ * stable check. If the board reboots before this work fires, MCUboot
+ * reverts on next boot AND the boot_burst counter keeps climbing. */
+static atomic_t lwm2m_ota_confirm_scheduled = ATOMIC_INIT(0);
+static void lwm2m_ota_confirm_fn(struct k_work *w);
+static K_WORK_DELAYABLE_DEFINE(lwm2m_ota_confirm_work, lwm2m_ota_confirm_fn);
+
+static void lwm2m_ota_confirm_fn(struct k_work *w)
+{
+	ARG_UNUSED(w);
+	/* Re-verify health: must still be connected AND keepalive must have
+	 * fired at least once (proof the engine is processing background work,
+	 * not just paused after a single REGISTER). If either check fails,
+	 * DON'T mark stable — let MCUboot revert on next reset, keep
+	 * boot_burst climbing for telemetry visibility. */
+	bool conn = lwm2m_connected;
+	uint32_t ka = coap_keepalive_get_emit_count();
+	if (!conn) {
+		LOG_WRN("stable-marker aborted: lwm2m_connected=false at "
+			"%us — boot considered unstable",
+			(uint32_t)(k_uptime_get() / 1000));
+		return;
+	}
+	if (ka < 1U) {
+		LOG_WRN("stable-marker deferred: keepalive_emit=%u < 1 — "
+			"keepalive not firing, retry in 60s", ka);
+		k_work_reschedule(&lwm2m_ota_confirm_work, K_SECONDS(60));
+		return;
+	}
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+	if (!boot_is_img_confirmed()) {
+		int crc = boot_write_img_confirmed();
+		LOG_WRN("OTA: image confirmed permanent (rc=%d, ka=%u, "
+			"uptime=%us)", crc, ka,
+			(uint32_t)(k_uptime_get() / 1000));
+	}
+#endif
+	/* v0.6.71 P0.1: same stable-marker resets boot_burst counter.
+	 * Sustained-connected for CONFIG_AMI_OTA_CONFIRM_DELAY_S = clean boot. */
+	lwm2m_diag_reset_boot_burst();
+}
+
 /* DNS-SD resolution with retry+backoff.
  *
  * Boot path: invoke this until success or until CONFIG_AMI_LWM2M_DNS_SD_RETRY_MAX
@@ -664,7 +824,12 @@ static int lwm2m_discover_with_retry(int max_attempts, int per_attempt_ms)
 			strncpy(lwm2m_server_uri, discovered,
 				sizeof(lwm2m_server_uri) - 1);
 			lwm2m_server_uri[sizeof(lwm2m_server_uri) - 1] = '\0';
-			LOG_INF("DNS-SD resolved: %s", lwm2m_server_uri);
+			/* v0.6.46: bounded %.*s defensive pattern (this site already
+			 * NUL-terminates at line 666, but enforcing the bound makes
+			 * the pattern consistent across the codebase and survives
+			 * future copy-paste of this LOG call into less-safe paths). */
+			LOG_INF("DNS-SD resolved: %.*s",
+				(int)sizeof(lwm2m_server_uri), lwm2m_server_uri);
 			return 0;
 		}
 
@@ -746,6 +911,71 @@ void ami_led_tx_pulse(void)
  * boot UI (BLUE/CYAN/GREEN). */
 static atomic_t thread_role_atomic = ATOMIC_INIT(OT_DEVICE_ROLE_DISABLED);
 
+/* Forward decl for the v0.6.70 eager-reattach hook in
+ * thread_state_changed_cb. Defined further down with the recover_work_fn. */
+static uint8_t lwm2m_recover_attempt;
+
+/* v0.6.71 P1.5 — mesh-alone watchdog state.
+ * Accumulates total seconds spent in DETACHED role across the lifetime of
+ * this boot. The mesh_alone_check work checks every minute and forces a
+ * COLD reboot if the total exceeds CONFIG_AMI_MESH_ALONE_MAX_S (default 1h).
+ *
+ * detach_enter_uptime_s: uptime when the LAST detach started. 0 = currently
+ *                       attached or never detached.
+ * detached_total_s:     monotonic accumulator of detached time.
+ */
+static atomic_t detach_enter_uptime_s = ATOMIC_INIT(0);
+static atomic_t detached_total_s      = ATOMIC_INIT(0);
+
+/* v0.6.73 P0 — conn_monitor heartbeat watchdog state.
+ *
+ * Updated every time the main-loop conn_monitor cycle runs
+ * (update_connectivity_metrics + update_thread_network + notifies). Read
+ * by conn_monitor_wdog_fn every minute; if the gap exceeds
+ * CONFIG_AMI_CONN_MONITOR_WDOG_S, the cycle is wedged and the board is
+ * COLD-rebooted. This catches the "alive but mute" pattern that no other
+ * watchdog covers:
+ *   - silence_watchdog gets fed by REG_UPDATE_COMPLETE, so LwM2M REG_UPDATE
+ *     keeps refreshing it even if the conn_monitor thread is dead.
+ *   - mesh_alone_watchdog only fires when Thread is DETACHED — a wedged
+ *     conn_monitor while mesh stays attached never triggers it.
+ *   - keepalive consec_fail counts notify_observer ret != 0 only; if the
+ *     queue accepts but the CON never lands AND the timeout callback path
+ *     is hung, consec_fail stays at 0.
+ *
+ * Field forensics (v0.6.72 soak 2026-06-07): L3 sat with uptime=63 frozen
+ * for 87 min while TB Edge still saw active=True (driven by REG_UPDATE),
+ * and ~3 other boards started showing the same pattern. v0.6.73 closes
+ * this gap by tracking the conn_monitor cycle directly.
+ *
+ * 0 = monitor has never run yet; the watchdog grants a boot grace before
+ * counting any silence. */
+static atomic_t conn_monitor_last_tick_s = ATOMIC_INIT(0);
+
+void ami_conn_monitor_note_tick(void)
+{
+	atomic_set(&conn_monitor_last_tick_s,
+		   (atomic_val_t)(k_uptime_get() / 1000));
+}
+
+uint32_t ami_conn_monitor_last_tick_s(void)
+{
+	return (uint32_t)atomic_get(&conn_monitor_last_tick_s);
+}
+
+uint32_t lwm2m_diag_get_detached_total_s(void)
+{
+	uint32_t total = (uint32_t)atomic_get(&detached_total_s);
+	uint32_t enter = (uint32_t)atomic_get(&detach_enter_uptime_s);
+	if (enter > 0) {
+		uint32_t now_s = (uint32_t)(k_uptime_get() / 1000);
+		if (now_s >= enter) {
+			total += (now_s - enter);
+		}
+	}
+	return total;
+}
+
 static void thread_state_changed_cb(otChangedFlags flags, void *ctx)
 {
 	ARG_UNUSED(ctx);
@@ -760,6 +990,20 @@ static void thread_state_changed_cb(otChangedFlags flags, void *ctx)
 	otDeviceRole prev = (otDeviceRole)atomic_set(&thread_role_atomic, role);
 	bool now_attached  = (role >= OT_DEVICE_ROLE_CHILD);
 	bool was_attached  = (prev >= OT_DEVICE_ROLE_CHILD);
+
+	/* v0.6.71 mesh-alone tracker: accumulate detached time independently of
+	 * the boot-UI gate below so the watchdog catches stuck-in-detached
+	 * boards even before the first REGISTER. */
+	uint32_t now_s = (uint32_t)(k_uptime_get() / 1000);
+	if (!now_attached && was_attached) {
+		atomic_set(&detach_enter_uptime_s, now_s);
+	} else if (now_attached && !was_attached) {
+		uint32_t enter = (uint32_t)atomic_set(&detach_enter_uptime_s, 0);
+		if (enter > 0 && now_s >= enter) {
+			(void)atomic_add(&detached_total_s,
+					 (atomic_val_t)(now_s - enter));
+		}
+	}
 
 	/* Boot UI owns the LED until the first REGISTER completes. */
 	if (atomic_get(&lwm2m_first_register_complete) == 0) {
@@ -779,6 +1023,22 @@ static void thread_state_changed_cb(otChangedFlags flags, void *ctx)
 		if (ami_rgb_last_color == AMI_RGB_RED) {
 			ami_set_rgb(AMI_RGB_OFF);
 		}
+		/* v0.6.70 eager re-attach: when the mesh just came back up after a
+		 * detach (PSU brownout, RF dead zone exit, OTBR restart), the
+		 * existing recover backoff (60-300 s exponential) keeps the LwM2M
+		 * stack idle waiting for a timer instead of seizing the fresh
+		 * mesh opportunity immediately. v0.6.69.1 soak measured ~15 boards
+		 * stuck in long backoff for >5 min after OTBR came back online,
+		 * even though Thread had re-attached within seconds.
+		 *
+		 * Fix: on the DETACHED → CHILD/ROUTER transition, reset the LwM2M
+		 * recover attempt counter to 0 and schedule recover_work with no
+		 * delay. The existing re-entry guard (v0.6.69) prevents double
+		 * execution if a recover cycle is already in flight. */
+		LOG_INF("eager-reattach: resetting LwM2M recover_attempt + "
+			"scheduling immediate recover");
+		lwm2m_recover_attempt = 0;
+		k_work_reschedule(&lwm2m_recover_work, K_NO_WAIT);
 	}
 }
 
@@ -808,6 +1068,12 @@ static void boot_watchdog_fn(struct k_work *w)
 			"retrying with backoff",
 			CONFIG_AMI_BOOT_REGISTER_DEADLINE_S);
 		lwm2m_diag_record_error(-ETIMEDOUT);
+		/* v0.6.69 audit P1: don't rely on a future event handler to fire
+		 * recover_work — explicitly hand off ownership now. If no event
+		 * ever lands (the engine is fully wedged pre-REGISTER), the
+		 * boot_watchdog comment promised "recover_work keeps retrying"
+		 * but nothing was actually scheduling it. */
+		k_work_reschedule(&lwm2m_recover_work, K_NO_WAIT);
 		return;
 	}
 	LOG_ERR("BOOT WATCHDOG: stuck pre-network in %ds — Thread attach / "
@@ -817,6 +1083,86 @@ static void boot_watchdog_fn(struct k_work *w)
 	ami_reboot_drain(SYS_REBOOT_WARM, "boot-watchdog");
 	/* unreachable */
 }
+
+/* v0.6.71 P1.5 — mesh-alone watchdog.
+ *
+ * Periodic check (every 60 s) that monitors lwm2m_diag_get_detached_total_s().
+ * If cumulative detached time exceeds CONFIG_AMI_MESH_ALONE_MAX_S, the board
+ * has been unable to form/keep a Thread attachment for too long and the
+ * radio/dataset state is probably wedged. COLD reboot to fully reinit the
+ * OpenThread stack. Field rationale: in steady-state operation a healthy
+ * board spends ~0 s detached after the first attach; if we see > 1 h
+ * accumulated, something pathological is happening at the radio layer that
+ * recover_work cannot fix (recover_work only restarts the LwM2M engine,
+ * not the radio/mesh stack).
+ *
+ * This complements the silence watchdog (which fires on LwM2M emit silence,
+ * a higher-layer signal) and noreg_boots (which throttles reboot storms on
+ * server-side outages). The mesh-alone watchdog catches the case where
+ * mesh attach itself is broken — no other layer covers this.
+ */
+static void mesh_alone_watchdog_fn(struct k_work *w);
+static K_WORK_DELAYABLE_DEFINE(mesh_alone_watchdog_work, mesh_alone_watchdog_fn);
+
+static void mesh_alone_watchdog_fn(struct k_work *w)
+{
+	ARG_UNUSED(w);
+	uint32_t detached_s = lwm2m_diag_get_detached_total_s();
+	if (detached_s >= (uint32_t)CONFIG_AMI_MESH_ALONE_MAX_S) {
+		LOG_ERR("mesh-alone watchdog: detached_total=%us >= %us — "
+			"radio stack wedged, COLD reboot",
+			detached_s, CONFIG_AMI_MESH_ALONE_MAX_S);
+		lwm2m_diag_record_error(-ENETUNREACH);
+		ami_reboot_drain(SYS_REBOOT_COLD, "mesh-alone-watchdog");
+		/* unreachable */
+	}
+	k_work_reschedule(&mesh_alone_watchdog_work, K_SECONDS(60));
+}
+
+/* v0.6.73 P0 — conn_monitor heartbeat watchdog.
+ *
+ * Fires every 60 s and checks the gap between now and the last successful
+ * conn_monitor cycle. If the gap exceeds CONFIG_AMI_CONN_MONITOR_WDOG_S
+ * (default 300 s = 5 conn_monitor cycles), the main loop is wedged and we
+ * COLD-reboot to escape. Grants a boot grace: while
+ * conn_monitor_last_tick_s == 0 (monitor has never reported a successful
+ * cycle yet), we just heartbeat-feed the watchdog without counting silence,
+ * since first cycle requires Thread attach + DNS-SD + REGISTER and that
+ * legitimately takes longer than CONN_UPDATE_INTERVAL_S on slow attaches.
+ */
+static void conn_monitor_wdog_fn(struct k_work *w);
+static K_WORK_DELAYABLE_DEFINE(conn_monitor_wdog_work, conn_monitor_wdog_fn);
+
+static void conn_monitor_wdog_fn(struct k_work *w)
+{
+	ARG_UNUSED(w);
+	uint32_t now_s = (uint32_t)(k_uptime_get() / 1000);
+	uint32_t last  = ami_conn_monitor_last_tick_s();
+	if (last == 0) {
+		/* boot grace — first cycle hasn't fired yet */
+		if (now_s < (uint32_t)CONFIG_AMI_CONN_MONITOR_BOOT_GRACE_S) {
+			goto reschedule;
+		}
+		LOG_ERR("conn-monitor watchdog: no first tick after %us "
+			"(grace=%us) — COLD reboot",
+			now_s, CONFIG_AMI_CONN_MONITOR_BOOT_GRACE_S);
+		lwm2m_diag_record_error(-ETIMEDOUT);
+		ami_reboot_drain(SYS_REBOOT_COLD, "conn-monitor-no-first-tick");
+		/* unreachable */
+	}
+	uint32_t gap = (now_s > last) ? (now_s - last) : 0U;
+	if (gap >= (uint32_t)CONFIG_AMI_CONN_MONITOR_WDOG_S) {
+		LOG_ERR("conn-monitor watchdog: last tick %us ago (>=%us) — "
+			"main loop wedged, COLD reboot",
+			gap, CONFIG_AMI_CONN_MONITOR_WDOG_S);
+		lwm2m_diag_record_error(-EBADF);
+		ami_reboot_drain(SYS_REBOOT_COLD, "conn-monitor-wedged");
+		/* unreachable */
+	}
+reschedule:
+	k_work_reschedule(&conn_monitor_wdog_work, K_SECONDS(60));
+}
+
 /* Post-restart health probe — fires N seconds after start() returns OK to
  * verify the engine actually produced a REGISTRATION_COMPLETE. If not,
  * treats the restart as silently failed and reschedules recover_work.
@@ -868,17 +1214,37 @@ static uint8_t lwm2m_recover_attempt;
  */
 static uint32_t lwm2m_recover_backoff_s(uint8_t attempt)
 {
-	uint32_t base = CONFIG_AMI_LWM2M_RECOVER_BACKOFF_MIN_S;
-	for (uint8_t i = 1; i < attempt; i++) {
-		base *= 2;
-		if (base >= (uint32_t)CONFIG_AMI_LWM2M_RECOVER_BACKOFF_MAX_S) {
-			base = CONFIG_AMI_LWM2M_RECOVER_BACKOFF_MAX_S;
-			break;
+	/* v0.6.70 floor backoff: the first 2 attempts after a failure are
+	 * almost always recoverable transients (brownout glitch, RF chirp,
+	 * CoAP packet drop), not server-side outages. Burning a 60-300 s
+	 * backoff on those is wasted time. Override the exponential schedule
+	 * for the cheap fast-retry window:
+	 *   attempt 1 → 5 s (fast retry — the typical brownout recovery)
+	 *   attempt 2 → 15 s (still fast, gives mesh time to reconverge)
+	 *   attempt 3+ → exponential as before
+	 * Jitter still applies (±25%) so 30 nodes never retry in lockstep. */
+	uint32_t base;
+	if (attempt <= 1U) {
+		base = 5U;
+	} else if (attempt == 2U) {
+		base = 15U;
+	} else {
+		base = CONFIG_AMI_LWM2M_RECOVER_BACKOFF_MIN_S;
+		for (uint8_t i = 2; i < attempt; i++) {
+			base *= 2;
+			if (base >= (uint32_t)CONFIG_AMI_LWM2M_RECOVER_BACKOFF_MAX_S) {
+				base = CONFIG_AMI_LWM2M_RECOVER_BACKOFF_MAX_S;
+				break;
+			}
 		}
 	}
 	/* ±25% jitter: window width = base/2, centered at base.
-	 * lower bound = base * 3/4 ; upper bound = base * 5/4
+	 * Skip jitter on very small bases (attempt 1 = 5s) so a 25% jitter
+	 * doesn't reduce the wait below 3s, which would defeat purpose.
 	 */
+	if (base < 10U) {
+		return base;
+	}
 	uint32_t window = base / 2;
 	uint32_t r = window ? (sys_rand32_get() % (window + 1)) : 0;
 	uint32_t lower = (base * 3) / 4;
@@ -889,7 +1255,36 @@ static void lwm2m_recover_work_fn(struct k_work *w)
 {
 	ARG_UNUSED(w);
 
-	atomic_set(&lwm2m_recovering, 1);
+	/* v0.6.69: re-entry guard. Pre-v0.6.69 lwm2m_recovering was set/cleared
+	 * 4× but never tested — three concurrent paths could reschedule and
+	 * doubly enter recover_work_fn (keepalive fail + NETWORK_ERROR event +
+	 * silence watchdog all firing within seconds), incrementing
+	 * lwm2m_recover_attempt twice and possibly memset'ing client_ctx mid-
+	 * REGISTER (probe schedules at +30s while in_recovery was cleared at
+	 * start return). Test-and-set ensures only one cycle runs at a time;
+	 * the rejected caller's k_work_reschedule will re-fire as soon as we
+	 * exit, preserving the recovery intent without double execution. */
+	if (atomic_cas(&lwm2m_recovering, 0, 1) == false) {
+		LOG_DBG("recover_work_fn: re-entry blocked (already recovering)");
+		return;
+	}
+	/* v0.6.70 mesh-gated recovery: if Thread isn't attached, the LwM2M
+	 * stack literally cannot reach the server — DNS-SD will time out,
+	 * rd_client_start will fail, attempts climb fast. After
+	 * MAX_ATTEMPTS=10 the COLD reboot fires, but rebooting doesn't bring
+	 * the mesh back; we just power-cycle into another mass-attach storm
+	 * (worsening the brownout if many boards do it together). Defer until
+	 * the eager-reattach hook in thread_state_changed_cb fires us. */
+	struct otInstance *ot_chk = openthread_get_default_instance();
+	otDeviceRole role_chk = ot_chk ? otThreadGetDeviceRole(ot_chk)
+					: OT_DEVICE_ROLE_DISABLED;
+	if (role_chk < OT_DEVICE_ROLE_CHILD) {
+		LOG_DBG("recover_work_fn: Thread not attached (role=%d), "
+			"deferring until mesh recovers", (int)role_chk);
+		atomic_set(&lwm2m_recovering, 0);
+		atomic_set(&lwm2m_diag_in_recovery, 0);
+		return;
+	}
 	atomic_set(&lwm2m_diag_in_recovery, 1);
 	/* recover_count (RID 15) NOT incremented here. It's now incremented
 	 * from the event handlers that detect the failure (Bug B fix). The
@@ -904,11 +1299,21 @@ static void lwm2m_recover_work_fn(struct k_work *w)
 		k_uptime_get() / 1000);
 
 	if (lwm2m_recover_attempt > CONFIG_AMI_LWM2M_RECOVER_MAX_ATTEMPTS) {
+		/* v0.6.68: escalate to COLD instead of WARM. Field forensics on
+		 * v0.6.67 2h soak caught the failure WARM does NOT cover: 8/30
+		 * boards entered a deadlock where the LwM2M engine was wedged
+		 * but Thread session looked superficially OK. WARM preserved
+		 * the Thread session through the reboot but did NOT clear the
+		 * underlying mesh-attach corruption — those boards re-entered
+		 * the same loop. COLD fully reinits OpenThread + LwM2M; we pay
+		 * ~30-60s of re-attach but escape the pathological state every
+		 * time. Worst case (e.g. server outage) the noreg_boots backoff
+		 * already prevents reboot storms. */
 		LOG_ERR("LwM2M engine: max restart attempts (%d) reached, "
-			"scheduling soft (warm) reboot to preserve Thread session",
+			"scheduling COLD reboot to escape pathological state",
 			CONFIG_AMI_LWM2M_RECOVER_MAX_ATTEMPTS);
 		lwm2m_diag_record_error(-ETIMEDOUT);
-		ami_reboot_drain(SYS_REBOOT_WARM, "max-recover-attempts");
+		ami_reboot_drain(SYS_REBOOT_COLD, "max-recover-attempts");
 		/* unreachable */
 	}
 
@@ -928,17 +1333,25 @@ static void lwm2m_recover_work_fn(struct k_work *w)
 			lwm2m_diag_record_error(dns_ret);
 			atomic_set(&lwm2m_recovering, 0);
 			atomic_set(&lwm2m_diag_in_recovery, 0);
-			/* Don't schedule a follow-up here — recover_count was
-			 * already incremented by the caller (event handler /
-			 * watchdog). Let the next failure event re-trigger us. */
+			/* v0.6.69 audit P1: schedule explicit retry so a persistent
+			 * SRP/DNS-SD outage eventually trips the MAX_ATTEMPTS COLD
+			 * escalation. Pre-v0.6.69 we relied on "the next failure
+			 * event" — but if the engine is wedged pre-DNS, no event
+			 * fires, and the board waits for silence-watchdog (15 min in
+			 * v0.6.68). Direct reschedule with backoff makes the
+			 * escalation chain self-driving even under server outage. */
+			uint32_t next_s = lwm2m_recover_backoff_s(
+				lwm2m_recover_attempt + 1);
+			k_work_reschedule(&lwm2m_recover_work,
+					  K_SECONDS(next_s));
 			return;
 		}
 	}
 
-	LOG_INF("LwM2M engine: restart attempt %d/%d (server=%s)",
+	LOG_INF("LwM2M engine: restart attempt %d/%d (server=%.*s)",
 		lwm2m_recover_attempt,
 		CONFIG_AMI_LWM2M_RECOVER_MAX_ATTEMPTS,
-		lwm2m_server_uri);
+		(int)sizeof(lwm2m_server_uri), lwm2m_server_uri);
 
 	LOG_INF("calling lwm2m_rd_client_stop");
 	int ret_stop = lwm2m_rd_client_stop(&client_ctx, rd_client_event, false);
@@ -968,7 +1381,13 @@ static void lwm2m_recover_work_fn(struct k_work *w)
 			   atomic_get(&lwm2m_diag_reg_success));
 		k_work_reschedule(&lwm2m_recover_probe,
 				  K_SECONDS(LWM2M_RECOVER_PROBE_S));
-		atomic_set(&lwm2m_recovering, 0);
+		/* v0.6.69: DO NOT clear lwm2m_recovering here. The engine is
+		 * mid-REGISTER for the next LWM2M_RECOVER_PROBE_S; clearing
+		 * the flag would let a concurrent fail event re-enter
+		 * recover_work_fn and memset(client_ctx) on top of the
+		 * in-flight registration. The flag is now cleared either by
+		 * the probe (success or scheduled retry) or by
+		 * REGISTRATION_COMPLETE / REGISTRATION_FAILURE handlers. */
 		return;
 	}
 
@@ -1010,7 +1429,13 @@ static void lwm2m_recover_probe_fn(struct k_work *w)
 		LOG_INF("recover_probe: REGISTRATION_COMPLETE seen "
 			"(reg_success %u→%u). Restart truly succeeded.",
 			baseline, current);
-		/* Counter reset already happened in REGISTRATION_COMPLETE path. */
+		/* Counter reset already happened in REGISTRATION_COMPLETE path.
+		 * v0.6.69: release recover-in-flight guard now that registration
+		 * is confirmed. REGISTRATION_COMPLETE event handler also clears
+		 * the in-recovery flag; double-clear is safe (atomic_set is
+		 * idempotent). */
+		atomic_set(&lwm2m_recovering, 0);
+		atomic_set(&lwm2m_diag_in_recovery, 0);
 		return;
 	}
 
@@ -1022,6 +1447,11 @@ static void lwm2m_recover_probe_fn(struct k_work *w)
 	LOG_WRN("recover_probe: SILENT FAILURE — reg_success unchanged at %u "
 		"after %ds since start(). Re-scheduling recover in %us",
 		current, LWM2M_RECOVER_PROBE_S, next_s);
+	/* v0.6.69: release the guard so the re-scheduled recover_work_fn can
+	 * actually enter. Without this the test-and-set added in v0.6.69 would
+	 * permanently block re-entry after a silent failure. */
+	atomic_set(&lwm2m_recovering, 0);
+	atomic_set(&lwm2m_diag_in_recovery, 0);
 	k_work_reschedule(&lwm2m_recover_work, K_SECONDS(next_s));
 }
 
@@ -1066,21 +1496,39 @@ static void rd_client_event(struct lwm2m_ctx *client,
 			lwm2m_diag_reset_noreg_boots();
 			k_work_cancel_delayable(&boot_watchdog_work);
 			LOG_INF("Boot watchdog disarmed (first REGISTER complete)");
-#if defined(CONFIG_BOOTLOADER_MCUBOOT)
-			/* v0.6.27 OTA: confirm the running image as permanent.
-			 * If we just booted a freshly-OTA'd image (MCUboot left it
-			 * in TEST/pending state), reaching a server-ACKed REGISTER
-			 * proves the new firmware can get online — make it stick.
-			 * If we DON'T reach here (new image can't register), MCUboot
-			 * reverts to the prior image on the next reset = free
-			 * rollback. Idempotent / cheap when already confirmed. */
-			if (!boot_is_img_confirmed()) {
-				int crc = boot_write_img_confirmed();
-				LOG_WRN("OTA: image confirmed permanent (rc=%d)", crc);
+			/* v0.6.71 P0.3 + P0.1: confirm SUSTAINED, not on first REGISTER.
+			 *
+			 * Pre-v0.6.71: confirmed permanent on first
+			 * REGISTRATION_COMPLETE event. Risk: a board could complete
+			 * one REGISTER, immediately wedge on a later code path (DLMS
+			 * deadlock, Object 33001 race, etc.), and we'd never roll
+			 * back to the prior known-good image because the bad image
+			 * was already marked permanent.
+			 *
+			 * v0.6.71 schedules a delayed-work check at
+			 * CONFIG_AMI_OTA_CONFIRM_DELAY_S after the FIRST register.
+			 * That work re-checks lwm2m_connected and keepalive_emit_count
+			 * — both must indicate sustained health — before writing the
+			 * confirm flag. If the board crashes or rebooots before the
+			 * delay expires, MCUboot reverts on the next boot. */
+			/* Always schedule the stable-marker work — it covers
+			 * both OTA confirm (if needed) AND boot_burst reset. */
+			if (!atomic_get(&lwm2m_ota_confirm_scheduled)) {
+				atomic_set(&lwm2m_ota_confirm_scheduled, 1);
+				k_work_reschedule(&lwm2m_ota_confirm_work,
+					K_SECONDS(CONFIG_AMI_OTA_CONFIRM_DELAY_S));
+				LOG_INF("stable-marker scheduled in %ds "
+					"(must stay connected + ka>=1)",
+					CONFIG_AMI_OTA_CONFIRM_DELAY_S);
 			}
-#endif
 		}
 		k_work_cancel_delayable(&lwm2m_recover_work);
+		/* v0.6.69: release recover-in-flight guard. Without this, after
+		 * REGISTRATION_COMPLETE the next recover_work_fn invocation would
+		 * find lwm2m_recovering still set from the previous attempt and
+		 * silently no-op. */
+		atomic_set(&lwm2m_recovering, 0);
+		atomic_set(&lwm2m_diag_in_recovery, 0);
 		/* v0.6.31 — enter steady-operation LED mode: brief GREEN flash to
 		 * confirm "registered", then the LED goes OFF (idle) and only blinks
 		 * on each TX (ami_led_tx_pulse from the meter push). This replaces the
@@ -1175,6 +1623,26 @@ static void rd_client_event(struct lwm2m_ctx *client,
 			CONFIG_AMI_LWM2M_RECOVER_MAX_ATTEMPTS, backoff_s);
 		k_work_reschedule(&lwm2m_recover_work, K_SECONDS(backoff_s));
 		break;
+	/* v0.6.69 audit P0: events previously routed to default: were silently
+	 * swallowed — ENGINE_SUSPENDED and SERVER_DISABLED in particular leave
+	 * the board "alive but mute" without any recover wired up, and the
+	 * keepalive thread cannot detect them because lwm2m_notify_observer()
+	 * still returns 0 (the notify is queued but never sent). Treat them all
+	 * as failure events that schedule recover_work + record error so the
+	 * silence-watchdog/keepalive-fail/probe machinery can take ownership. */
+	case LWM2M_RD_CLIENT_EVENT_ENGINE_SUSPENDED:
+	case LWM2M_RD_CLIENT_EVENT_SERVER_DISABLED:
+	case LWM2M_RD_CLIENT_EVENT_DEREGISTER:
+	case LWM2M_RD_CLIENT_EVENT_DEREGISTER_FAILURE:
+	case LWM2M_RD_CLIENT_EVENT_BOOTSTRAP_REG_FAILURE:
+		LOG_WRN("LwM2M event %d (audit-handled) — scheduling recover",
+			client_event);
+		lwm2m_connected = false;
+		lwm2m_diag_record_error(-ESHUTDOWN);
+		lwm2m_diag_inc_recover_count();
+		backoff_s = lwm2m_recover_backoff_s(lwm2m_recover_attempt + 1);
+		k_work_reschedule(&lwm2m_recover_work, K_SECONDS(backoff_s));
+		break;
 	default:
 		LOG_DBG("LwM2M event: %d", client_event);
 		break;
@@ -1254,7 +1722,15 @@ static int lwm2m_setup(void)
 	 */
 	lwm2m_set_u32(&LWM2M_OBJ(1, 0, 2),
 		      CONFIG_AMI_LWM2M_NOTIFY_MIN_INTERVAL_MS / 1000);
-	lwm2m_set_u32(&LWM2M_OBJ(1, 0, 3), 0);
+	/* v0.7.1: /1/0/3 default pmax = 60 s. The data-cadence guarantee now
+	 * lives in the FIRMWARE: every observed resource notifies at least
+	 * once a minute even if the value never changes, independent of
+	 * whether the server's Write-Attributes (pmin/pmax) arrive or stick.
+	 * Empirical motivation (2026-06-11): TB Edge's per-resource pmax
+	 * applied at registration decayed after ~25 min on a 30-node fleet —
+	 * delivery ratio fell from 83% to ~33%. The server can still override
+	 * per-resource via Write-Attributes; this is only the default. */
+	lwm2m_set_u32(&LWM2M_OBJ(1, 0, 3), 60);
 
 	/* Device Object (3) */
 	lwm2m_set_res_buf(&LWM2M_OBJ(3, 0, 0),
@@ -1283,6 +1759,7 @@ static int lwm2m_setup(void)
 		LOG_ERR("Failed to create Power Meter inst: %d", ret);
 	}
 
+#ifndef CONFIG_AMI_MINIMAL_AMI
 	/* Create IPSO Temperature Sensor instance (3303/0) — SoC die temp.
 	 * v0.6.12+: standard LwM2M observation path so the server reads
 	 *   /3303/0/5700  →  current die temp in °C (Float)
@@ -1302,10 +1779,12 @@ static int lwm2m_setup(void)
 		lwm2m_set_f64(&LWM2M_OBJ(3303, 0, 5604), rmax);
 		LOG_INF("IPSO Temp Sensor (3303/0) initialized [-40..125 Cel]");
 	}
+#endif
 
 	/* Initialize firmware update callbacks (Object 5) */
 	init_firmware_update();
 
+#ifndef CONFIG_AMI_MINIMAL_AMI
 	/* Initialize Thread connectivity monitoring */
 	init_thread_diag_object();
 	init_connmon_thread();
@@ -1315,7 +1794,9 @@ static int lwm2m_setup(void)
 	init_thread_neighbor_object();
 	init_thread_commission_object();
 	init_thread_cli_object();
+#endif
 
+#ifndef CONFIG_AMI_MINIMAL_AMI
 	/* v0.6.35: IPSO Object 3311 Light Control — server-controlled RGB LED.
 	 * Uses Zephyr's built-in ipso_light_control (CONFIG_LWM2M_IPSO_LIGHT_CONTROL),
 	 * we only register the post-write callbacks for /5706 Colour, /5850 On/Off,
@@ -1328,6 +1809,22 @@ static int lwm2m_setup(void)
 	 * optimise the router set without USB reflash. Requires FTD compile-time
 	 * (CONFIG_OPENTHREAD_FTD) for become_router to actually work. */
 	thread_role_init();
+#endif
+
+	/* v0.6.42: LED turns RED if the previous reset was a brownout. Visible
+	 * fault indicator across the fleet — every other node stays dark. Reset
+	 * cause was captured at boot in capture_reset_reason().
+	 * v0.6.49: gated under !LED_QUIET_MODE — the brownout indicator sets
+	 * manual_mode=true which bypasses the system-status path, so it has to
+	 * be disabled at the call site to honour the production-quiet contract. */
+#ifndef CONFIG_AMI_LED_QUIET_MODE
+	{
+		uint32_t cause = (uint32_t)atomic_get(&lwm2m_diag_last_reset_reason);
+		if (cause & RESET_BROWNOUT) {
+			light_control_set_brownout_indicator();
+		}
+	}
+#endif
 
 	LOG_INF("LwM2M objects configured");
 	LOG_INF("  Server (DNS-SD):   %s", lwm2m_server_uri);
@@ -1998,6 +2495,15 @@ static void update_sensors(void)
 			LOG_ERR("Meter poll failed %d consecutive times — "
 				"NO data sent to server (all stale)",
 				consecutive_meter_failures);
+			/* v0.6.69 audit P1: a wedged meter previously had zero
+			 * propagation path to the operator — the LwM2M side stayed
+			 * registered and TB Edge saw recent but stale timestamps.
+			 * Record the fault so it shows up in last_error_code
+			 * telemetry (already wired to Object 33000), and force a
+			 * driver re-init on next cycle so a transient UART/RS-485
+			 * glitch can self-heal without external reset. */
+			lwm2m_diag_record_error(-EIO);
+			meter_initialized = false;
 		} else {
 			LOG_WRN("Meter poll failed (%d) — keeping last values "
 				"(%d/%d failures)", ret,
@@ -2018,6 +2524,33 @@ static void update_sensors(void)
 	meter_push_to_lwm2m(&last_readings);
 }
 
+#ifdef CONFIG_AMI_LWM2M_SEND
+/* v0.7.2: proactively SEND the minimal AMI resource set (LwM2M 1.1) so the
+ * per-poll cadence is guaranteed by the firmware, independent of whether the
+ * server established an Observe on each resource. The 5 paths mirror the
+ * production minimal profile: voltage / active power / power factor /
+ * active energy / frequency. See CONFIG_AMI_LWM2M_SEND help for the why. */
+static void ami_send_minimal_set(void)
+{
+	if (!lwm2m_connected) {
+		return;
+	}
+	static const struct lwm2m_obj_path paths[] = {
+		LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_TENSION_R_RID),     /* voltage */
+		LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_3P_ACTIVE_POWER_RID),/* activePower */
+		LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_3P_POWER_FACTOR_RID),/* powerFactor */
+		LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_ACTIVE_ENERGY_RID), /* activeEnergy */
+		LWM2M_OBJ(POWER_METER_OBJECT_ID, 0, PM_FREQUENCY_RID),     /* frequency */
+	};
+	int ret = lwm2m_send_cb(&client_ctx, paths, ARRAY_SIZE(paths), NULL);
+	if (ret < 0) {
+		LOG_WRN("lwm2m_send failed: %d", ret);
+	} else {
+		LOG_DBG("lwm2m_send: pushed %d billing/PQ resources", ARRAY_SIZE(paths));
+	}
+}
+#endif /* CONFIG_AMI_LWM2M_SEND */
+
 /* ---- Dedicated DLMS poll thread ---- */
 static void dlms_thread_entry(void *p1, void *p2, void *p3)
 {
@@ -2031,6 +2564,9 @@ static void dlms_thread_entry(void *p1, void *p2, void *p3)
 		dlms_thread_running = true;
 
 		update_sensors();
+#ifdef CONFIG_AMI_LWM2M_SEND
+		ami_send_minimal_set();
+#endif
 
 		dlms_thread_running = false;
 	}
@@ -2249,19 +2785,85 @@ static void apply_otbr_dataset(void)
 	 * to avoid self-heating with nodes clustered close to OTBR, high enough
 	 * to maintain LQI=3. Was 20 dBm (max) in v0.6.2 and earlier; that level
 	 * heated the SoC enough to risk thermal-induced reboots in tight
-	 * cabinet deployments. */
-	otPlatRadioSetTransmitPower(ot, CONFIG_AMI_TX_POWER_DBM);
-	LOG_INF("TX power set to %d dBm", CONFIG_AMI_TX_POWER_DBM);
+	 * cabinet deployments.
+	 *
+	 * Mirror of Espressif's CONFIG_ESP_PHY_REDUCE_TX_POWER (which Zephyr does
+	 * not source): if the previous reset was a brownout, drop TX to
+	 * CONFIG_AMI_POST_BRN_TX_POWER_DBM for THIS boot. The chip needs the next
+	 * batch of radio bursts to NOT dip the rail again so it can stabilize;
+	 * weak TX gives that margin. Mesh range will be short (a few meters) but
+	 * enough to stay attached to a nearby parent. On the next clean reboot
+	 * (POR/SW/WDOG) the standard AMI_TX_POWER_DBM is used. */
+	int8_t tx_power = CONFIG_AMI_TX_POWER_DBM;
+#ifdef CONFIG_AMI_POST_BRN_REDUCE_TX
+	{
+		uint32_t cause = (uint32_t)atomic_get(&lwm2m_diag_last_reset_reason);
+		if (cause & RESET_BROWNOUT) {
+			tx_power = CONFIG_AMI_POST_BRN_TX_POWER_DBM;
+			LOG_WRN("post-BRN: dropping TX to %d dBm to break brownout cascade",
+				tx_power);
+		}
+	}
+#endif
+	otPlatRadioSetTransmitPower(ot, tx_power);
+	LOG_INF("TX power set to %d dBm", tx_power);
 
-	/* Enable IPv6 (this triggers otPlatRadioEnable → radio SLEEP) */
-	otIp6SetEnabled(ot, true);
-	LOG_INF("IPv6 enabled, radio state: %d",
-		(int)otPlatRadioGetState(ot));
+	/* v0.6.69 audit P1: check return — prior code discarded the otError.
+	 * v0.6.69.1 FIX: only treat hard failures as fatal. OT_ERROR_ALREADY
+	 * (and likely OT_ERROR_INVALID_STATE in some Zephyr OT versions where
+	 * the wrapper auto-enables earlier) are benign — they mean the radio
+	 * is already in the desired state. Pre-fix logic rebooted on any non-
+	 * OT_ERROR_NONE return; if Zephyr's wrapper enables IPv6 implicitly
+	 * before this call (some 4.x versions do, depending on net_config),
+	 * we'd get OT_ERROR_ALREADY and infinite reboot loop.
+	 * Field forensics: v0.6.69 flashed to L30 left USB-Serial-JTAG silent
+	 * post-flash, consistent with an early boot-time reboot loop. */
+	otError ot_err = otIp6SetEnabled(ot, true);
+	LOG_INF("IPv6 enabled, radio state: %d (err=%d)",
+		(int)otPlatRadioGetState(ot), ot_err);
+	if (ot_err != OT_ERROR_NONE && ot_err != OT_ERROR_ALREADY &&
+	    ot_err != OT_ERROR_INVALID_STATE) {
+		LOG_ERR("otIp6SetEnabled HARD FAIL (err=%d) — COLD reboot", ot_err);
+		lwm2m_diag_record_error(-EIO);
+		ami_reboot_drain(SYS_REBOOT_COLD, "ip6-enable-failed");
+		/* unreachable */
+	}
 
 	/* Start Thread (this triggers otPlatRadioReceive → radio RX) */
-	otThreadSetEnabled(ot, true);
-	LOG_INF("Thread started, radio state: %d",
-		(int)otPlatRadioGetState(ot));
+	ot_err = otThreadSetEnabled(ot, true);
+	LOG_INF("Thread started, radio state: %d (err=%d)",
+		(int)otPlatRadioGetState(ot), ot_err);
+	if (ot_err != OT_ERROR_NONE && ot_err != OT_ERROR_ALREADY &&
+	    ot_err != OT_ERROR_INVALID_STATE) {
+		LOG_ERR("otThreadSetEnabled HARD FAIL (err=%d) — COLD reboot", ot_err);
+		lwm2m_diag_record_error(-EIO);
+		ami_reboot_drain(SYS_REBOOT_COLD, "thread-enable-failed");
+		/* unreachable */
+	}
+
+	/* v0.6.65: SetRouterUpgradeThreshold(10) — raised from v0.6.64's 3 after
+	 * field evidence on 2026-06-04 showed mesh saturation: with 30 boards
+	 * in PSU + threshold=3, the mesh capped at 2-3 active routers, each
+	 * carrying ~10 children. MAC counters showed TxDirectMaxRetryExpiry=324
+	 * (failed unicast retries) and 5 boards silently fell out of mesh via
+	 * "Client unRegistration" when their parent router went transiently down.
+	 * Threshold=10 lets up to 10 routers form (vs default 16) — load-balances
+	 * children ~3:1 per router with plenty of headroom, but still well under
+	 * the simultaneous-promotion thrashing risk that v0.6.57/58 hit with
+	 * default 16. Called AFTER SetEnabled per OpenThread API. */
+#ifdef CONFIG_OPENTHREAD_FTD
+	/* Paired thresholds with a 2-router hysteresis gap (upgrade=10, downgrade=12).
+	 * Upgrade lets up to ~10 routers form; downgrade kicks in only if a router
+	 * sees >12 neighbours, so the steady state stays inside [10,12] with no
+	 * oscillation. Both are RW-overridable at runtime via LwM2M Object 33001
+	 * resources /2 (upgrade) and /3 (downgrade) — see lwm2m_obj_thread_role.c.
+	 * tools/topology_optimizer.py can re-balance the active router set per
+	 * node using those resources without a reflash. */
+	otThreadSetRouterUpgradeThreshold(ot, 10);
+	otThreadSetRouterDowngradeThreshold(ot, 12);
+	LOG_INF("FTD boot tune: router thresholds upgrade=10 downgrade=12 "
+		"(LwM2M /33001/0/{2,3} for runtime override)");
+#endif
 
 	openthread_mutex_unlock();
 }
@@ -2333,6 +2935,49 @@ int main(void)
 {
 	int ret;
 
+	/* v0.7.4: latch which reboot path caused this boot (RID 37) and
+	 * invalidate the tag, BEFORE anything else can re-stamp or reboot. */
+	ami_reboot_capture_boot_code();
+
+	/* v0.6.72 P0 — BOOT STAGGER (must run before ANY peripheral init).
+	 *
+	 * Problem solved: when N boards share a USB hub or power rail and one
+	 * brownout-resets, the rest tend to do the same milliseconds later
+	 * (coordinated by the shared rail dip). Recovery is also synchronized
+	 * because every board's main() runs the same init sequence at the same
+	 * speed — Thread radio init at ~T+500ms, mesh attach attempts starting
+	 * at ~T+2s on ALL boards together → mass TX → mass current spike →
+	 * cascading brownout repeats.
+	 *
+	 * Field forensics (HUB with sufficient external PSU, 7 boards, 2026-06-07):
+	 *   - rr=BROWNOUT climbed TR by ~5 per board per 30 min after a single
+	 *     brownout seed event
+	 *   - cohort plateau at 4/7 active despite firmware-level recovery fixes
+	 *     because the rail couldn't survive the next coordinated mass-TX
+	 *   - external PSU was confirmed sufficient — so the bottleneck is the
+	 *     per-port USB or the inrush headroom inside the cable / connector,
+	 *     not bulk capacity
+	 *
+	 * Fix: each board sleeps a random 0..CONFIG_AMI_BOOT_STAGGER_MAX_MS at
+	 * the very start of main(), BEFORE any peripheral / radio / NVS write
+	 * is initialized. With 30s default spread across N boards, the prob of
+	 * two boards hitting the radio-init current peak in the same 100ms
+	 * window drops from ~100% to ~0.3%. Cost: 0..30 s additional boot
+	 * latency per board (operator-invisible — boards are not registered
+	 * during boot anyway).
+	 *
+	 * sys_rand32_get() relies on CONFIG_ENTROPY_GENERATOR; if that's off
+	 * the value is deterministic and the stagger collapses — verify before
+	 * trusting in field.
+	 */
+	{
+		uint32_t stagger_ms = sys_rand32_get() %
+				      ((uint32_t)CONFIG_AMI_BOOT_STAGGER_MAX_MS + 1U);
+		k_sleep(K_MSEC(stagger_ms));
+		LOG_INF("boot-stagger: waited %u ms (cap=%d)", stagger_ms,
+			CONFIG_AMI_BOOT_STAGGER_MAX_MS);
+	}
+
 	/* v0.6.21: WS2812 LED init FIRST, before anything else.
 	 *
 	 * On power-up the WS2812 latches whatever data appears on GPIO8 from
@@ -2355,8 +3000,13 @@ int main(void)
 	 * Cost: ~30 us of busy-wait for the WS2812 frame send. Safe at main()
 	 * entry because the GPIO driver is initialized at PRE_KERNEL_1.
 	 */
-	ami_led_init();
-	ami_set_rgb(AMI_RGB_OFF);
+	/* v0.6.55: LED driver fully no-op'd in src/rgb_led.c. Firmware never
+	 * touches GPIO 8 so the WS2812 retains its power-up latch (per-board
+	 * variable but stable). See project_spi_breaks_thread_radio memory and
+	 * v0.6.46-v0.6.54 LED iteration history for the trade-offs.
+	 * For uniform OFF: physical tape over the LED. */
+	ami_led_init();   /* no-op */
+	ami_set_rgb(AMI_RGB_OFF);   /* no-op (still issued for consistency) */
 
 	LOG_INF("=== AMI LwM2M Node v%s ===", CLIENT_FIRMWARE_VER);
 	LOG_INF("Board: %s", CONFIG_BOARD);
@@ -2384,6 +3034,34 @@ int main(void)
 			LOG_WRN("settings_subsys_init failed: %d", s_ret);
 		}
 		capture_reset_reason();
+
+		/* v0.6.71 P0.1 — boot-burst anti-brick rate limiter.
+		 *
+		 * Read the persisted boot_burst counter (set by ami_settings_load_cb
+		 * above). If it's over the threshold we're in a crash loop: force a
+		 * long pre-init sleep BEFORE incrementing it again, so:
+		 *  (a) flash NVS writes per unit-time are clamped (wear protection),
+		 *  (b) the operator gets a quiet window to physically intervene,
+		 *  (c) the radio / power rails get time to settle if heat or
+		 *      brownout was the trigger.
+		 *
+		 * The counter is reset to 0 only when the board reaches a
+		 * sustained-healthy state (see lwm2m_diag_reset_boot_burst()
+		 * callers — same path as the v0.6.71 P0.3 OTA confirm). One stable
+		 * boot wipes the burst history. */
+		{
+			uint32_t burst = lwm2m_diag_get_boot_burst();
+			if (burst >= (uint32_t)CONFIG_AMI_BOOT_BURST_MAX) {
+				LOG_ERR("boot-burst limiter: %u consecutive unstable "
+					"boots — throttling %us before init "
+					"(NVS-wear protection)",
+					burst,
+					CONFIG_AMI_BOOT_BURST_THROTTLE_S);
+				k_sleep(K_SECONDS(
+					CONFIG_AMI_BOOT_BURST_THROTTLE_S));
+			}
+			lwm2m_diag_inc_boot_burst();
+		}
 
 		/* Read the last-boot post-mortem snapshot and publish it to
 		 * the Object 33000 backing storage so it surfaces as
@@ -2554,14 +3232,38 @@ int main(void)
 
 	atomic_inc(&lwm2m_diag_reg_attempts);   /* Object 33000 RID 11 */
 	ami_persist_counter(AMI_REG_ATTEMPTS_KEY, &lwm2m_diag_reg_attempts);
+#ifdef CONFIG_AMI_BRN_TEST_NO_LWM2M
+	LOG_WRN("BRN_TEST_NO_LWM2M: skipping lwm2m_rd_client_start. Thread/NVS"
+		" stay active; LwM2M observe/register/block-1 paths are off.");
+#else
 	lwm2m_rd_client_start(&client_ctx, endpoint_name, 0,
 			      rd_client_event, observe_cb);
+#endif
 
 	/* Watchdog (PRIO 5): start the system_workq-based liveness check
 	 * AFTER initial REGISTER is in flight. Boot grace inside the watchdog
 	 * prevents false positives during the first attach + register cycle.
 	 */
 	lwm2m_watchdog_init();
+
+	/* v0.6.67: CoAP keepalive (PRIO 9) — emits a Notify on
+	 * /33000/0/uptime_s every CONFIG_AMI_COAP_KEEPALIVE_PERIOD_S so the
+	 * engine surfaces a dead socket in ~270 s via CoAP CON timeout,
+	 * regardless of how long CONFIG_LWM2M_ENGINE_DEFAULT_LIFETIME is.
+	 * Without this, lifetime=86400 made the silence watchdog the only
+	 * fallback, and it only fires at 2 * lifetime = 48 h.
+	 */
+	coap_keepalive_init();
+
+	/* v0.6.71 P1.5: arm the mesh-alone watchdog. First check at +60 s so we
+	 * have a baseline; subsequent checks every 60 s thereafter. */
+	k_work_reschedule(&mesh_alone_watchdog_work, K_SECONDS(60));
+
+	/* v0.6.73 P0: arm the conn_monitor heartbeat watchdog. Same cadence as
+	 * mesh-alone — every 60 s. Catches the "alive but mute" zombie state
+	 * where Thread/LwM2M REG_UPDATE keeps refreshing other watchdogs but
+	 * the main-loop conn_monitor cycle has wedged. */
+	k_work_reschedule(&conn_monitor_wdog_work, K_SECONDS(60));
 
 	/* Main loop — DLMS poll at configurable interval with smart threshold notify */
 	LOG_INF("Entering sensor loop (DLMS=%ds, conn=%ds, threshold-notify)",
@@ -2571,6 +3273,8 @@ int main(void)
 	update_connectivity_metrics();
 	update_thread_network();
 	update_thread_neighbors();
+	/* v0.6.73 P0: mark first tick to satisfy conn_monitor watchdog */
+	ami_conn_monitor_note_tick();
 	k_sem_give(&dlms_poll_sem);  /* Trigger initial DLMS poll in background */
 	last_dlms_poll_ms = k_uptime_get();
 	int64_t last_conn_update_ms = last_dlms_poll_ms;
@@ -2608,6 +3312,10 @@ int main(void)
 			meter_dump_throttle_stats();   /* v0.20.0 — visibility on suppression rate */
 			last_conn_update_ms = now;
 			conn_update_interval_ms = conn_update_next_interval_ms();
+			/* v0.6.73 P0: heartbeat the conn_monitor watchdog. If this
+			 * never fires for CONFIG_AMI_CONN_MONITOR_WDOG_S seconds,
+			 * the watchdog forces a COLD reboot. */
+			ami_conn_monitor_note_tick();
 		}
 	}
 

@@ -52,8 +52,10 @@ LOG_MODULE_REGISTER(thread_role, LOG_LEVEL_INF);
 
 /* ───────── backing storage ───────── */
 static char    role_buf[16] = "Detached";
-static uint8_t upgrade_thr = 16;
-static uint8_t downgrade_thr = 23;
+/* Defaults match main.c boot tune (v0.6.65). LwM2M server may overwrite at
+ * runtime via /33001/0/2 (upgrade) and /33001/0/3 (downgrade). */
+static uint8_t upgrade_thr = 10;
+static uint8_t downgrade_thr = 12;
 #ifdef CONFIG_OPENTHREAD_FTD
 static bool    router_eligible = true;
 #else
@@ -93,8 +95,10 @@ static otInstance *ot_inst(void) { return openthread_get_default_instance(); }
 static int become_router_cb(uint16_t obj_inst_id, uint8_t *args, uint16_t args_len)
 {
 #ifdef CONFIG_OPENTHREAD_FTD
-	otError err = otThreadBecomeRouter(ot_inst());
-	LOG_INF("Execute become_router -> err=%d", err);
+	otInstance *ot = ot_inst();
+	otThreadSetRouterEligible(ot, true);
+	otError err = otThreadBecomeRouter(ot);
+	LOG_INF("Execute become_router (eligible=true) -> err=%d", err);
 	return (err == OT_ERROR_NONE) ? 0 : -EINVAL;
 #else
 	LOG_WRN("become_router ignored: MTD build");
@@ -104,9 +108,20 @@ static int become_router_cb(uint16_t obj_inst_id, uint8_t *args, uint16_t args_l
 
 static int become_child_cb(uint16_t obj_inst_id, uint8_t *args, uint16_t args_len)
 {
-	otError err = otThreadBecomeChild(ot_inst());
-	LOG_INF("Execute become_child -> err=%d", err);
+#ifdef CONFIG_OPENTHREAD_FTD
+	otInstance *ot = ot_inst();
+	/* v0.6.47 Bug #7 fix: without disabling eligibility, the default
+	 * router_upgrade_threshold (=16) makes the mesh auto-promote the node
+	 * back to Router in ~60s. SetRouterEligible(false) permanently disables
+	 * auto-promotion until become_router is called explicitly. */
+	otThreadSetRouterEligible(ot, false);
+	otError err = otThreadBecomeChild(ot);
+	LOG_INF("Execute become_child (eligible=false) -> err=%d", err);
 	return (err == OT_ERROR_NONE) ? 0 : -EINVAL;
+#else
+	LOG_INF("Execute become_child: MTD build already child");
+	return 0;
+#endif
 }
 
 static int upgrade_thr_post(uint16_t obj_inst_id, uint16_t res_id, uint16_t res_inst_id,

@@ -60,7 +60,12 @@ extern void lwm2m_diag_inc_noreg_boots(void);
 #define LWM2M_WATCHDOG_NOREG_MAX_REBOOTS   5
 #define LWM2M_WATCHDOG_NOREG_BACKOFF_CAP_S 3600
 
-#define LWM2M_WATCHDOG_STACK_SZ       1024
+/* v0.6.63 Bug C fix: was 1024. lwm2m_wdog overflowed at ~5-6 min uptime on
+ * all 5 v0.6.62 boards. Thread-analyzer reported 42% steady-state (432/1024)
+ * but peak during LOG_INF with %s args triggers cbprintf_package_convert
+ * recursion that needs ~3 KB headroom. 4096 matches main-thread stack and
+ * the v0.6.48 ot_radio_workq bump. */
+#define LWM2M_WATCHDOG_STACK_SZ       4096
 /* Cooperative thread (negative prio) cannot be preempted by other coop
  * threads but can preempt preemptive ones. Pick a preemptive priority so
  * it yields to interrupts but still runs ahead of regular workq workers
@@ -82,12 +87,34 @@ void lwm2m_watchdog_emit_event(void)
 	atomic_set(&last_emit_uptime, (uint32_t)(k_uptime_get() / 1000));
 }
 
-/* Computed silence threshold = 2 × default lifetime. e.g. 240s for r1000
- * (lifetime=120). Generous: Updates expected at ~0.8 × lifetime, plus
- * normal CoAP retransmit budget.
+/* v0.6.74: silence threshold lowered to catch the sub-15-min wedge cycle.
+ *
+ * v0.6.68 set floor at 900s (15 min) thinking the failure mode was minutes-
+ * long deadlocks. The v0.6.73 soak (7 boards, 2h, HUB-induced brownouts)
+ * exposed a faster failure: the LwM2M engine enters a CON-timeout cycle
+ * that lasts ~10 min before self-recovering via lwm2m_rd_client_timeout()
+ * → ENGINE_DO_REGISTRATION. While in this cycle:
+ *   - conn_monitor_last_tick keeps advancing (thread alive)
+ *   - notify_observer returns 0 (queue accepted)
+ *   - REG_UPDATE feeds last_emit_uptime (silence watchdog NEVER fires
+ *     because last_emit advances during the natural cycle)
+ *   - BUT actual CoAP CON ACKs don't arrive → TB telemetry frozen
+ *
+ * Net effect: 50% TB-visibility downtime as the cycle repeats. NOT 24/7-
+ * ready. v0.6.74 lowers the floor to 480s (8 min) so silence_watchdog
+ * preempts the natural 10-min engine cycle and forces a faster recovery
+ * via recover_work_fn. Trade-off: slightly higher CON re-transmit traffic;
+ * acceptable for the gain in data freshness.
+ *
+ * Boards in stable steady state still see last_emit refreshed every 300s
+ * (keepalive period); 480s gives 60% headroom over one keepalive cycle,
+ * so false positives stay rare. Adjust upward (e.g. 720s = 12 min) if
+ * production logs show spurious silence_watchdog firings.
  */
-#define LWM2M_WATCHDOG_SILENCE_S \
-	(2 * CONFIG_LWM2M_ENGINE_DEFAULT_LIFETIME)
+#define LWM2M_WATCHDOG_SILENCE_S                                      \
+	(((CONFIG_AMI_COAP_KEEPALIVE_PERIOD_S) * 3U) > 480U             \
+	 ? ((CONFIG_AMI_COAP_KEEPALIVE_PERIOD_S) * 3U)                  \
+	 : 480U)
 
 static void lwm2m_watchdog_thread(void *p1, void *p2, void *p3)
 {

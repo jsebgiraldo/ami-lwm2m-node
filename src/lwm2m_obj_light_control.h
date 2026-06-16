@@ -16,4 +16,9 @@ int light_control_init(void);
  * colour every TX cycle. Cleared only by reboot (factory state = automatic). */
 bool light_control_manual_mode(void);
 
+/* v0.6.42: set LED to RED + lock manual_mode. Called by main.c when the
+ * previous boot ended in a BROWNOUT reset, so the operator can identify
+ * failing nodes visually across the fleet. LED off otherwise. */
+void light_control_set_brownout_indicator(void);
+
 #endif /* LWM2M_OBJ_LIGHT_CONTROL_H */

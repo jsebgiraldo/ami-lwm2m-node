@@ -1,0 +1,22 @@
+{
+  "annotations": {"list": []},
+  "title": "AMI - Fleet Health (TB Edge)",
+  "uid": "ami-fleet",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-6h", "to": "now"},
+  "timezone": "browser",
+  "panels": [
+    {"id": 1, "title": "Devices latest snapshot", "type": "table",
+     "gridPos": {"x": 0, "y": 0, "w": 24, "h": 12},
+     "datasource": {"type": "postgres", "uid": "tb-edge-postgres"},
+     "targets": [{"refId": "A", "format": "table", "rawQuery": true,
+       "rawSql": "SELECT d.name AS device, k.key, COALESCE(l.long_v::text, l.dbl_v::text, l.str_v, l.bool_v::text) AS value, to_timestamp(l.ts/1000) AS updated FROM ts_kv_latest l JOIN device d ON l.entity_id = d.id JOIN ts_kv_dictionary k ON l.key = k.key_id WHERE d.name LIKE 'ami-esp32c6-%' AND k.key IN ('total_resets', 'last_reset_reason', 'uptime_s', 'notify_emitted', 'recover_count', 'watchdog_count', 'reg_attempts', 'reg_success') ORDER BY d.name, k.key"}]},
+    {"id": 2, "title": "total_resets per device", "type": "timeseries",
+     "gridPos": {"x": 0, "y": 12, "w": 24, "h": 10},
+     "datasource": {"type": "postgres", "uid": "tb-edge-postgres"},
+     "targets": [{"refId": "A", "format": "time_series", "rawQuery": true,
+       "rawSql": "SELECT to_timestamp(t.ts/1000) AS time, d.name AS metric, t.long_v AS value FROM ts_kv_latest t JOIN device d ON t.entity_id = d.id JOIN ts_kv_dictionary k ON t.key = k.key_id WHERE k.key = 'total_resets' AND d.name LIKE 'ami-esp32c6-%' AND t.long_v IS NOT NULL ORDER BY t.ts"}]}
+  ]
+}

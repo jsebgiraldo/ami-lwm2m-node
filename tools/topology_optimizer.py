@@ -38,7 +38,10 @@ PREFIX = "ami-esp32c6-"
 def read_node(e, did):
     """Returns dict with role, rssi, lqi, eligible, suf-based fields."""
     out = {}
-    try: out["role"] = e.read_str(did, "/33001/0/4")
+    try:
+        # /33001/0/4 buffer is 16B fixed; LwM2M-engine returns "Router\x00\x00..."
+        # so strip nulls/whitespace before comparing to literals.
+        out["role"] = (e.read_str(did, "/33001/0/4") or "?").rstrip("\x00").strip() or "?"
     except Exception: out["role"] = "?"
     # Object 4 (Connectivity Monitoring) — RSSI is /4/0/2, LQI /4/0/3 in our setup
     try: out["rssi"] = e.read_int(did, "/4/0/2")

@@ -172,6 +172,15 @@ def apply_alarms(tb: TB, dry: bool):
 # Resources to ADD to the device profile's LwM2M observe config (Phase 2).
 # Each: lwm2m path -> (telemetry key name, pmin seconds, pmax seconds).
 # pmin=0 => notify as soon as the value changes; pmax => heartbeat ceiling.
+#
+# 2026-05-27 (v0.6.43 forensic): cross-check of the deployed device profile
+# revealed 18 paths listed in keyName + telemetry but NOT in `observe` →
+# TB Edge never installed Observe subs → those resources only carried their
+# initial Registration value forever ("frozen telemetry"). Direct proof:
+# uptime_s on f854/f7e8/f6e4 stuck at the value reported ~3 h ago even though
+# nodes were active and total_resets (which IS in observe) advanced every
+# minute. Adding the missing paths below makes TB Edge push Observes on the
+# next profile save so the named telemetry actually flows.
 OBSERVE_ADDITIONS = {
     # Object 33000 v2.2 RIDs 21/22 — boot reliability counters. total_resets
     # is the un-fakeable proof the v0.6.17 real-liveness watchdog fired; it
@@ -182,6 +191,80 @@ OBSERVE_ADDITIONS = {
     # 5602 = max measured since boot. Thermal headroom monitoring.
     "/3303_1.1/0/5700": ("temperature", 60, 900),
     "/3303_1.1/0/5602": ("temperature_max", 300, 3600),
+
+    # ---- v0.6.43 forensic additions: previously frozen-telemetry resources ----
+    # Object 33000 v2.2 RIDs 10-16 — liveness + LwM2M engine counters. These
+    # were the missing diagnostic signals: with uptime_s unobserved we could
+    # not tell a hung node from an alive one whose other resources happen
+    # not to change. notify_emitted is the engine-side proof that the
+    # firmware's Observe-Notify path is reaching the wire (the per-resource
+    # send_count in dlms_meter.c only proves lwm2m_notify_observer() was
+    # CALLED, not that a packet was emitted — that requires an active
+    # subscription, which until now did not exist for /10242/0/* either).
+    "/33000_1.0/0/10": ("uptime_s",         60, 300),
+    "/33000_1.0/0/11": ("reg_attempts",      0, 3600),
+    "/33000_1.0/0/12": ("reg_success",       0, 3600),
+    "/33000_1.0/0/13": ("notify_emitted",   60, 900),
+    "/33000_1.0/0/14": ("notify_throttled", 60, 900),
+    "/33000_1.0/0/15": ("recover_count",     0, 3600),
+    "/33000_1.0/0/16": ("restart_success",   0, 3600),
+
+    # Object 10242 v1.0 — DLMS meter resources beyond R-phase V/I/P that were
+    # already in observe. Phase R completion (Q/S/PF), then 3-phase totals,
+    # then energy accumulators and grid frequency. pmin matches firmware
+    # NOTIFY_MIN_INTERVAL (60 s) for instantaneous quantities; energies use
+    # 300 s since they accumulate monotonically. pmax 900 s/3600 s gives a
+    # bounded heartbeat even on perfectly steady loads.
+    "/10242_1.0/0/7":  ("reactivePower",    60, 900),
+    "/10242_1.0/0/10": ("apparentPower",    60, 900),
+    "/10242_1.0/0/11": ("powerFactor",      60, 900),
+    "/10242_1.0/0/34": ("activePower3P",    60, 900),
+    "/10242_1.0/0/35": ("reactivePower3P",  60, 900),
+    "/10242_1.0/0/38": ("apparentPower3P",  60, 900),
+    "/10242_1.0/0/39": ("powerFactor3P",    60, 900),
+    "/10242_1.0/0/41": ("activeEnergy",    300, 3600),
+    "/10242_1.0/0/42": ("reactiveEnergy",  300, 3600),
+    "/10242_1.0/0/45": ("apparentEnergy",  300, 3600),
+    "/10242_1.0/0/49": ("frequency",        60, 900),
+
+    # ---- v0.6.69 audit P3: previously-missing diag observe entries ----
+    # The firmware has been notifying these resources since v0.6.43+, but
+    # without TB-side Observe subscriptions the values never reached
+    # dashboards (the "frozen telemetry" pattern documented in
+    # project_tb_observe_list_bug.md). The 2026-06-06 soak left 8/30 boards
+    # stuck and we could not tell from TB whether they were rebooting,
+    # deadlocked, or waiting on the server — these signals would have
+    # answered all three questions from the desk:
+    "/33000_1.0/0/17": ("last_error_code",     0, 3600),
+    "/33000_1.0/0/18": ("last_error_uptime",   0, 3600),
+    "/33000_1.0/0/19": ("watchdog_count",      0, 3600),
+    "/33000_1.0/0/20": ("storm_backoff",       0, 3600),
+    # Post-mortem snapshot from last hang — fixed at boot, just need a one-shot
+    "/33000_1.0/0/23": ("hang_uptime_s",       0, 3600),
+    "/33000_1.0/0/24": ("hang_heap_free",      0, 3600),
+    "/33000_1.0/0/25": ("hang_heap_min_free",  0, 3600),
+    "/33000_1.0/0/26": ("hang_reg_age_s",      0, 3600),
+    "/33000_1.0/0/27": ("hang_lwm2m_state",    0, 3600),
+    "/33000_1.0/0/28": ("hang_thread_role",    0, 3600),
+    # v0.6.69 v2.5 — deadlock observability. Heartbeat short so a stuck
+    # board's last value shows up quickly in dashboards. consec_fail jumps
+    # to >0 *before* silence_watchdog fires = early-warning of engine wedge.
+    "/33000_1.0/0/29": ("keepalive_emit",        60, 900),
+    "/33000_1.0/0/30": ("keepalive_consec_fail", 0,  900),
+    "/33000_1.0/0/31": ("last_emit_uptime",     60, 900),
+    "/33000_1.0/0/32": ("noreg_boots",           0, 3600),
+    "/33000_1.0/0/33": ("in_recovery",           0, 600),
+
+    # ---- v0.6.71 audit P2.7: field-robust at-risk indicators ----
+    # boot_burst: consecutive unstable boots. 0 = healthy. Approaching
+    # CONFIG_AMI_BOOT_BURST_MAX (default 10) = NVS-wear protection imminent.
+    # detached_total_s: cumulative Thread-DETACHED time. Approaching
+    # CONFIG_AMI_MESH_ALONE_MAX_S (default 3600) = COLD reboot imminent.
+    # heap_min_free: lifetime min free heap bytes. <4 KB = OOM imminent.
+    # All 3 are leading indicators — alarm BEFORE the board fails.
+    "/33000_1.0/0/34": ("boot_burst",            0,  900),
+    "/33000_1.0/0/35": ("detached_total_s",     60,  900),
+    "/33000_1.0/0/36": ("heap_min_free_live", 300, 1800),
 }
 
 

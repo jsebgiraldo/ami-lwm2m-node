@@ -229,8 +229,12 @@ static int cli_execute_cb(uint16_t obj_inst_id,
 	lwm2m_set_string(&LWM2M_OBJ(THREAD_CLI_OBJECT_ID, 0, TCLI_RESULT_RID),
 			 cli_result);
 
+	/* v0.6.46: strnlen() instead of strlen() — cli_result may be partially
+	 * uninitialized if handle_command() returned early (snprintf failure
+	 * etc.). Unbounded strlen walks until first NUL in memory → potential
+	 * fault if no NUL exists before MMU boundary (Zephyr #57867 pattern). */
 	LOG_INF("CLI Result: %.80s%s", cli_result,
-		strlen(cli_result) > 80 ? "..." : "");
+		strnlen(cli_result, sizeof(cli_result)) > 80 ? "..." : "");
 
 	/* Notify observer of result change */
 	lwm2m_notify_observer(THREAD_CLI_OBJECT_ID, 0, TCLI_RESULT_RID);
