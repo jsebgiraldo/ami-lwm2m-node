@@ -5,6 +5,38 @@
 
 ---
 
+## ⭐ CANONICAL FLEET DEPLOY — v0.7.5-prod (fat-production, DEFAULT)
+
+The validated fleet firmware: **FTD + Object 33000 (RID 37 reboot self-doc) +
+CoAP block 64 (USB-cliff-safe) + mesh R1000 + Fix A (`CONFIG_LWM2M_UPDATE_PERIOD=300`,
+kills the ~700s HW-liveness reboot loop) + heap stats (RID 36)**. Soak-validated
+~15h / 0 resets on the 3 SuperMini. Config lives in `overlays/prod_fat.conf`
+(+ `overlays/ftd.conf` + `overlays/resprobe_lwm2m.conf`).
+
+```bash
+# 1) Build the canonical fat-production firmware -> build_prod
+python tools/build_prod.py
+
+# 2) Connect boards to the PC/hub in batches (PSU has no data lines).
+#    Dry-run shows the plan, flashes nothing:
+python tools/flash_fleet_prod.py --dry-run
+
+# 3) Flash all connected boards (every board -> build_prod, all FTD):
+python tools/flash_fleet_prod.py
+#    one board:  python tools/flash_fleet_prod.py --only 10:51:DB:1C:14:94
+#    (full MCUboot@0x0 + signed app@0x20000, UPPERCASE serial, 2 retries/board)
+
+# 4) Move boards to the PSU, then verify fleet stability over RPC:
+python tools/verify_fleet.py
+#    each line: reachable=N/30 stable(TR frozen)=X crossed706=Y
+#    any reboot is reported WITH its RID 37 cause (no guessing).
+```
+
+Because the fleet is FAT (Object 33000), every board self-documents reboots via
+RID 37 — `verify_fleet.py` names the exact cause of any instability.
+
+---
+
 ## Build
 
 ```powershell
