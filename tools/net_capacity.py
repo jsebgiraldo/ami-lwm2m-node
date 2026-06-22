@@ -28,10 +28,22 @@ fc.bootstrap_venv()
 import paramiko  # noqa: E402
 
 TB = "http://192.168.8.111:8090"
-LABELS = {  # label -> device short id (last 4 of MAC)
-    "Lab1": "1494", "Lab2": "f7b4", "Lab3": "fbb8", "Lab4": "14c8",
-    "Lab5": "f6c8", "Lab6": "14bc", "Lab7": "1498", "Lab8": "f79c",
-}
+def _fleet_labels():
+    """label -> device short id (last 4 of MAC), loaded from fleet_map.csv so
+    the tool covers the whole fleet (1..N), not a hardcoded subset."""
+    import csv as _csv
+    import pathlib as _pl
+    m = {}
+    fp = _pl.Path(__file__).resolve().parent / "fleet_map.csv"
+    try:
+        for r in _csv.DictReader(open(fp, encoding="utf-8")):
+            if r.get("label", "").isdigit():
+                m[f"Lab{int(r['label'])}"] = r["mac"].replace(":", "")[-4:].lower()
+    except Exception:
+        pass
+    return dict(sorted(m.items(), key=lambda kv: int(kv[0][3:])))
+
+LABELS = _fleet_labels() or {"Lab1": "1494", "Lab2": "f7b4"}
 
 
 def login():
