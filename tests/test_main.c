@@ -28,6 +28,13 @@ extern void run_cosem_tests(void);
  */
 #include "test_dlms_logic.c"
 
+/*
+ * Group-1 OBIS index-map tests also need the static obis_table[] scope, so
+ * they are #included here AFTER test_dlms_logic.c (which pulled in
+ * dlms_meter.c). Do NOT add test_group1_obis.c to the gcc line.
+ */
+#include "test_group1_obis.c"
+
 int main(void)
 {
 	printf("\n");
@@ -39,6 +46,7 @@ int main(void)
 	run_hdlc_tests();
 	run_cosem_tests();
 	run_dlms_logic_tests();
+	run_group1_obis_tests();
 
 	TEST_SUMMARY();
 	return TEST_EXIT_CODE();

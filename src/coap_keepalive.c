@@ -25,6 +25,7 @@
 
 #include "lwm2m_obj_thread_diag.h"
 #include "lwm2m_watchdog.h"
+#include "hw_watchdog.h"
 
 LOG_MODULE_REGISTER(coap_keepalive, LOG_LEVEL_INF);
 
@@ -112,6 +113,18 @@ static void keepalive_thread_fn(void *p1, void *p2, void *p3)
 			 * processed the notify (alive) — feed the watchdog. */
 			lwm2m_watchdog_emit_event();
 			atomic_set(&keepalive_consec_fail, 0);
+			/* v0.7.9: ret>0 = REAL observers were notified, so telemetry
+			 * is actually being delivered (not just queued). Feed the
+			 * inbound delivery-liveness gate. ret==0 = registered but
+			 * NOBODY is observing us — the stuck-session signature — so we
+			 * deliberately do NOT feed it: after
+			 * CONFIG_AMI_DELIVERY_LIVENESS_TIMEOUT_S the HW feeder cold-
+			 * resets, forcing a fresh REGISTER that re-establishes observes.
+			 * The note_delivery() latch (ever_had_observer) means a build
+			 * that is never observed never arms this gate. */
+			if (ret > 0) {
+				hw_watchdog_note_delivery();
+			}
 			LOG_DBG("keepalive: notify ok, %d observer(s) (cnt=%u)",
 				ret, (uint32_t)atomic_get(&keepalive_emit_count));
 		} else {

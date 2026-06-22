@@ -127,7 +127,19 @@
                                              * 7 shell, 8 ip6-enable-fail, 9 thread-enable-
                                              * fail, 10 dns-sd-boot-fail, 11 panic, 99 other */
 
-#define TD_NUM_FIELDS             38
-#define TD_RES_INST_COUNT         38
+/* === v2.7 exact comms accounting — observability Tier 2 (RID 38) ===
+ * Added 2026-06-21 to answer "tamaño de paquetes / ancho de banda real por
+ * nodo". Counts the EXACT number of LwM2M bytes the engine puts on the wire:
+ * the Zephyr engine's single send chokepoint (lwm2m_message_handling.c, the
+ * zsock_send of msg->cpkt.offset) calls ami_lwm2m_note_tx() on every successful
+ * send. Monotonic-from-boot, U32; the server computes bytes/min as a delta and
+ * avg-packet-size as tx_bytes_delta / notify_emitted_delta. Pure LwM2M/CoAP
+ * payload — NO Thread mesh-control overhead (unlike net_stats). Requires the
+ * 33000_1.0 model XML to advertise RID 38 (tools/tb_edge_upload_models.py) so
+ * TB Edge will Observe it. */
+#define TD_LWM2M_TX_BYTES_RID          38   /* U32: exact LwM2M wire bytes since boot */
+
+#define TD_NUM_FIELDS             39
+#define TD_RES_INST_COUNT         39
 
 #endif /* LWM2M_OBJ_THREAD_DIAG_H */

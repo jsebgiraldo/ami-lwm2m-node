@@ -208,3 +208,11 @@ tools/*_results.csv
 tools/rotation_watch*.csv
 tools/phase0_report.csv
 tools/soak_*.csv
+
+# ---- v0.7.14 session cleanup (2026-06-22) ----
+# Sysbuild output dir built in-repo (1800+ artifacts — NEVER commit)
+build_sim/
+# Transient tool outputs / capture logs / live-state snapshots
+tools/*.out
+tools/*_last.json
+tools/flicker_log*.csv

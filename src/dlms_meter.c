@@ -357,6 +357,26 @@ int meter_init(void)
 	LOG_INF("Single-phase mode: Phase S/T OBIS codes pre-skipped (12 entries)");
 #endif
 
+#if IS_ENABLED(CONFIG_AMI_GROUP1_ONLY)
+	/* OBIS Group-1 (Operational Telemetry) only. Pre-skip all Group-2 codes:
+	 *   3  ReactivePower_R     4  ApparentPower_R    5  PowerFactor_R
+	 *   18 TotalActivePower    19 TotalReactivePower 20 TotalApparentPower
+	 *   21 TotalPowerFactor    23 ReactiveEnergy     24 ApparentEnergy
+	 *   25 Frequency
+	 * KEEP: 0 Voltage_R, 1 Current_R, 2 ActivePower_R, 22 ActiveEnergy.
+	 * (Indices 6-17 = Phase S/T are also skipped by SINGLE_PHASE.)
+	 */
+	{
+		static const int group2_idx[] = {3, 4, 5, 18, 19, 20, 21, 23, 24, 25};
+
+		for (int k = 0; k < (int)ARRAY_SIZE(group2_idx); k++) {
+			obis_skip[group2_idx[k]] = true;
+		}
+		LOG_INF("Group-1-only mode: Group-2 OBIS codes pre-skipped (%d entries)",
+			(int)ARRAY_SIZE(group2_idx));
+	}
+#endif
+
 	state = METER_DISCONNECTED;
 
 	LOG_INF("DLMS Meter Reader initialized");

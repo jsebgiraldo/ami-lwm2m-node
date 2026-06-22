@@ -37,6 +37,7 @@
 #include <openthread/dataset.h>
 #include <openthread/ip6.h>
 #include <openthread/platform/radio.h>
+#include <openthread/platform/settings.h>
 
 #include "lwm2m_discover.h"
 #include "lwm2m_watchdog.h"
@@ -87,7 +88,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.7.5-prod"
+#define CLIENT_FIRMWARE_VER     "0.7.14-otacfm"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -129,6 +130,15 @@ static uint8_t lwm2m_reg_failures;
  * sleep also gives the operator a window to physically intervene without
  * the board destroying its flash. */
 #define AMI_BOOT_BURST_KEY        "ami/boot_burst"
+/* v0.7.9 M1: persisted count of consecutive delivery-stall COLD reboots issued
+ * by the hw_watchdog delivery gate. Past CAP the gate STOPS rebooting (a server-
+ * side observe outage cannot be fixed by rebooting; mirrors noreg_boots). Reset
+ * to 0 by hw_watchdog ONLY after a sustained REAL-delivery streak (longer than
+ * one gate deadline) — NOT by the boot_burst/OTA-confirm marker, which proves
+ * only outbound health and would wrongly clear it during a stuck session. So a
+ * brief observe-then-drop flap accumulates toward the cap; a genuinely recovered
+ * board clears it. */
+#define AMI_DLV_REBOOTS_KEY       "ami/dlv_reboots"
 
 static atomic_t lwm2m_diag_reg_attempts     = ATOMIC_INIT(0);
 static atomic_t lwm2m_diag_reg_success      = ATOMIC_INIT(0);
@@ -143,6 +153,8 @@ static atomic_t lwm2m_diag_storm_backoff    = ATOMIC_INIT(0);
 static atomic_t lwm2m_diag_noreg_boots      = ATOMIC_INIT(0);
 /* v0.6.71 P0.1: persisted boot-burst counter (see AMI_BOOT_BURST_KEY). */
 static atomic_t lwm2m_diag_boot_burst       = ATOMIC_INIT(0);
+/* v0.7.9 M1: persisted delivery-stall reboot counter (see AMI_DLV_REBOOTS_KEY). */
+static atomic_t lwm2m_diag_dlv_reboots      = ATOMIC_INIT(0);
 /* Set true while lwm2m_recover_work_fn is in flight; the next
  * REGISTRATION_COMPLETE counts as a successful restart. */
 static atomic_t lwm2m_diag_in_recovery = ATOMIC_INIT(0);
@@ -244,6 +256,31 @@ void lwm2m_diag_reset_noreg_boots(void)
 	 * every registration. atomic_set returns the previous value. */
 	if (atomic_set(&lwm2m_diag_noreg_boots, 0) != 0) {
 		ami_persist_counter(AMI_NOREG_KEY, &lwm2m_diag_noreg_boots);
+	}
+}
+
+/* v0.7.9 M1: persisted delivery-stall reboot counter. inc() is called by the
+ * hw_watchdog delivery gate just before its capped cold reset; get() feeds the
+ * cap check; reset() is called by hw_watchdog ONLY after a sustained REAL-
+ * delivery streak (>= 2*delivery_deadline_s of continuous delivery). The
+ * OTA-confirm/boot-burst stable marker intentionally does NOT reset it — that
+ * marker proves only outbound (registration) health, which is true during a
+ * stuck/flapping session, so resetting here would defeat the cap. */
+uint32_t lwm2m_diag_get_dlv_reboots(void)
+{
+	return (uint32_t)atomic_get(&lwm2m_diag_dlv_reboots);
+}
+
+void lwm2m_diag_inc_dlv_reboots(void)
+{
+	atomic_inc(&lwm2m_diag_dlv_reboots);
+	ami_persist_counter(AMI_DLV_REBOOTS_KEY, &lwm2m_diag_dlv_reboots);
+}
+
+void lwm2m_diag_reset_dlv_reboots(void)
+{
+	if (atomic_set(&lwm2m_diag_dlv_reboots, 0) != 0) {
+		ami_persist_counter(AMI_DLV_REBOOTS_KEY, &lwm2m_diag_dlv_reboots);
 	}
 }
 
@@ -496,6 +533,9 @@ static int ami_settings_load_cb(const char *name, size_t len,
 	} else if (strcmp(name, "boot_burst") == 0) {
 		/* v0.6.71 P0.1: persisted boot-burst counter. */
 		atomic_set(&lwm2m_diag_boot_burst, (atomic_val_t)v);
+	} else if (strcmp(name, "dlv_reboots") == 0) {
+		/* v0.7.9 M1: persisted delivery-stall reboot counter. */
+		atomic_set(&lwm2m_diag_dlv_reboots, (atomic_val_t)v);
 	}
 	return 0;
 }
@@ -614,7 +654,7 @@ static const struct gpio_dt_spec led0 =
  * counts. Operator can re-enable visibility on demand via shell:
  *   ami brightness 4   (4/255 ~ 1.6%, clearly visible)
  */
-#define AMI_RGB_BRIGHTNESS_DEFAULT 0
+#define AMI_RGB_BRIGHTNESS_DEFAULT 32   /* v0.7.12: 32/255 (~12.5%) — clearly visible. Tune via `ami brightness`. */
 static uint8_t ami_rgb_brightness = AMI_RGB_BRIGHTNESS_DEFAULT;
 
 enum ami_rgb_color {
@@ -796,6 +836,12 @@ static void lwm2m_ota_confirm_fn(struct k_work *w)
 	/* v0.6.71 P0.1: same stable-marker resets boot_burst counter.
 	 * Sustained-connected for CONFIG_AMI_OTA_CONFIRM_DELAY_S = clean boot. */
 	lwm2m_diag_reset_boot_burst();
+	/* v0.7.9 M1: do NOT reset the delivery-stall reboot budget here. This
+	 * marker only proves OUTBOUND health (lwm2m_connected + keepalive emitting),
+	 * which is EXACTLY what a stuck/flapping session looks like (REG_UPDATE
+	 * round-trips, keepalive fires with ret==0, zero observers). Resetting the
+	 * cap here would defeat it. The cap is cleared by hw_watchdog only after a
+	 * sustained REAL-delivery streak (see hw_watchdog.c delivery_streak_start). */
 }
 
 /* DNS-SD resolution with retry+backoff.
@@ -876,32 +922,38 @@ static K_WORK_DELAYABLE_DEFINE(led_auto_off_work, led_auto_off_fn);
  * UI (BLUE/CYAN/GREEN) still owns the LED during startup until ami_in_operation
  * is set. Error states (RED) are NOT masked by the TX blink so faults stay
  * visible. Pulse width is intentionally short to minimise WS2812 current. */
-#define AMI_LED_TX_PULSE_MS 90
+#define AMI_LED_TX_PULSE_MS 120
 static atomic_t ami_in_operation = ATOMIC_INIT(0);
+
+/* v0.7.10 LED spec: GREEN=connected(child) · BLUE=transmitting · YELLOW=router ·
+ * RED=alarm. ami_led_refresh() computes the STEADY base colour from current
+ * status; a TX pulse shows BLUE briefly then reverts via ami_led_refresh().
+ * ami_alarm_active forces RED even while connected (app-level faults). */
+static atomic_t ami_alarm_active = ATOMIC_INIT(0);
+void ami_led_refresh(void);          /* defined after thread_role_atomic */
+void ami_alarm_set(bool on);
 
 static void led_tx_off_fn(struct k_work *w)
 {
 	ARG_UNUSED(w);
-	/* Return to idle (OFF) only in operation mode and only if we're not
-	 * currently showing an error (RED) — don't clobber a fault indicator. */
-	if (atomic_get(&ami_in_operation) && ami_rgb_last_color != AMI_RGB_RED) {
-		ami_set_rgb(AMI_RGB_OFF);
-	}
+	/* v0.7.10: TX pulse done — revert to the STEADY base colour
+	 * (green=connected / yellow=router / red=alarm), not OFF. */
+	ami_led_refresh();
 }
 static K_WORK_DELAYABLE_DEFINE(led_tx_off_work, led_tx_off_fn);
 
-/* Public (called from dlms_meter.c on each data push): blink the LED for a
- * transmission. No-op during startup (boot UI owns the LED) and while a fault
- * (RED) is displayed. */
+/* Public (called from dlms_meter.c on each data push): pulse BLUE for a
+ * transmission (v0.7.10 spec). No-op during startup (boot UI owns the LED) and
+ * while an alarm (RED) is displayed so the fault stays visible. */
 void ami_led_tx_pulse(void)
 {
 	if (!atomic_get(&ami_in_operation)) {
 		return;                       /* startup UI owns the LED */
 	}
-	if (ami_rgb_last_color == AMI_RGB_RED) {
-		return;                       /* keep fault visible, don't blink */
+	if (atomic_get(&ami_alarm_active) || !lwm2m_connected) {
+		return;                       /* keep alarm (RED) visible, don't blink */
 	}
-	ami_set_rgb(AMI_RGB_GREEN);
+	ami_set_rgb(AMI_RGB_BLUE);         /* v0.7.10: BLUE = transmitting */
 	k_work_reschedule(&led_tx_off_work, K_MSEC(AMI_LED_TX_PULSE_MS));
 }
 
@@ -910,6 +962,40 @@ void ami_led_tx_pulse(void)
  * auto-off. Quiet until first REGISTER complete so it doesn't fight the
  * boot UI (BLUE/CYAN/GREEN). */
 static atomic_t thread_role_atomic = ATOMIC_INIT(OT_DEVICE_ROLE_DISABLED);
+
+/* v0.7.10 — central LED state machine. Computes the STEADY base colour from
+ * current status and drives the WS2812. Called on every status change (register,
+ * disconnect, role change) and after a TX pulse reverts. Boot UI (BLUE/CYAN
+ * during attach) owns the LED until ami_in_operation is set at first REGISTER.
+ *   RED    = alarm (explicit fault) OR not connected
+ *   YELLOW = connected AND Thread role >= Router (router/leader)
+ *   GREEN  = connected AND Child
+ *   (BLUE  = transient TX pulse, handled in ami_led_tx_pulse)              */
+void ami_led_refresh(void)
+{
+	if (!atomic_get(&ami_in_operation)) {
+		return;                       /* boot UI owns the LED until 1st REGISTER */
+	}
+	otDeviceRole role = (otDeviceRole)atomic_get(&thread_role_atomic);
+	enum ami_rgb_color c;
+	if (atomic_get(&ami_alarm_active) || !lwm2m_connected ||
+	    role < OT_DEVICE_ROLE_CHILD) {
+		c = AMI_RGB_RED;             /* alarm / LwM2M down / mesh-detached */
+	} else if (role >= OT_DEVICE_ROLE_ROUTER) {
+		c = AMI_RGB_YELLOW;         /* router or leader */
+	} else {
+		c = AMI_RGB_GREEN;         /* connected child */
+	}
+	ami_set_rgb(c);
+}
+
+/* Public: raise/clear an application alarm (forces RED while connected). Wire to
+ * brownout / meter-fault / etc. as needed. */
+void ami_alarm_set(bool on)
+{
+	atomic_set(&ami_alarm_active, on ? 1 : 0);
+	ami_led_refresh();
+}
 
 /* Forward decl for the v0.6.70 eager-reattach hook in
  * thread_state_changed_cb. Defined further down with the recover_work_fn. */
@@ -1003,6 +1089,26 @@ static void thread_state_changed_cb(otChangedFlags flags, void *ctx)
 			(void)atomic_add(&detached_total_s,
 					 (atomic_val_t)(now_s - enter));
 		}
+#if defined(CONFIG_BOOTLOADER_MCUBOOT)
+		/* v0.7.14 OTA-robustness: confirm the MCUboot image the moment we
+		 * ATTACH to Thread. A successful attach proves the image is NOT
+		 * bricked (it booted, the RTOS runs, the 802.15.4 radio works, it
+		 * joined the mesh) — which is exactly what MCUboot revert exists to
+		 * catch. The prior design only confirmed 600s AFTER the first LwM2M
+		 * REGISTER (lwm2m_ota_confirm_fn), so on a CONGESTED mesh where
+		 * REGISTER is slow (~100s+, eidcache retry) any reboot before that
+		 * window made MCUboot REVERT a perfectly good image — proven on Lab4
+		 * 2026-06-21 (OTA download completed, image reverted to 0.7.9-dlv2
+		 * after ~108s, before it could register). This made OTA unusable at
+		 * fleet scale. Attaching is a sufficient not-bricked bar; LwM2M
+		 * delivery health is enforced independently by the hw_watchdog
+		 * delivery gate, which can run on a confirmed image. */
+		if (!boot_is_img_confirmed()) {
+			int crc = boot_write_img_confirmed();
+			LOG_WRN("OTA: image confirmed on Thread-attach (rc=%d, "
+				"uptime=%us) — robust against slow REGISTER", crc, now_s);
+		}
+#endif
 	}
 
 	/* Boot UI owns the LED until the first REGISTER completes. */
@@ -1010,19 +1116,18 @@ static void thread_state_changed_cb(otChangedFlags flags, void *ctx)
 		return;
 	}
 
+	/* v0.7.10: any role change updates the steady LED — green=child,
+	 * yellow=router/leader, red=detached. Covers child<->router transitions
+	 * even while staying attached (the old code only toggled on detach). */
+	ami_led_refresh();
+
 	if (!now_attached && was_attached) {
 		LOG_WRN("Thread role dropped: %d -> %d (detached) — LED RED",
 			(int)prev, (int)role);
 		k_work_cancel_delayable(&led_auto_off_work);
-		ami_set_rgb(AMI_RGB_RED);
 	} else if (now_attached && !was_attached) {
-		LOG_INF("Thread role recovered: %d -> %d (attached) — LED OFF",
+		LOG_INF("Thread role recovered: %d -> %d (attached)",
 			(int)prev, (int)role);
-		/* Clear the detach-RED only. If LwM2M is separately in error,
-		 * its own handler will re-set RED on the next event. */
-		if (ami_rgb_last_color == AMI_RGB_RED) {
-			ami_set_rgb(AMI_RGB_OFF);
-		}
 		/* v0.6.70 eager re-attach: when the mesh just came back up after a
 		 * detach (PSU brownout, RF dead zone exit, OTBR restart), the
 		 * existing recover backoff (60-300 s exponential) keeps the LwM2M
@@ -1534,13 +1639,14 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		 * on each TX (ami_led_tx_pulse from the meter push). This replaces the
 		 * old GREEN steady-state. Boot UI no longer owns the LED past here. */
 		atomic_set(&ami_in_operation, 1);
-		ami_set_rgb(AMI_RGB_GREEN);
-		k_work_reschedule(&led_tx_off_work, K_MSEC(800));
+		/* v0.7.10: enter steady status mode — clear any alarm and show the
+		 * base colour (GREEN=child / YELLOW=router). TX pulses go BLUE. */
+		ami_alarm_set(false);
 		break;
 	case LWM2M_RD_CLIENT_EVENT_REGISTRATION_FAILURE:
 		LOG_ERR("LwM2M Registration FAILED");
 		lwm2m_connected = false;
-		ami_set_rgb(AMI_RGB_RED);
+		ami_led_refresh();   /* v0.7.10: RED while not connected */
 		lwm2m_reg_failures++;
 		lwm2m_diag_record_error(-ECONNRESET);
 		lwm2m_diag_inc_recover_count();   /* Bug B: surface recovery cycle */
@@ -1557,7 +1663,7 @@ static void rd_client_event(struct lwm2m_ctx *client,
 	case LWM2M_RD_CLIENT_EVENT_REG_TIMEOUT:
 		LOG_WRN("LwM2M Registration timeout");
 		lwm2m_connected = false;
-		ami_set_rgb(AMI_RGB_RED);
+		ami_led_refresh();   /* v0.7.10: RED while not connected */
 		lwm2m_reg_failures++;
 		lwm2m_diag_record_error(-ETIMEDOUT);
 		lwm2m_diag_inc_recover_count();   /* Bug B */
@@ -1584,11 +1690,12 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		lwm2m_watchdog_emit_event();
 		hw_watchdog_note_liveness();
 		pm_note_register_success();   /* v0.6.19: REG_UPDATE counts as proof-of-life */
+		ami_led_refresh();   /* v0.7.10: keep base colour current (role may change) */
 		break;
 	case LWM2M_RD_CLIENT_EVENT_DISCONNECT:
 		LOG_WRN("LwM2M Disconnected");
 		lwm2m_connected = false;
-		ami_set_rgb(AMI_RGB_YELLOW);
+		ami_led_refresh();   /* v0.7.10: RED (disconnected); YELLOW is now router */
 		lwm2m_diag_record_error(-ENOTCONN);
 		lwm2m_diag_inc_recover_count();   /* Bug B */
 		pm_clear_lwm2m_state(PM_LWM2M_STATE_REGISTERED);   /* v0.6.19 */
@@ -1608,7 +1715,7 @@ static void rd_client_event(struct lwm2m_ctx *client,
 		 * the server is hot. */
 		LOG_ERR("LwM2M network error — applying storm-backoff (2x)");
 		lwm2m_connected = false;
-		ami_set_rgb(AMI_RGB_RED);
+		ami_led_refresh();   /* v0.7.10: RED while not connected */
 		lwm2m_reg_failures++;
 		lwm2m_diag_record_error(-ECONNREFUSED);
 		lwm2m_diag_inc_recover_count();   /* Bug B */
@@ -2761,6 +2868,37 @@ static void apply_otbr_dataset(void)
 	/* Erase any stale persistent Thread state from previous boots */
 	otInstanceErasePersistentInfo(ot);
 	LOG_INF("Persistent info erased");
+
+	/* v0.7.7-omr ROOT FIX (OTBR address-resolution collapse):
+	 * Seed a DETERMINISTIC SLAAC IID secret derived from the device EUI-64 so
+	 * the node's OMR (SLAAC) address is STABLE for life — across reboots,
+	 * reflashes, AND the NVS erase right above. Background: the erase wiped the
+	 * randomly-generated SlaacIidSecretKey on every boot, so OpenThread minted a
+	 * NEW OMR address each reboot. During the reboot-bug era that churned
+	 * hundreds of stale OMR addresses, which overran the OTBR's TMF address
+	 * cache (ot-ctl eidcache = 254 retry / 0 cached) and collapsed EID->RLOC
+	 * resolution: the Edge could no longer deliver INBOUND (RPC / observe /
+	 * re-register) to any non-neighbour node, while outbound telemetry survived
+	 * (hence "active but unreachable"). OT computes the IID as
+	 * SHA-256(prefix | "wpan" | dadCounter | secret), so a per-device-stable
+	 * secret yields a per-device-stable IID -> exactly ONE OMR per node forever
+	 * -> the fleet can never exceed 30 OMR addresses -> cache cannot be poisoned.
+	 * If the settings write fails, OT falls back to its random secret (today's
+	 * behaviour), so this is strictly safe. SLAAC reads this key during Thread
+	 * bring-up below (otThreadSetEnabled), after this seed. */
+	{
+		uint8_t eui64[8] = {0};
+		otPlatRadioGetIeeeEui64(ot, eui64);
+		uint8_t slaac_secret[32];
+		for (int i = 0; i < (int)sizeof(slaac_secret); i++) {
+			slaac_secret[i] = (uint8_t)(eui64[i % 8] ^ (0xA5 + i));
+		}
+		otError serr = otPlatSettingsSet(
+			ot, OT_SETTINGS_KEY_SLAAC_IID_SECRET_KEY,
+			slaac_secret, sizeof(slaac_secret));
+		LOG_INF("SLAAC IID secret seeded from EUI-64 -> deterministic OMR (err=%d)",
+			(int)serr);
+	}
 
 	/* Set the full OTBR dataset (Thread not yet started due to MANUAL_START) */
 	otOperationalDatasetTlvs dataset;

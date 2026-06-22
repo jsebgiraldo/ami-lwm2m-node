@@ -28,6 +28,7 @@
 #include <zephyr/sys/reboot.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/init.h>
+#include <zephyr/random/random.h>
 
 LOG_MODULE_REGISTER(hw_wdog, LOG_LEVEL_INF);
 
@@ -82,12 +83,97 @@ void hw_watchdog_note_liveness(void)
 	atomic_set(&last_liveness_uptime, (uint32_t)(k_uptime_get() / 1000));
 }
 
+/* ── Delivery-liveness gate (v0.7.9) ───────────────────────────────
+ * The REG-based gate above proves the OUTBOUND path (server ACKs our
+ * REGISTER/REG_UPDATE). It is fooled by the "stuck session" failure mode:
+ * a node stays registered (REG_UPDATE keeps round-tripping → gate fed,
+ * total_resets frozen) while its observe session is dead — zero observers,
+ * so it delivers no telemetry for hours and never self-reboots. Field proof
+ * 2026-06-19 (Lab 17): only a manual power-cycle cleared it.
+ *
+ * This gate proves the INBOUND/delivery path. coap_keepalive calls
+ * hw_watchdog_note_delivery() ONLY when lwm2m_notify_observer() returns >0
+ * (real observers notified). The first such call latches ever_had_observer;
+ * thereafter, if no delivery for CONFIG_AMI_DELIVERY_LIVENESS_TIMEOUT_S
+ * (+ per-node jitter), the kernel feeder triggers a cold reset → fresh
+ * REGISTER re-establishes the observes. A build that is never observed
+ * never latches → never penalized (avoids the v0.6.75 inversion bug).
+ */
+static atomic_t last_delivery_uptime = ATOMIC_INIT(0);
+static atomic_t ever_had_observer    = ATOMIC_INIT(0);
+
+/* v0.7.9 M1: escalation budget for the delivery-stall path. The gate does NOT
+ * cold-reboot as a first response — it first nudges a SOFT re-REGISTER (which
+ * re-establishes observes with no SoC reset / Thread re-attach), then allows a
+ * CAPPED number of cold reboots, then stops (a server-side outage cannot be
+ * fixed by rebooting). Mirrors lwm2m_watchdog.c's NOREG_MAX_REBOOTS so this
+ * gate can never drive an unbounded fleet reboot+REGISTER storm. Reset on any
+ * real delivery so a future stall gets the full sequence again. */
+static atomic_t dlv_soft_tries   = ATOMIC_INIT(0);   /* per-episode, in-RAM */
+#define DLV_SOFT_TRIES_MAX   2U
+#define DLV_HARD_REBOOTS_MAX 5U
+
+/* recover_work lives in main.c; coap_keepalive.c already drives it. The soft
+ * step is a stop/start re-REGISTER; recover_work_fn itself gates on Thread
+ * role >= CHILD, so a detached node will not storm-reattach from here. */
+extern struct k_work_delayable lwm2m_recover_work;
+/* Persisted delivery-stall reboot budget (defined in main.c, NVS-backed).
+ * Survives the cold reboot so the cap is meaningful ACROSS boots — an in-RAM
+ * counter would reset every boot and never cap. The sustained-stable marker in
+ * main.c (same one that clears boot_burst) resets it; brief observe-then-drop
+ * flaps never reach that marker, so they accumulate toward the cap. */
+extern uint32_t lwm2m_diag_get_dlv_reboots(void);
+extern void lwm2m_diag_inc_dlv_reboots(void);
+extern void lwm2m_diag_reset_dlv_reboots(void);
+
+/* Uptime (s) at which the current UNBROKEN real-delivery streak began; 0 = no
+ * streak running. Set by note_delivery on the first delivery of a streak;
+ * cleared by the kernel thread on ANY liveness fail (incl. a delivery-stall).
+ * Once a streak outlasts one gate deadline, the persisted reboot cap is reset —
+ * the board has genuinely recovered DELIVERY (not just registration), which is
+ * the only signal that may clear the cap. */
+static atomic_t delivery_streak_start = ATOMIC_INIT(0);
+
+void hw_watchdog_note_delivery(void)
+{
+	uint32_t now_s = (uint32_t)(k_uptime_get() / 1000);
+	atomic_set(&last_delivery_uptime, now_s);
+	atomic_set(&ever_had_observer, 1);
+	/* Start a streak only if none is running (a prior stall cleared it). Don't
+	 * overwrite an in-progress streak: we want elapsed time since the FIRST
+	 * delivery of the current healthy run. */
+	(void)atomic_cas(&delivery_streak_start, 0, (atomic_val_t)now_s);
+	/* Real delivery resumed → refresh the per-episode SOFT budget only. The
+	 * HARD (persisted) budget is cleared by the kernel thread after a SUSTAINED
+	 * streak, NOT on a single delivery, so a brief flap can't dodge the cap. */
+	atomic_set(&dlv_soft_tries, 0);
+}
+
 /* ── Channel A: kernel-alive feeder thread, gated on real liveness ── */
 static void hw_wdog_kernel_thread(void *p1, void *p2, void *p3)
 {
 	ARG_UNUSED(p1);
 	ARG_UNUSED(p2);
 	ARG_UNUSED(p3);
+
+	/* v0.7.9 M2: floor the deadline at >= 3 keepalive periods so the gate can
+	 * NEVER out-run the feeder that is supposed to satisfy it — a deadline
+	 * below the keepalive cadence would cold-reboot a perfectly healthy
+	 * observed node every cycle. Mirrors lwm2m_watchdog.c's max(period*3, 480)
+	 * floor. The BUILD_ASSERT makes a bad overlay loud at build time; the MAX()
+	 * is the runtime belt-and-suspenders. */
+	BUILD_ASSERT(CONFIG_AMI_DELIVERY_LIVENESS_TIMEOUT_S >=
+		     3 * CONFIG_AMI_COAP_KEEPALIVE_PERIOD_S,
+		     "AMI_DELIVERY_LIVENESS_TIMEOUT_S must be >= 3 keepalive periods "
+		     "or the delivery gate reboot-loops every observed node");
+	const uint32_t dlv_base =
+		MAX((uint32_t)CONFIG_AMI_DELIVERY_LIVENESS_TIMEOUT_S,
+		    3U * (uint32_t)CONFIG_AMI_COAP_KEEPALIVE_PERIOD_S);
+	/* Wide per-node jitter (0..100% of base) so a fleet-wide Edge restart does
+	 * NOT collapse 30 recovery actions into one narrow window (a synchronized
+	 * REGISTER burst is itself an OTBR address-resolution stressor). */
+	const uint32_t delivery_deadline_s =
+		dlv_base + (sys_rand32_get() % (dlv_base + 1U));
 
 	for (;;) {
 		k_sleep(HW_WDOG_FEED_PERIOD);
@@ -115,9 +201,23 @@ static void hw_wdog_kernel_thread(void *p1, void *p2, void *p3)
 				(now_s < CONFIG_AMI_HW_WATCHDOG_BOOT_GRACE_HARD_S);
 			reason = "boot-grace";
 		} else {
-			liveness_ok =
+			/* OUTBOUND gate: server still ACKs our REGISTER/REG_UPDATE. */
+			bool reg_ok =
 				((now_s - last) < CONFIG_AMI_REAL_LIVENESS_TIMEOUT_S);
-			reason = "post-register-silence";
+
+			/* INBOUND/delivery gate (v0.7.9): only enforced once we have
+			 * proven this node IS observed (first ret>0). Until then the
+			 * latch is clear and delivery_ok stays true — minimal/never-
+			 * observed builds are never penalized. */
+			bool delivery_ok = true;
+			if (atomic_get(&ever_had_observer)) {
+				uint32_t ld = (uint32_t)atomic_get(&last_delivery_uptime);
+				delivery_ok = ((now_s - ld) < delivery_deadline_s);
+			}
+
+			liveness_ok = reg_ok && delivery_ok;
+			reason = !reg_ok ? "post-register-silence"
+					 : "delivery-stall";
 		}
 
 		/* v0.6.26: keep chan_boot alive once main() proved boot survival.
@@ -128,29 +228,113 @@ static void hw_wdog_kernel_thread(void *p1, void *p2, void *p3)
 		}
 
 		if (liveness_ok) {
+			/* v0.7.9 M1: clear the persisted reboot cap ONLY after a streak of
+			 * CONTINUOUS real delivery outlasting one gate deadline. Two guards
+			 * make "continuous" real, not coasting:
+			 *   - GAP guard: delivery_ok tolerates a stale last_delivery for up
+			 *     to a full (wide) deadline, but a real delivery GAP > 2 keepalive
+			 *     periods means we are NOT actually delivering now — break the
+			 *     streak so a brief-deliver-then-go-quiet board (still inside the
+			 *     delivery_ok grace) can never clear the cap.
+			 *   - AGE guard: streak measured from the FIRST delivery of the run.
+			 * A still-stalled board re-arms last_delivery only via soft tries,
+			 * which run on the fail path where streak is already 0. */
+			uint32_t ld     = (uint32_t)atomic_get(&last_delivery_uptime);
+			uint32_t streak = (uint32_t)atomic_get(&delivery_streak_start);
+			if (streak != 0 &&
+			    (now_s - ld) > 2U * (uint32_t)CONFIG_AMI_COAP_KEEPALIVE_PERIOD_S) {
+				atomic_set(&delivery_streak_start, 0);  /* real gap → streak broken */
+				streak = 0;
+			}
+			/* Require 2x the deadline of UNBROKEN delivery. Since delivery_ok
+			 * tolerates a stale last_delivery for up to one (wide) deadline,
+			 * any flapping board STALLS — and the gap guard breaks its streak —
+			 * before the streak can reach 2x deadline. So only a board that has
+			 * genuinely delivered continuously well past the stall horizon (and
+			 * therefore never stalled) can clear the cap; a delta<deadline flap
+			 * can never reach this and stays capped. */
+			if (streak != 0 && (now_s - streak) >= 2U * delivery_deadline_s &&
+			    lwm2m_diag_get_dlv_reboots() != 0) {
+				lwm2m_diag_reset_dlv_reboots();
+			}
 			if (chan_kernel >= 0) {
 				(void)task_wdt_feed(chan_kernel);
 			}
 			continue;
 		}
 
-		/* Liveness fail: either we never registered (boot-grace expired)
-		 * or we registered once and the server stopped ACKing us. Reboot
-		 * directly — dependency-free, does not go through system_workq
-		 * or ami_reboot_drain (either could itself be stuck). If even
-		 * sys_reboot stalls, chan_kernel is no longer fed, so the HW WDT
-		 * bites within the channel timeout as the final backstop. */
+		/* Fail path: delivery is NOT sustained → break the streak so the cap
+		 * can only be cleared by a fresh, full-length healthy run. */
+		atomic_set(&delivery_streak_start, 0);
+
+		/* Liveness fail. Action depends on WHY. Direct sys_reboot is
+		 * dependency-free (no system_workq / ami_reboot_drain — either could
+		 * itself be stuck); if even sys_reboot stalls, chan_kernel is no
+		 * longer fed so the HW TG0_WDT bites as the final backstop. */
+
+		/* (a) boot-grace expired: never registered → direct cold reset. */
 		if (last == 0) {
 			LOG_ERR("HW watchdog: %s expired at uptime=%us (hard cap=%us) — "
 				"no first REGISTER ever, SOC cold reset",
 				reason, now_s,
 				CONFIG_AMI_HW_WATCHDOG_BOOT_GRACE_HARD_S);
-		} else {
-			LOG_ERR("HW watchdog: %s for %us (limit %us) — "
-				"node cut off, SOC cold reset",
-				reason, now_s - last,
-				CONFIG_AMI_REAL_LIVENESS_TIMEOUT_S);
+			sys_reboot(SYS_REBOOT_COLD);
 		}
+
+		/* (b) delivery-stall: registered but ZERO observers. ESCALATE —
+		 * soft re-REGISTER first (no SoC reset), then capped cold reboots,
+		 * then stop. This makes the common case (Edge restart) a cheap
+		 * per-node re-REGISTER and bounds the worst case (M1). */
+		if (reason[0] == 'd') {
+			uint32_t ld = (uint32_t)atomic_get(&last_delivery_uptime);
+
+			if ((uint32_t)atomic_get(&dlv_soft_tries) < DLV_SOFT_TRIES_MAX) {
+				atomic_inc(&dlv_soft_tries);
+				LOG_WRN("HW watchdog: delivery-stall %us (limit %us) — soft "
+					"re-REGISTER attempt %ld/%u (no reboot)",
+					now_s - ld, delivery_deadline_s,
+					(long)atomic_get(&dlv_soft_tries),
+					DLV_SOFT_TRIES_MAX);
+				/* re-arm so the soft attempt has a full window to work. */
+				atomic_set(&last_delivery_uptime, now_s);
+				k_work_reschedule(&lwm2m_recover_work, K_NO_WAIT);
+				if (chan_kernel >= 0) {
+					(void)task_wdt_feed(chan_kernel);
+				}
+				continue;
+			}
+
+			if (lwm2m_diag_get_dlv_reboots() >= DLV_HARD_REBOOTS_MAX) {
+				/* Rebooting cannot fix a server-side outage — stop and keep
+				 * nudging the soft path (mirror lwm2m_watchdog NOREG cap). */
+				LOG_WRN("HW watchdog: delivery-stall persists after %u "
+					"reboots — likely server-side; staying up, nudging "
+					"recover", DLV_HARD_REBOOTS_MAX);
+				atomic_set(&last_delivery_uptime, now_s);
+				k_work_reschedule(&lwm2m_recover_work, K_NO_WAIT);
+				if (chan_kernel >= 0) {
+					(void)task_wdt_feed(chan_kernel);
+				}
+				continue;
+			}
+
+			/* Persist the reboot count BEFORE rebooting so the cap survives
+			 * (best-effort: if the NVS write stalls, chan_kernel goes unfed
+			 * and the HW TG0_WDT bites — we reboot either way). */
+			lwm2m_diag_inc_dlv_reboots();
+			LOG_ERR("HW watchdog: delivery-stall %us (limit %us) — registered "
+				"but ZERO observers after %u soft tries, SOC cold reset "
+				"#%u/%u", now_s - ld, delivery_deadline_s,
+				DLV_SOFT_TRIES_MAX, lwm2m_diag_get_dlv_reboots(),
+				DLV_HARD_REBOOTS_MAX);
+			sys_reboot(SYS_REBOOT_COLD);
+		}
+
+		/* (c) post-register-silence: server stopped ACKing REG_UPDATE
+		 * (REAL_LIVENESS gate, pre-existing) → direct cold reset. */
+		LOG_ERR("HW watchdog: %s for %us (limit %us) — node cut off, "
+			"SOC cold reset", reason, now_s - last,
+			CONFIG_AMI_REAL_LIVENESS_TIMEOUT_S);
 		sys_reboot(SYS_REBOOT_COLD);
 	}
 }

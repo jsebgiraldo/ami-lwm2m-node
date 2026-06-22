@@ -117,6 +117,21 @@ static uint32_t detached_total_s_val;
 static uint32_t heap_min_free_live_val;
 /* v0.7.4 — which reboot path caused this boot (RID 37). */
 static uint32_t last_reboot_code_val;
+/* v2.7 — exact LwM2M wire-byte accounting (RID 38). The Zephyr engine's single
+ * send chokepoint (lwm2m_message_handling.c: zsock_send of msg->cpkt.offset)
+ * calls ami_lwm2m_note_tx() on every successful send. atomic_t because it is
+ * written from the LwM2M/workqueue send context and read here in the
+ * conn-monitor thread; lwm2m_tx_bytes_val is the buffer the engine resource
+ * exposes. */
+static atomic_t ami_lwm2m_tx_bytes = ATOMIC_INIT(0);
+static uint32_t lwm2m_tx_bytes_val;
+
+/* Called by the Zephyr LwM2M engine on every successful wire send (weak hook in
+ * lwm2m_message_handling.c resolves to this strong definition). */
+void ami_lwm2m_note_tx(uint32_t bytes)
+{
+	atomic_add(&ami_lwm2m_tx_bytes, (atomic_val_t)bytes);
+}
 
 /* LwM2M object structures */
 static struct lwm2m_engine_obj thread_diag_obj;
@@ -167,6 +182,8 @@ static struct lwm2m_engine_obj_field thread_diag_fields[] = {
 	OBJ_FIELD_DATA(TD_HEAP_MIN_FREE_LIVE_RID, R, U32),
 	/* v0.7.4 — reboot-path code that caused this boot */
 	OBJ_FIELD_DATA(TD_LAST_REBOOT_CODE_RID, R, U32),
+	/* v2.7 — exact LwM2M wire bytes since boot */
+	OBJ_FIELD_DATA(TD_LWM2M_TX_BYTES_RID, R, U32),
 };
 
 static struct lwm2m_engine_obj_inst thread_diag_inst;
@@ -267,6 +284,10 @@ static struct lwm2m_engine_obj_inst *thread_diag_create(uint16_t obj_inst_id)
 			  &heap_min_free_live_val, sizeof(heap_min_free_live_val));
 	INIT_OBJ_RES_DATA(TD_LAST_REBOOT_CODE_RID, thread_diag_res, i, thread_diag_ri, j,
 			  &last_reboot_code_val, sizeof(last_reboot_code_val));
+
+	/* v2.7 — exact LwM2M wire bytes */
+	INIT_OBJ_RES_DATA(TD_LWM2M_TX_BYTES_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &lwm2m_tx_bytes_val, sizeof(lwm2m_tx_bytes_val));
 
 	thread_diag_inst.resources = thread_diag_res;
 	thread_diag_inst.resource_count = i;
@@ -615,6 +636,8 @@ void update_connectivity_metrics(void)
 	heap_min_free_live_val  = pm_get_live_heap_min_free();
 	extern uint32_t ami_reboot_get_last_code(void);
 	last_reboot_code_val    = ami_reboot_get_last_code();
+	/* v2.7 — exact LwM2M wire bytes since boot (engine-fed, RID 38) */
+	lwm2m_tx_bytes_val      = (uint32_t)atomic_get(&ami_lwm2m_tx_bytes);
 
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_UPTIME_S_RID);
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_REG_ATTEMPTS_RID);
@@ -640,6 +663,8 @@ void update_connectivity_metrics(void)
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_DETACHED_TOTAL_S_RID);
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_HEAP_MIN_FREE_LIVE_RID);
 	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LAST_REBOOT_CODE_RID);
+	/* v2.7 — exact LwM2M wire bytes */
+	lwm2m_notify_observer(THREAD_DIAG_OBJECT_ID, 0, TD_LWM2M_TX_BYTES_RID);
 
 	LOG_INF("Obj4: RSSI=%ddBm LQI=%u%% IPs=%d router=%s",
 		best_rssi, lqi_to_percent(best_lqi), ip_count, router_ip_str);

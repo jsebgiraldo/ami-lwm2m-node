@@ -1,0 +1,27 @@
+diff --git a/subsys/net/lib/lwm2m/lwm2m_engine.c b/subsys/net/lib/lwm2m/lwm2m_engine.c
+index d408bb00e1a..906585cd18a 100644
+--- a/subsys/net/lib/lwm2m/lwm2m_engine.c
++++ b/subsys/net/lib/lwm2m/lwm2m_engine.c
+@@ -731,6 +731,13 @@ static int socket_recv_message(struct lwm2m_ctx *client_ctx)
+ 	return 0;
+ }
+ 
++/* AMI v2.7: app-provided hook for EXACT LwM2M wire-byte accounting (Object
++ * 33000 RID 38). Called with the exact byte count of every LwM2M message put on
++ * the wire from the engine's single data-send chokepoint below. The strong
++ * symbol lives in the application (src/thread_conn_monitor.c); this weak default
++ * keeps upstream Zephyr samples building unchanged. */
++__weak void ami_lwm2m_note_tx(uint32_t bytes) { ARG_UNUSED(bytes); }
++
+ static int socket_send_message(struct lwm2m_ctx *ctx)
+ {
+ 	int rc;
+@@ -764,6 +771,8 @@ static int socket_send_message(struct lwm2m_ctx *ctx)
+ 		rc = -errno;
+ 	} else {
+ 		engine_update_tx_time();
++		/* AMI v2.7: count exact LwM2M wire bytes (Object 33000 RID 38). */
++		ami_lwm2m_note_tx((uint32_t)msg->cpkt.offset);
+ 	}
+ 
+ 	if (msg->type != COAP_TYPE_CON) {

@@ -167,6 +167,13 @@ def xml_33000() -> str:
         (22, "Total Resets",            "R", "Mandatory", "Integer",
          "Monotonic reset counter, persisted in NVS — un-fakeable proof of "
          "a watchdog-driven reboot."),
+        # v2.7 — exact comms accounting (RID 38; observability Tier 2). Added
+        # 2026-06-21. RIDs 23-37 stay opaque (not advertised), but 38 IS
+        # advertised so TB Edge will Observe the exact wire-byte counter.
+        (38, "LwM2M TX Bytes",          "R", "Mandatory", "Integer",
+         "Exact cumulative LwM2M/CoAP bytes put on the wire since boot, counted "
+         "at the engine send chokepoint. Server computes bytes/min as a delta "
+         "and avg packet size as tx_bytes_delta / notify_emitted_delta.", "B"),
         # Post-mortem RIDs 23-28 are populated by src/post_mortem.c but
         # NOT advertised here: firmware advertises ver=2.2 (see thread_conn_monitor.c)
         # so Leshan treats RIDs 23-28 as opaque pass-through. Once the v2.4

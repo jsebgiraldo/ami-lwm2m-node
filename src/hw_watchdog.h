@@ -61,4 +61,24 @@ void hw_watchdog_note_boot_survived(void);
  */
 void hw_watchdog_note_liveness(void);
 
+/*
+ * Report INBOUND delivery liveness: the LwM2M engine just notified one or
+ * more REAL observers — i.e. telemetry is actually flowing to the server,
+ * not merely queued locally (v0.7.9).
+ *
+ * Call ONLY from coap_keepalive when lwm2m_notify_observer() returns > 0
+ * (observer count). Do NOT call it on ret == 0 (registered but nobody is
+ * observing us = the stuck-session signature) nor on ret < 0 (engine error).
+ *
+ * hw_watchdog_note_liveness() (REG/REG_UPDATE) proves the OUTBOUND path; it
+ * keeps being fed during a stuck session because REG_UPDATE still round-trips.
+ * This proves the INBOUND/delivery path. The first call latches
+ * "ever_had_observer"; thereafter, if no delivery happens for
+ * CONFIG_AMI_DELIVERY_LIVENESS_TIMEOUT_S (+ per-node jitter), the kernel
+ * feeder triggers a cold reset so a fresh REGISTER re-establishes the
+ * observes. Builds that are never observed never latch, so they are never
+ * penalized (see the v0.6.75 keepalive-inversion note).
+ */
+void hw_watchdog_note_delivery(void);
+
 #endif /* HW_WATCHDOG_H_ */

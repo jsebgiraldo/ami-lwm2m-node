@@ -241,6 +241,16 @@
         <Units></Units>
         <Description>Monotonic reset counter, persisted in NVS — un-fakeable proof of a watchdog-driven reboot.</Description>
       </Item>
+      <Item ID="38">
+        <Name>LwM2M TX Bytes</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>B</Units>
+        <Description>Exact cumulative LwM2M/CoAP bytes put on the wire since boot, counted at the engine send chokepoint. Server computes bytes/min as a delta and avg packet size as tx_bytes_delta / notify_emitted_delta.</Description>
+      </Item>
     </Resources>
     <Description2/>
   </Object>

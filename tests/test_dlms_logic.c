@@ -25,6 +25,13 @@ int rs485_recv(uint8_t *buf, size_t buf_size, int timeout_ms) {
 void rs485_flush_rx(void) {}
 
 /*
+ * LED TX-pulse hook lives in main.c (not compiled into the test harness).
+ * dlms_meter.c calls it on each LwM2M push; provide a no-op so the linker
+ * is satisfied.
+ */
+void ami_led_tx_pulse(void) {}
+
+/*
  * Include the dlms_meter.c source directly.
  * The -Istubs flag ensures our stub versions of lwm2m_observation.h
  * and zephyr/net/lwm2m.h are found.
@@ -33,9 +40,11 @@ void rs485_flush_rx(void) {}
 
 /* ==== OBIS Table Completeness ==== */
 
-void test_obis_table_has_27_entries(void)
+void test_obis_table_has_26_entries(void)
 {
-	ASSERT_EQ(27, (int)OBIS_TABLE_SIZE);
+	/* Current table: 3 phases x 6 (V/I/P/Q/S/PF) + 4 totals + 3 energy
+	 * + 1 frequency = 26 entries (indices 0..25). No neutral_current. */
+	ASSERT_EQ(26, (int)OBIS_TABLE_SIZE);
 }
 
 void test_obis_table_all_class3(void)
@@ -114,29 +123,29 @@ void test_readings_struct_has_metadata(void)
 	r.valid = true;
 	r.read_count = 22;
 	r.error_count = 5;
-	r.read_target = 27;
-	r.field_mask = 0x07FFFFFF;
+	r.read_target = 26;
+	r.field_mask = 0x03FFFFFF;
 	r.timestamp_ms = 123456;
 
 	ASSERT_TRUE(r.valid);
 	ASSERT_EQ(22, r.read_count);
 	ASSERT_EQ(5, r.error_count);
-	ASSERT_EQ(27, r.read_target);
-	ASSERT_EQ((int)0x07FFFFFF, (int)r.field_mask);
+	ASSERT_EQ(26, r.read_target);
+	ASSERT_EQ((int)0x03FFFFFF, (int)r.field_mask);
 	ASSERT_EQ(123456, (int)r.timestamp_ms);
 }
 
 void test_readings_field_count(void)
 {
 	/*
-	 * 27 double fields:
+	 * 26 double fields:
 	 *  3 voltages + 3 currents + 3 active + 3 reactive +
-	 *  3 apparent + 3 pf + 4 totals + 3 energy + 1 freq + 1 neutral
+	 *  3 apparent + 3 pf + 4 totals + 3 energy + 1 freq
 	 */
-	ASSERT_EQ(27, (int)OBIS_TABLE_SIZE);
+	ASSERT_EQ(26, (int)OBIS_TABLE_SIZE);
 
-	/* Verify the last OBIS entry maps to neutral_current */
-	ASSERT_EQ(MR_OFF(neutral_current), obis_table[26].offset);
+	/* Verify the last OBIS entry maps to frequency (index 25) */
+	ASSERT_EQ(MR_OFF(frequency), obis_table[25].offset);
 }
 
 /* ==== value_to_double Conversion ==== */
@@ -491,7 +500,7 @@ void test_field_mask_initially_zero(void)
 
 void test_field_mask_bit_for_each_obis(void)
 {
-	/* 27 OBIS entries fit in uint32_t (bits 0-26) */
+	/* 26 OBIS entries fit in uint32_t (bits 0-25) */
 	ASSERT_TRUE(OBIS_TABLE_SIZE <= 32);
 
 	/* Verify each bit can be set independently */
@@ -499,19 +508,19 @@ void test_field_mask_bit_for_each_obis(void)
 	for (size_t i = 0; i < OBIS_TABLE_SIZE; i++) {
 		all_bits |= (1u << i);
 	}
-	/* 27 bits = 0x07FFFFFF */
-	ASSERT_EQ((int)0x07FFFFFF, (int)all_bits);
+	/* 26 bits = 0x03FFFFFF */
+	ASSERT_EQ((int)0x03FFFFFF, (int)all_bits);
 }
 
 void test_min_read_percent_threshold(void)
 {
 	/*
 	 * MIN_READ_PERCENT=50 means at least 50% of reads must succeed.
-	 * For 27 OBIS codes: min = ceil(27*50/100) = ceil(13.5) = 14
+	 * For 26 OBIS codes: min = ceil(26*50/100) = ceil(13.0) = 13
 	 */
-	int read_target = 27;
+	int read_target = 26;
 	int min_reads = (read_target * MIN_READ_PERCENT + 99) / 100;
-	ASSERT_EQ(14, min_reads);
+	ASSERT_EQ(13, min_reads);
 
 	/* For single-phase (15 non-skipped): min = ceil(7.5) = 8 */
 	read_target = 15;
@@ -521,20 +530,20 @@ void test_min_read_percent_threshold(void)
 
 void test_valid_requires_min_coverage(void)
 {
-	/* With read_target=27, need 14+ successful reads */
+	/* With read_target=26, need 13+ successful reads */
 	struct meter_readings r;
 	memset(&r, 0, sizeof(r));
 
 	r.read_count = 10;  /* Below threshold */
-	r.read_target = 27;
+	r.read_target = 26;
 	int min_reads = (r.read_target * MIN_READ_PERCENT + 99) / 100;
 	r.valid = (r.read_count >= min_reads);
-	ASSERT_FALSE(r.valid);  /* 10 < 14 → invalid */
+	ASSERT_FALSE(r.valid);  /* 10 < 13 → invalid */
 
 	/* Exactly at threshold → valid */
-	r.read_count = 14;
+	r.read_count = 13;
 	r.valid = (r.read_count >= min_reads);
-	ASSERT_TRUE(r.valid);  /* 14 >= 14 → valid */
+	ASSERT_TRUE(r.valid);  /* 13 >= 13 → valid */
 }
 
 /* ==== Sanity Check (v0.17.0: range validation + field coverage) ==== */
@@ -803,7 +812,7 @@ void run_dlms_logic_tests(void)
 	TEST_SUITE_BEGIN("DLMS Logic");
 
 	/* OBIS table */
-	RUN_TEST(test_obis_table_has_27_entries);
+	RUN_TEST(test_obis_table_has_26_entries);
 	RUN_TEST(test_obis_table_all_class3);
 	RUN_TEST(test_obis_table_unique_offsets);
 	RUN_TEST(test_obis_table_unique_obis_codes);

@@ -55,6 +55,14 @@ static inline void k_sleep(int ms) { (void)ms; }
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 #endif
 
+/* ---- Zephyr sys/util MIN / MAX ---- */
+#ifndef MIN
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+#endif
+#ifndef MAX
+#define MAX(a, b) (((a) > (b)) ? (a) : (b))
+#endif
+
 /* ---- Zephyr logging stubs (no-op) ---- */
 #define LOG_MODULE_REGISTER(name, level)
 #define LOG_MODULE_DECLARE(name, level)
@@ -63,6 +71,9 @@ static inline void k_sleep(int ms) { (void)ms; }
 #define LOG_ERR(...)   do {} while (0)
 #define LOG_DBG(...)   do {} while (0)
 #define LOG_HEXDUMP_DBG(data, len, msg) do {} while (0)
+#define LOG_HEXDUMP_INF(data, len, msg) do {} while (0)
+#define LOG_HEXDUMP_WRN(data, len, msg) do {} while (0)
+#define LOG_HEXDUMP_ERR(data, len, msg) do {} while (0)
 #define LOG_LEVEL_DBG  4
 #define LOG_LEVEL_INF  3
 #define LOG_LEVEL_WRN  2
@@ -81,6 +92,13 @@ static inline void k_sleep(int ms) { (void)ms; }
 
 /* Enable single-phase mode for tests (matches prj.conf) */
 #define CONFIG_AMI_SINGLE_PHASE 1
+
+/* Kconfig value defaults needed when dlms_meter.c is compiled into tests.
+ * Mirrors Kconfig `default` for AMI_LWM2M_NOTIFY_MIN_INTERVAL_MS.
+ */
+#ifndef CONFIG_AMI_LWM2M_NOTIFY_MIN_INTERVAL_MS
+#define CONFIG_AMI_LWM2M_NOTIFY_MIN_INTERVAL_MS 30000
+#endif
 
 /* ---- Zephyr kernel header replacement ---- */
 /* When source files #include <zephyr/kernel.h>, redirect to this file */

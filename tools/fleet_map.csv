@@ -13,7 +13,7 @@ label,com,mac,endpoint,source
 12,COM28,10:51:db:1b:f7:94,ami-esp32c6-f794,v0.6.46-flash-one
 13,COM29,fc:01:2c:e3:ba:64,ami-esp32c6-ba64,v0.6.46-flash-one
 14,COM30,10:51:db:1b:f6:d4,ami-esp32c6-f6d4,v0.6.46-flash-one
-15,COM31,10:51:db:1b:f8:1c,ami-esp32c6-f81c,v0.6.46-flash-one
+15,COM31,10:51:db:1b:f6:e8,ami-esp32c6-f6e8,v0.7.7-omr-replacement-f81c-died
 16,COM32,10:51:db:1b:f7:68,ami-esp32c6-f768,v0.6.46-flash-one
 17,COM8,10:51:db:1c:15:58,ami-esp32c6-1558,v0.6.46-flash-one
 18,COM33,10:51:db:1b:fb:b4,ami-esp32c6-fbb4,v0.6.46-flash-one

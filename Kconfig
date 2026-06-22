@@ -11,6 +11,14 @@ config AMI_SINGLE_PHASE
 	  avoid wasting ~5 seconds polling unsupported registers.
 	  When disabled (3-phase mode), all 28 OBIS codes are polled.
 
+config AMI_GROUP1_ONLY
+	bool "Emit only OBIS Group-1 (Operational Telemetry)"
+	default n
+	help
+	  Pre-skip all OBIS Group-2 codes (reactive/apparent power, power factor,
+	  totals, reactive/apparent energy, frequency), keeping only Group-1
+	  operational telemetry: Voltage, Current, Active Power, Active Energy.
+
 config AMI_DEMO_MODE
 	bool "Demo mode (simulated meter data)"
 	default n
@@ -478,6 +486,41 @@ config AMI_REAL_LIVENESS_TIMEOUT_S
 	  dead. Lower it for faster recovery if false positives are not seen
 	  in the field; raise it if a slow server (GC pauses) trips it.
 
+config AMI_DELIVERY_LIVENESS_TIMEOUT_S
+	int "Delivery-liveness watchdog: max seconds with ZERO observers after first delivery"
+	default 1200
+	range 300 7200
+	help
+	  PRIO 9 backstop, v0.7.9 — the INBOUND companion to
+	  AMI_REAL_LIVENESS_TIMEOUT_S (which only proves the OUTBOUND direction).
+
+	  Field proof 2026-06-19 (Lab 17): a node can stay REGISTERED — REG_UPDATE
+	  round-trips, so the real-liveness gate stays fed and total_resets never
+	  moves — while its observe session is DEAD: the LwM2M engine has zero
+	  observers, so it delivers no telemetry to the server for hours. Both the
+	  REG-fed HW gate and the notify-fed silence watchdog keep being fed by the
+	  working outbound path, so the node never self-reboots. Only a manual
+	  power-cycle clears it (a full REGISTER re-establishes the observes).
+
+	  This gate closes that hole. coap_keepalive calls hw_watchdog_note_delivery()
+	  ONLY when lwm2m_notify_observer() returns >0 (real observers were notified
+	  = telemetry is actually flowing). Once a node has been observed at least
+	  once (the ever_had_observer latch), if NO delivery happens for this many
+	  seconds the kernel feeder triggers a cold reset → fresh REGISTER →
+	  observes re-established. The latch keeps minimal builds (legitimately
+	  ret==0 forever, no Object 33000 observer) from ever being penalized —
+	  the perverse failure mode of the v0.6.75 keepalive-inversion bug.
+
+	  Default 1200 s (20 min): several keepalive periods of headroom so a
+	  transient un-observe (Edge restart re-register window, profile push) does
+	  not trip it, while an hours-long stuck session is caught quickly. A
+	  per-node 0..100%% boot jitter is added (effective deadline ranges
+	  base..2*base) so a fleet-wide Edge restart does NOT make every node
+	  cold-reboot — and re-REGISTER — in lockstep (a synchronized REGISTER burst
+	  is itself an OTBR address-resolution stressor).
+	  Raise it if a slow/restarting server trips it; lower it for faster
+	  self-heal once false positives are ruled out in the field.
+
 config AMI_LWM2M_DNS_SD_RETRY_MAX
 	int "Maximum DNS-SD lookup retries before sys_reboot at boot"
 	default 10
@@ -554,7 +597,7 @@ endchoice
 
 config AMI_LED_QUIET_MODE
 	bool "Production-quiet LED mode"
-	default y
+	default n
 	help
 	  Suppress all firmware-driven LED state (boot UI, TX-blink, detach-RED).
 	  Only Object 3311 server-driven writes via ami_led_set_raw() can light

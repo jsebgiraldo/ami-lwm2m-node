@@ -208,6 +208,10 @@ OBSERVE_ADDITIONS = {
     "/33000_1.0/0/14": ("notify_throttled", 60, 900),
     "/33000_1.0/0/15": ("recover_count",     0, 3600),
     "/33000_1.0/0/16": ("restart_success",   0, 3600),
+    # v2.7 — exact LwM2M wire bytes (RID 38; observability Tier 2). pmin/pmax
+    # match uptime_s (60/300) so bytes/min deltas align with the message-count
+    # windows; avg packet size = lwm2m_tx_bytes_delta / notify_emitted_delta.
+    "/33000_1.0/0/38": ("lwm2m_tx_bytes",     60, 300),
 
     # Object 10242 v1.0 — DLMS meter resources beyond R-phase V/I/P that were
     # already in observe. Phase R completion (Q/S/PF), then 3-phase totals,

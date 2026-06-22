@@ -67,6 +67,20 @@ def load_alternate_assignment() -> dict[str, str]:
     return {m: ("SED" if i % 2 == 0 else "FTD") for i, m in enumerate(sorted(set(macs)))}
 
 
+def load_labels() -> dict[str, str]:
+    """MAC (UPPER) -> Lab label from fleet_map.csv, e.g. '10:51:DB:1C:14:94' -> '1'."""
+    if not FLEET_MAP.exists():
+        return {}
+    out = {}
+    with FLEET_MAP.open("r", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            mac = (row.get("mac") or "").strip().upper()
+            lbl = (row.get("label") or "").strip()
+            if mac and lbl:
+                out[mac] = lbl
+    return out
+
+
 def enumerate_boards() -> list[str]:
     import usb.core
     import usb.util
@@ -106,8 +120,15 @@ def flash_one(mac: str, build_dir: pathlib.Path, port_ofs: int) -> tuple[bool, s
         return False, "timeout", time.time() - t0
     text = r.stdout + r.stderr
     elapsed = time.time() - t0
-    if text.count("Programming Finished") >= 2:
-        return True, "OK", elapsed
+    # Each stage (mcuboot @0x0, app @0x20000) succeeds when program_esp prints
+    # "Programming Finished" (it wrote) OR "Existing flash content matches" (the
+    # flash already holds this exact image, so program_esp verify-skips). Both
+    # stages must succeed. Counting only "Programming Finished" false-FAILed any
+    # board already on the target image (e.g. re-running the rollout on a board
+    # that's already flashed) — that's a no-op success, not a failure.
+    stages_ok = text.count("Programming Finished") + text.count("Existing flash content matches")
+    if stages_ok >= 2:
+        return True, ("OK" if "Programming Finished" in text else "OK(already-flashed)"), elapsed
     if "could not find or open device" in text:
         return False, "USB_FAIL", elapsed
     if "Could not identify target" in text:
@@ -129,6 +150,9 @@ def main() -> int:
                     help="build dir name under zephyrproject for the SED image")
     ap.add_argument("--ftd-build", default=None,
                     help="build dir name under zephyrproject for the FTD image")
+    ap.add_argument("--jobs", type=int, default=1,
+                    help="flash this many boards in PARALLEL (each OpenOCD gets distinct "
+                         "ports via port_ofs). e.g. --jobs 16 for a 16-port hub.")
     args = ap.parse_args()
 
     build_sed = ZP / args.sed_build if args.sed_build else BUILD_SED
@@ -146,6 +170,7 @@ def main() -> int:
         return 1
 
     alt_map = load_alternate_assignment() if args.alternate else {}
+    labels = load_labels()
     plan = []
     for m in macs:
         if m in force_ftd:
@@ -162,7 +187,7 @@ def main() -> int:
 
     print(f"Plan ({len(plan)} boards):")
     for m, role in plan:
-        print(f"  {m}  ->  {role}  ({build_sed.name if role == 'SED' else build_ftd.name})")
+        print(f"  {m}  (Lab {labels.get(m.upper(), '?')})  ->  {role}  ({build_sed.name if role == 'SED' else build_ftd.name})")
     if args.dry_run:
         return 0
 
@@ -172,27 +197,39 @@ def main() -> int:
     if new_csv:
         w.writerow(["ts", "mac", "role", "result", "elapsed_s", "fw"])
 
-    ok = 0
-    for i, (mac, role) in enumerate(plan):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    csv_lock = threading.Lock()
+    n = len(plan)
+
+    def do_board(i, mac, role):
         build = build_sed if role == "SED" else build_ftd
-        note = ""
-        success = False
+        note = ""; success = False; elapsed = 0.0
         for attempt in range(1 + args.retries):
-            success, note, elapsed = flash_one(mac, build, port_ofs=i * 3 + attempt)
+            # i*10 keeps each board's gdb/telnet/tcl ports distinct under --jobs
+            success, note, elapsed = flash_one(mac, build, port_ofs=i * 10 + attempt)
             if success:
                 break
             time.sleep(5)
         status = "OK " if success else "FAIL"
-        print(f"  [{i+1}/{len(plan)}] {mac} {role}: {status} ({note}) {elapsed:.1f}s")
-        w.writerow([dt.datetime.now().isoformat(timespec="seconds"), mac, f"{role}:{build.name}",
-                    note, f"{elapsed:.1f}", "0.7.0-exp256"])
-        fcsv.flush()
-        if success:
-            ok += 1
+        print(f"  [{i+1}/{n}] {mac} (Lab {labels.get(mac.upper(), '?')}) {role}: {status} ({note}) {elapsed:.1f}s", flush=True)
+        with csv_lock:
+            w.writerow([dt.datetime.now().isoformat(timespec="seconds"), mac, f"{role}:{build.name}",
+                        note, f"{elapsed:.1f}", "0.7.0-exp256"])
+            fcsv.flush()
+        return success
+
+    if args.jobs > 1:
+        print(f"(flashing up to {min(args.jobs, n)} boards in PARALLEL)", flush=True)
+        with ThreadPoolExecutor(max_workers=min(args.jobs, n)) as ex:
+            results = list(ex.map(lambda t: do_board(*t), [(i, m, r) for i, (m, r) in enumerate(plan)]))
+        ok = sum(1 for r in results if r)
+    else:
+        ok = sum(1 for i, (m, r) in enumerate(plan) if do_board(i, m, r))
 
     fcsv.close()
-    print(f"\nResult: {ok}/{len(plan)} OK")
-    return 0 if ok == len(plan) else 2
+    print(f"\nResult: {ok}/{n} OK")
+    return 0 if ok == n else 2
 
 
 if __name__ == "__main__":
