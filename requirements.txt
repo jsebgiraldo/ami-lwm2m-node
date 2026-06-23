@@ -1,0 +1,19 @@
+# Python tooling for the AMI LwM2M Node — build + flash + deploy + diagnostics.
+# Pinned to the versions this firmware was built + validated on (2026-06-22).
+#
+#   pip install -r requirements.txt
+#   pip install -r ../zephyr/scripts/requirements.txt   # Zephyr's own build deps
+#
+# Also required (installed separately, NOT pip): the Zephyr SDK 0.17.0
+# (https://github.com/zephyrproject-rtos/sdk-ng/releases).
+
+# --- Zephyr build driver ---
+west==1.5.0
+
+# --- ESP32-C6 flashing ---
+esptool==5.2.0
+pyserial==3.5
+
+# --- Fleet deploy + diagnostics (TB Edge REST API + OTBR SSH) ---
+paramiko==4.0.0
+requests==2.32.5

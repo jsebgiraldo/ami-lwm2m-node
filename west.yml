@@ -1,0 +1,31 @@
+# West manifest for the AMI LwM2M Node firmware (freestanding Zephyr application).
+#
+# This pins the EXACT Zephyr revision the firmware was built + validated on:
+#   Zephyr 4.3.99 dev snapshot  (v4.3.0-6612-g6159cb3fecf)
+#   Zephyr SDK 0.17.0 · west 1.5.0 · esptool 5.2.0 · board xiao_esp32c6/esp32c6/hpcore
+#
+# Reproduce the workspace on a fresh machine:
+#   mkdir ami-ws && cd ami-ws
+#   git clone https://github.com/jsebgiraldo/ami-lwm2m-node.git
+#   west init -l ami-lwm2m-node
+#   west update            # pulls Zephyr + modules at the pinned revision (large)
+#   west zephyr-export
+#   pip install -r ami-lwm2m-node/requirements.txt
+#   pip install -r zephyr/scripts/requirements.txt
+# Then apply the out-of-tree hook (tools/ZEPHYR_PATCHES.md) and build
+# (python ami-lwm2m-node/tools/build_prod.py). See README.md.
+manifest:
+  version: "1.0"
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: 6159cb3fecf85090c8d552d5dfa4d97f4cb1231e
+      # import: true pulls Zephyr's full module set at this revision — heavier
+      # but guarantees a complete, build-able tree (no missing-module surprises).
+      # To trim for ESP32-C6 only, replace with an import: { name-allowlist: [...] }.
+      import: true
+  self:
+    path: ami-lwm2m-node
