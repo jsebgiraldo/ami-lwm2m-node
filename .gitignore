@@ -216,3 +216,8 @@ build_sim/
 tools/*.out
 tools/*_last.json
 tools/flicker_log*.csv
+
+# Monitor output (regenerated hourly by tools/node_monitor.py — data, not source)
+tools/node_history_*.json
+tools/node_report_*.html
+tools/node_monitor_cron.log

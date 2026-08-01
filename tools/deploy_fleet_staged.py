@@ -31,6 +31,7 @@ Usage:
 from __future__ import annotations
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -41,7 +42,29 @@ import fleet_common as fc
 
 fc.bootstrap_venv()
 
-TB = "http://192.168.8.111:8090"
+# Reuse diag_get's hardened CoAP client to read each node's TRUE fw over IPv6
+# (/diag), instead of the unreliable TB "fw_version" attribute (not populated
+# in this deployment). /diag is the authoritative fw oracle for nodes on
+# >= 0.7.15-diag; older/absent -> None -> treated as needing the update.
+import diag_get as _dg
+_DIAG_NS: dict = {}
+exec(compile(_dg.COAP_GET_SRC, "<coap>", "exec"), _DIAG_NS)
+
+
+def _diag_fw(omr):
+    if not omr:
+        return None
+    try:
+        code, body = _DIAG_NS["coap_get"](omr, 5685, "diag", retries=2, timeout=1.5)
+        if (code >> 5) == 2:
+            return json.loads(body).get("fw")
+    except Exception:
+        pass
+    return None
+
+# Default edge: pi4 (192.168.1.111) is the active UNAL-Thread fleet. Override
+# with --mesh <name> (fleet_common.MESH_TO_EDGE) or --host/--port.
+TB = f"http://{fc.MESH_TO_EDGE['pi4'][0]}:{fc.MESH_TO_EDGE['pi4'][1]}"
 HERE = __import__("pathlib").Path(__file__).resolve().parent
 
 
@@ -61,9 +84,23 @@ def main() -> int:
     ap.add_argument("--all", action="store_true", help="target every ami-esp32c6-* device in TB")
     ap.add_argument("--settle", type=int, default=90, help="seconds to let the mesh settle between nodes")
     ap.add_argument("--dry-run", action="store_true", help="classify only, no OTA")
+    ap.add_argument("--mesh", default="pi4", choices=list(fc.MESH_TO_EDGE),
+                    help="edge/mesh to target (default pi4 = active fleet)")
+    ap.add_argument("--host", default=None, help="override edge host (e.g. 192.168.1.111)")
+    ap.add_argument("--port", type=int, default=None, help="override edge port")
     args = ap.parse_args()
     if not args.dry_run and not args.bin:
         print("FATAL: --bin required (or use --dry-run)"); return 2
+
+    # Resolve target edge (the fleet is on pi4; the old hardcoded r1000 host
+    # pointed at the wrong edge).
+    global TB
+    if args.host:
+        TB = f"http://{args.host}:{args.port or 8090}"
+    else:
+        h, p = fc.edge_for_mesh(args.mesh)
+        TB = f"http://{h}:{p}"
+    print(f"[deploy] target edge: {TB}")
 
     tok = login()
 
@@ -82,13 +119,32 @@ def main() -> int:
 
     now = lambda: int(time.time() * 1000)
 
+    def latest_omr(did):
+        # newest OMR from TB transportLog (console-free node-address resolution)
+        r = g(f"/api/plugins/telemetry/DEVICE/{did}/values/timeseries"
+              f"?keys=transportLog&startTs={now() - 300000}&endTs={now()}&limit=20&orderBy=DESC")
+        for e in r.get("transportLog", []):
+            m = re.search(r"\[([0-9a-fA-F:]+)\]:\d+", e.get("value", ""))
+            if m:
+                return m.group(1)
+        return None
+
     def fw_of(did):
-        return next((a["value"] for a in g(f"/api/plugins/telemetry/DEVICE/{did}/values/attributes")
-                     if a["key"] == "fw_version"), None)
+        # TRUE firmware version via the /diag CoAP GET over IPv6 (the "fw_version"
+        # TB attribute is not populated in this deployment). Resolve the node's
+        # OMR from transportLog, then GET /diag. Nodes on < 0.7.15-diag (no diag
+        # server) return None -> treated as needing the update (correct).
+        return _diag_fw(latest_omr(did))
 
     def streaming(did):
-        x = g(f"/api/plugins/telemetry/DEVICE/{did}/values/timeseries?keys=uptime_s").get("uptime_s", [{}])[0]
-        return bool(x.get("ts")) and (now() - x["ts"]) // 1000 < 150
+        # Reachable = TB shows recent activity. NB: uptime_s was a poor proxy —
+        # it is low-cadence telemetry (reported near registration, not every
+        # cycle), so freshness<150s undercounted reachable nodes badly (1 vs 32
+        # active). lastActivityTime updates on every LwM2M exchange, so it is the
+        # reliable liveness signal for "on the mesh and OTA-able right now".
+        a = g(f"/api/plugins/telemetry/DEVICE/{did}/values/attributes/SERVER_SCOPE")
+        la = next((x["value"] for x in a if x["key"] == "lastActivityTime"), None)
+        return bool(la) and (now() - la) // 1000 < 180
 
     # classify
     todo, skip_cur, unreachable, missing = [], [], [], []

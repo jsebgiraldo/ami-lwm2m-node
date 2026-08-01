@@ -29,9 +29,20 @@ target_sources(app PRIVATE
     src/lwm2m_obj_light_control.c
     src/lwm2m_obj_thread_role.c
     src/coap_keepalive.c
+    src/coap_diag.c
 )
 
 # Include path for custom LwM2M object internal headers
 target_include_directories(app PRIVATE
     ${ZEPHYR_BASE}/subsys/net/lib/lwm2m
 )
+
+# CoAP diag server (src/coap_diag.c): COAP_SERVICE_DEFINE(diag_service, ...)
+# places its resources into a per-service iterable section
+# "coap_resource_diag_service". Register that section on BOTH linker paths so
+# the _coap_resource_diag_service_list_start/end symbols resolve. See
+# sections-ram.ld and samples/net/sockets/coap_server for the upstream pattern.
+zephyr_linker_sources(DATA_SECTIONS sections-ram.ld)
+zephyr_iterable_section(
+    NAME coap_resource_diag_service
+    GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT})

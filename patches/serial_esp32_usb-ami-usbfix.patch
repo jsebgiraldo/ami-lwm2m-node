@@ -1,0 +1,81 @@
+diff --git a/drivers/serial/serial_esp32_usb.c b/drivers/serial/serial_esp32_usb.c
+index 1a0480ecefa..304b8045c0c 100644
+--- a/drivers/serial/serial_esp32_usb.c
++++ b/drivers/serial/serial_esp32_usb.c
+@@ -44,6 +44,11 @@ struct serial_esp32_usb_data {
+ 	void *irq_cb_data;
+ #endif
+ 	int64_t last_tx_time;
++	/* AMI v0.7.17: set once a full poll-out timeout elapses with zero FIFO
++	 * drains (no host reading); cleared the instant a drain succeeds. Bounds
++	 * the busy-wait to one 50 ms episode per drain->stall transition instead
++	 * of re-arming it on every byte when a host drains erratically. */
++	bool tx_stalled;
+ };
+ 
+ #ifdef CONFIG_UART_INTERRUPT_DRIVEN
+@@ -66,17 +71,45 @@ static void serial_esp32_usb_poll_out(const struct device *dev, unsigned char c)
+ 	struct serial_esp32_usb_data *data = dev->data;
+ 
+ 	/*
+-	 * If there is no USB host connected, this function will busy-wait once for the timeout
+-	 * period, but return immediately for subsequent calls.
++	 * Fast path: FIFO writable -> send now. A successful write also proves a
++	 * host is draining, so refresh the timestamp and clear any stalled state
++	 * (this is what auto-resumes byte-accurate logging the moment a host
++	 * reconnects/drains).
+ 	 */
++	if (usb_serial_jtag_ll_txfifo_writable()) {
++		usb_serial_jtag_ll_write_txfifo(&c, 1);
++		usb_serial_jtag_ll_txfifo_flush();
++		data->last_tx_time = k_uptime_get();
++		data->tx_stalled = false;
++		return;
++	}
++
++	/*
++	 * FIFO full. AMI v0.7.17: if we already concluded no host is draining
++	 * (a full timeout elapsed earlier with zero drains), drop immediately
++	 * rather than busy-waiting again. The upstream code updated last_tx_time
++	 * only on success, so an intermittently-draining host (the Windows
++	 * "device not functioning" limbo after a flash) re-armed a fresh 50 ms
++	 * budget on every byte -> repeated ~50 ms/byte spins. Bounding to one
++	 * episode per drain->stall transition removes that amplification while
++	 * keeping full logs whenever a host is actually reading (a real
++	 * full-speed host never goes 50 ms with zero drains).
++	 */
++	if (data->tx_stalled) {
++		return;
++	}
++
+ 	do {
+ 		if (usb_serial_jtag_ll_txfifo_writable()) {
+ 			usb_serial_jtag_ll_write_txfifo(&c, 1);
+ 			usb_serial_jtag_ll_txfifo_flush();
+ 			data->last_tx_time = k_uptime_get();
++			data->tx_stalled = false;
+ 			return;
+ 		}
+ 	} while ((k_uptime_get() - data->last_tx_time) < USBSERIAL_POLL_OUT_TIMEOUT_MS);
++
++	data->tx_stalled = true;
+ }
+ 
+ static int serial_esp32_usb_err_check(const struct device *dev)
+@@ -100,6 +133,16 @@ static int serial_esp32_usb_init(const struct device *dev)
+ 		return ret;
+ 	}
+ 
++	/*
++	 * AMI v0.7.17: a soft/RTS reset does NOT clear the USB-Serial-JTAG
++	 * peripheral — Espressif keeps it (and BBPLL) alive across esp_restart so
++	 * the ROM bootloader can keep logging — so it can carry stale enabled /
++	 * pending interrupts across a reboot. Start the ISR path from a known-clean
++	 * state. This only touches interrupt state; it does NOT drop the USB link.
++	 */
++	usb_serial_jtag_ll_disable_intr_mask(USB_SERIAL_JTAG_LL_INTR_MASK);
++	usb_serial_jtag_ll_clr_intsts_mask(USB_SERIAL_JTAG_LL_INTR_MASK);
++
+ #ifdef CONFIG_UART_INTERRUPT_DRIVEN
+ 	ret = esp_intr_alloc(config->irq_source,
+ 			     ESP_PRIO_TO_FLAGS(config->irq_priority) |

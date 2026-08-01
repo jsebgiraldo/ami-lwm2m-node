@@ -42,6 +42,7 @@
 #include "lwm2m_discover.h"
 #include "lwm2m_watchdog.h"
 #include "coap_keepalive.h"
+#include "coap_diag.h"
 #include "hw_watchdog.h"
 #include "lwm2m_obj_power_meter.h"
 #include "lwm2m_obj_thread_diag.h"
@@ -88,7 +89,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.7.14-otacfm"
+#define CLIENT_FIRMWARE_VER     "0.7.17-ami"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -778,6 +779,22 @@ static bool meter_initialized;
 static int64_t demo_last_update_ms;
 static double demo_energy_kwh = 61100.0;
 
+/* Snapshot the current meter readings for the CoAP /ami GET (src/coap_diag.c).
+ * last_readings is the canonical current-values buffer that `ami status` and
+ * the LwM2M push both read: in CONFIG_AMI_DEMO_MODE it holds fill_demo_readings()
+ * output, otherwise the real meter_poll() result — so this works in both modes,
+ * unlike dlms_meter's last_good which only the real DLMS path fills. Lock-free
+ * copy (matches the shell/LwM2M read convention). Returns the readings' valid
+ * flag (false before the first fill/poll). */
+bool ami_get_last_readings(struct meter_readings *out)
+{
+	if (out == NULL) {
+		return false;
+	}
+	*out = last_readings;   /* struct copy */
+	return last_readings.valid;
+}
+
 /* Forward declarations */
 static void update_sensors_fallback(void);
 static void fill_demo_readings(struct meter_readings *r);
@@ -1140,10 +1157,21 @@ static void thread_state_changed_cb(otChangedFlags flags, void *ctx)
 		 * recover attempt counter to 0 and schedule recover_work with no
 		 * delay. The existing re-entry guard (v0.6.69) prevents double
 		 * execution if a recover cycle is already in flight. */
+		/* v0.7.15 fleet de-correlation: the eager path is exactly right for
+		 * ONE node (seize the fresh mesh) but wrong for the FLEET. After a
+		 * shared PSU brownout ~all boards hit DETACHED->CHILD within the same
+		 * second, and K_NO_WAIT made every one of them slam DNS-SD +
+		 * rd_client_start simultaneously — a synchronized re-registration storm
+		 * against the just-recovered mesh/leader/edge (the 47-node brownout
+		 * signature we root-caused). Spread the reschedule over a small random
+		 * window: re-attach stays effectively immediate per node (<=3s) while
+		 * the fleet-wide thundering herd is broken up. */
+		uint32_t eager_jitter_ms = sys_rand32_get() % 3000U;
 		LOG_INF("eager-reattach: resetting LwM2M recover_attempt + "
-			"scheduling immediate recover");
+			"scheduling recover in %ums (fleet de-correlation jitter)",
+			eager_jitter_ms);
 		lwm2m_recover_attempt = 0;
-		k_work_reschedule(&lwm2m_recover_work, K_NO_WAIT);
+		k_work_reschedule(&lwm2m_recover_work, K_MSEC(eager_jitter_ms));
 	}
 }
 
@@ -1917,6 +1945,13 @@ static int lwm2m_setup(void)
 	 * (CONFIG_OPENTHREAD_FTD) for become_router to actually work. */
 	thread_role_init();
 #endif
+
+	/* v0.7.15: object-independent IPv6 diagnostics. A tiny CoAP GET server on
+	 * [::]:5685/diag returns a JSON status snapshot straight over the node's
+	 * Thread IPv6 address, INDEPENDENT of the LwM2M session. So the server can
+	 * poll a node that is still on the mesh but has dropped off TB ("reachable
+	 * but not registered") — exactly the inactive-node case we are chasing. */
+	coap_diag_init(CLIENT_FIRMWARE_VER);
 
 	/* v0.6.42: LED turns RED if the previous reset was a brownout. Visible
 	 * fault indicator across the fleet — every other node stays dark. Reset
