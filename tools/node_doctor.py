@@ -34,7 +34,7 @@ import serial                       # noqa: E402
 import serial.tools.list_ports as lp  # noqa: E402
 import requests                     # noqa: E402
 
-FW_LATEST = "0.7.17-ami"            # keep in sync with src/main.c CLIENT_FIRMWARE_VER
+FW_LATEST = "0.7.18-ami"            # keep in sync with src/main.c CLIENT_FIRMWARE_VER
 PREFIX = "ami-esp32c6-"
 FLEET_MAP = fc.TOOLS_DIR / "fleet_map.csv"
 

@@ -18,9 +18,7 @@ TB = 'http://192.168.8.111:8090'
 DEFAULT = ['1494', '14c8', '1534', 'f6d4', 'f854', 'fbb4']
 PERIOD = 25
 HEARTBEAT = 10
-RR = {0:'none',1:'PIN',2:'SW',4:'BROWNOUT',8:'POR',16:'HW-WDOG',32:'DEBUG',256:'CPU_LOCKUP'}
-CODE = {0:'(none/HW/ext)',1:'boot-wdog',2:'mesh-alone',3:'conn-mon-no-tick',4:'conn-mon-WEDGED',
-        5:'max-recover',6:'lwm2m-reboot',7:'shell',8:'ip6-fail',9:'thread-fail',10:'dns-sd-fail',11:'PANIC',99:'other'}
+from reboot_codes import REBOOT_CODE as CODE, RESET_CAUSE as RR   # canonical maps
 
 
 def login():

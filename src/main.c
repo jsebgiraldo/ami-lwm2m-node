@@ -66,6 +66,8 @@ extern void update_connectivity_metrics(void);
 extern void thread_diag_publish_post_mortem(uint32_t uptime_s, uint32_t heap_free,
 					    uint32_t heap_min_free, uint32_t reg_age_s,
 					    uint8_t lwm2m_state, uint8_t thread_role);
+/* v0.7.18: crash site of the previous boot (RIDs 39-41). */
+extern void thread_diag_publish_panic(uint32_t reason, uint32_t mepc, uint32_t ra);
 
 /* Post-mortem snapshot (v0.6.19): persisted NVS slot describing the
  * firmware's state at the most recent snapshot before the last reset.
@@ -89,7 +91,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.7.17-ami"
+#define CLIENT_FIRMWARE_VER     "0.7.18-ami"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -399,6 +401,27 @@ static uint32_t ami_reboot_reason_to_code(const char *reason)
 	return 99U;   /* unknown reason string */
 }
 
+/* === CANONICAL RID 37 code map ===
+ * Codes 1-10 come from the table above (paths that call ami_reboot_drain).
+ * The rest are stamped directly at their sys_reboot() site, because those
+ * paths must not call a helper that sleeps:
+ *
+ *    11  panic          k_sys_fatal_error_handler (this file)
+ *    12  hw-wdt boot-grace     hw_watchdog.c — never REGISTERed in time
+ *    13  hw-wdt delivery-stall hw_watchdog.c — registered, ZERO observers
+ *    14  hw-wdt silence        hw_watchdog.c — server stopped ACKing
+ *    15  hw-wdt channel        hw_watchdog.c — a task_wdt channel went mute
+ *    16  ota-apply             firmware_update.c — reboot into the new slot
+ *    99  unknown reason string
+ *     0  tag invalid — the reset did NOT pass through any firmware path.
+ *        With 12-16 in place this finally means what it should: power-on,
+ *        brownout, or an external/hardware reset. Before v0.7.18 it also
+ *        swallowed every watchdog reboot, which is why the 2026-08-05 census
+ *        could not tell a hung node from a dead power supply.
+ *
+ * Keep this comment and tools/ that decode RID 37 in sync when adding codes.
+ */
+
 void ami_reboot_set_tag(uint32_t code)
 {
 	ami_reboot_tag.magic = AMI_REBOOT_TAG_MAGIC;
@@ -416,6 +439,55 @@ void ami_reboot_capture_boot_code(void)
 	ami_boot_reboot_code = (ami_reboot_tag.magic == AMI_REBOOT_TAG_MAGIC)
 				? ami_reboot_tag.code : 0U;
 	ami_reboot_tag.magic = 0U;   /* invalidate: next reset must re-stamp */
+}
+
+/* === v0.7.18: panic forensics that survive the reset ===
+ *
+ * RID 37 == 11 tells us a node panicked; it does not tell us WHERE. The
+ * exception stack frame handed to k_sys_fatal_error_handler carries exactly
+ * that, and until now we threw it away (ARG_UNUSED(esf)).
+ *
+ * We keep three words in the same __noinit region the reboot tag uses:
+ *   reason — the K_ERR_* code (CPU exception vs stack-check vs kernel oops),
+ *            which alone splits "bad pointer" from "stack overflow"
+ *   mepc   — the faulting instruction
+ *   ra     — its caller, so we get a two-deep frame for free
+ *
+ * mepc/ra go straight into addr2line against the matching ELF:
+ *   riscv64-zephyr-elf-addr2line -f -e build/zephyr/zephyr.elf <mepc> <ra>
+ *
+ * This is the cheap path — a handful of bytes, readable over LwM2M from any
+ * node in the field. The flash coredump (v0.7.18 too) is the deep path: full
+ * registers, thread states and stacks for GDB. Cheap one first: it is often
+ * enough, and it works even when the coredump partition was never written
+ * because the supply died mid-write. */
+#define AMI_PANIC_TAG_MAGIC 0x504E4943U   /* 'P','N','I','C' */
+struct ami_panic_tag {
+	uint32_t magic;
+	uint32_t reason;
+	uint32_t mepc;
+	uint32_t ra;
+};
+__noinit static struct ami_panic_tag ami_panic_tag;
+
+static uint32_t ami_panic_reason;
+static uint32_t ami_panic_mepc;
+static uint32_t ami_panic_ra;
+
+uint32_t ami_panic_get_reason(void) { return ami_panic_reason; }
+uint32_t ami_panic_get_mepc(void)   { return ami_panic_mepc; }
+uint32_t ami_panic_get_ra(void)     { return ami_panic_ra; }
+
+/* Latch at boot, then invalidate — same contract as the reboot tag, so a
+ * later NON-panic reset reads back zeros instead of a stale crash site. */
+void ami_panic_capture_boot(void)
+{
+	if (ami_panic_tag.magic == AMI_PANIC_TAG_MAGIC) {
+		ami_panic_reason = ami_panic_tag.reason;
+		ami_panic_mepc   = ami_panic_tag.mepc;
+		ami_panic_ra     = ami_panic_tag.ra;
+	}
+	ami_panic_tag.magic = 0U;
 }
 
 /* Non-static so the dedicated lwm2m_watchdog thread can call it directly
@@ -461,11 +533,20 @@ void ami_reboot_drain(int reboot_type, const char *reason)
  */
 void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 {
-	ARG_UNUSED(esf);
-
 	LOG_PANIC();   /* flush any pending log records */
-	LOG_ERR("FATAL panic (reason=%u): drain USB %dms then sys_reboot COLD",
-		reason, CONFIG_AMI_REBOOT_USB_DRAIN_MS);
+
+	/* v0.7.18: stamp the crash site BEFORE anything else can fault again.
+	 * esf is NULL for panics raised outside an exception context (e.g. a
+	 * plain k_panic()), so guard it — a null deref here would recurse into
+	 * this very handler. */
+	ami_panic_tag.magic  = AMI_PANIC_TAG_MAGIC;
+	ami_panic_tag.reason = (uint32_t)reason;
+	ami_panic_tag.mepc   = (esf != NULL) ? (uint32_t)esf->mepc : 0U;
+	ami_panic_tag.ra     = (esf != NULL) ? (uint32_t)esf->ra   : 0U;
+
+	LOG_ERR("FATAL panic (reason=%u) mepc=0x%08x ra=0x%08x: drain USB %dms "
+		"then sys_reboot COLD", reason, ami_panic_tag.mepc,
+		ami_panic_tag.ra, CONFIG_AMI_REBOOT_USB_DRAIN_MS);
 
 	/* Best-effort: persist the panic indicator. atomic_set is safe to call
 	 * from any context (single store, no scheduler interaction). */
@@ -3111,6 +3192,10 @@ int main(void)
 	/* v0.7.4: latch which reboot path caused this boot (RID 37) and
 	 * invalidate the tag, BEFORE anything else can re-stamp or reboot. */
 	ami_reboot_capture_boot_code();
+	/* v0.7.18: same contract for the panic site (RIDs 39-41). Must run here
+	 * too — if this boot panics again, the handler overwrites the tag and we
+	 * would lose the ORIGINAL crash we came here to report. */
+	ami_panic_capture_boot();
 
 	/* v0.6.72 P0 — BOOT STAGGER (must run before ANY peripheral init).
 	 *
@@ -3257,6 +3342,23 @@ int main(void)
 		} else {
 			LOG_INF("post-mortem: no prior snapshot (first boot "
 				"after chip-erase or struct version changed)");
+		}
+
+		/* v0.7.18: pair the snapshot with the crash SITE. The
+		 * post-mortem says what the firmware was doing; these three say
+		 * where it died. OUTSIDE the pm_get_last() branch on purpose —
+		 * the very first panic after a chip-erase has no prior snapshot
+		 * to pair with, and that is exactly the crash we most want to
+		 * see. All-zero is the honest "this boot did not follow a
+		 * panic" answer; RID 37 already distinguishes the two cases. */
+		thread_diag_publish_panic(ami_panic_get_reason(),
+					  ami_panic_get_mepc(),
+					  ami_panic_get_ra());
+		if (ami_panic_get_mepc() != 0U) {
+			LOG_WRN("panic site: reason=%u mepc=0x%08x ra=0x%08x "
+				"(addr2line against the ELF of THIS build)",
+				ami_panic_get_reason(), ami_panic_get_mepc(),
+				ami_panic_get_ra());
 		}
 		/* Kick off the periodic snapshot timer. From here on, every
 		 * PM_SNAPSHOT_PERIOD a fresh record overwrites the NVS slot. */

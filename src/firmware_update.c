@@ -22,6 +22,10 @@
 
 LOG_MODULE_REGISTER(fw_update, LOG_LEVEL_INF);
 
+/* v0.7.18: reboot-cause tag (Object 33000 RID 37), defined in main.c. */
+extern void ami_reboot_set_tag(uint32_t code);
+#define AMI_RBOOT_OTA_APPLY   16   /* cold reboot to apply a staged image */
+
 /* Scratch buffer for incoming firmware blocks */
 static uint8_t firmware_buf[256];
 
@@ -136,6 +140,10 @@ static int firmware_update_cb(uint16_t obj_inst_id,
 	LOG_WRN("FW: slot1 marked for upgrade — cold reboot in 2s to apply");
 	/* Give the LwM2M stack a moment to ACK the Execute before we drop. */
 	k_sleep(K_SECONDS(2));
+	/* v0.7.18: tag the OTA reboot (RID 37) so the first boot on the new image
+	 * is not misread as a power loss — otherwise every upgrade looks like a
+	 * field fault in the reboot-cause census. */
+	ami_reboot_set_tag(AMI_RBOOT_OTA_APPLY);
 	sys_reboot(SYS_REBOOT_COLD);
 	/* unreachable */
 	return 0;

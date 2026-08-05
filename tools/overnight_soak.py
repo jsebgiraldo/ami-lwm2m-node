@@ -13,9 +13,7 @@ import re, urllib.request, json, time
 
 TB = 'http://192.168.8.111:8090'
 NODES = ('1494', 'f7b4', 'fbb8')
-CODE = {0:'(none/HW/ext)',1:'boot-watchdog',2:'mesh-alone',3:'conn-mon-no-first-tick',
-        4:'conn-mon-WEDGED',5:'max-recover-attempts',6:'lwm2m-device-reboot',7:'shell',
-        8:'ip6-enable-fail',9:'thread-enable-fail',10:'dns-sd-boot-fail',11:'PANIC',99:'other'}
+from reboot_codes import REBOOT_CODE as CODE   # canonical map, incl. codes 12-16
 LOG = 'logs/overnight_soak.log'
 PERIOD = 180
 HEARTBEAT_EVERY = 40        # ~2h

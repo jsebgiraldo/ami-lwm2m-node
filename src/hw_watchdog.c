@@ -126,6 +126,23 @@ extern uint32_t lwm2m_diag_get_dlv_reboots(void);
 extern void lwm2m_diag_inc_dlv_reboots(void);
 extern void lwm2m_diag_reset_dlv_reboots(void);
 
+/* v0.7.18: stamp WHICH watchdog path rebooted us (Object 33000 RID 37).
+ *
+ * The four sys_reboot() calls below deliberately bypass ami_reboot_drain() —
+ * it sleeps, and by definition we get here when something is already wedged.
+ * ami_reboot_set_tag() carries none of that risk: it is two plain stores into
+ * a __noinit struct, no workqueue, no logging, no scheduler interaction. The
+ * panic handler (main.c) already calls it with interrupts possibly disabled.
+ *
+ * Without this, all four paths land in RID 37 == 0, which is the same bucket
+ * as a real power loss — measured 2026-08-05: 27 of 35 live nodes sat in that
+ * bucket, making "the node hung" indistinguishable from "the supply died". */
+extern void ami_reboot_set_tag(uint32_t code);
+#define AMI_RBOOT_HWWDT_BOOT_GRACE   12   /* boot grace expired, never REGISTERed */
+#define AMI_RBOOT_HWWDT_DELIVERY     13   /* registered but ZERO observers */
+#define AMI_RBOOT_HWWDT_SILENCE      14   /* server stopped ACKing REG_UPDATE */
+#define AMI_RBOOT_HWWDT_CHANNEL      15   /* a task_wdt channel went silent */
+
 /* Uptime (s) at which the current UNBROKEN real-delivery streak began; 0 = no
  * streak running. Set by note_delivery on the first delivery of a streak;
  * cleared by the kernel thread on ANY liveness fail (incl. a delivery-stall).
@@ -278,6 +295,7 @@ static void hw_wdog_kernel_thread(void *p1, void *p2, void *p3)
 				"no first REGISTER ever, SOC cold reset",
 				reason, now_s,
 				CONFIG_AMI_HW_WATCHDOG_BOOT_GRACE_HARD_S);
+			ami_reboot_set_tag(AMI_RBOOT_HWWDT_BOOT_GRACE);
 			sys_reboot(SYS_REBOOT_COLD);
 		}
 
@@ -327,6 +345,7 @@ static void hw_wdog_kernel_thread(void *p1, void *p2, void *p3)
 				"#%u/%u", now_s - ld, delivery_deadline_s,
 				DLV_SOFT_TRIES_MAX, lwm2m_diag_get_dlv_reboots(),
 				DLV_HARD_REBOOTS_MAX);
+			ami_reboot_set_tag(AMI_RBOOT_HWWDT_DELIVERY);
 			sys_reboot(SYS_REBOOT_COLD);
 		}
 
@@ -335,6 +354,7 @@ static void hw_wdog_kernel_thread(void *p1, void *p2, void *p3)
 		LOG_ERR("HW watchdog: %s for %us (limit %us) — node cut off, "
 			"SOC cold reset", reason, now_s - last,
 			CONFIG_AMI_REAL_LIVENESS_TIMEOUT_S);
+		ami_reboot_set_tag(AMI_RBOOT_HWWDT_SILENCE);
 		sys_reboot(SYS_REBOOT_COLD);
 	}
 }
@@ -365,6 +385,7 @@ static void hw_wdog_timeout(int channel_id, void *user_data)
 	LOG_ERR("HW watchdog BIT: channel=%d (%s) silent > %us — cold reboot",
 		channel_id, name ? name : "?",
 		CONFIG_AMI_HW_WATCHDOG_TIMEOUT_S);
+	ami_reboot_set_tag(AMI_RBOOT_HWWDT_CHANNEL);
 	sys_reboot(SYS_REBOOT_COLD);
 }
 
