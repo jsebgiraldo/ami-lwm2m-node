@@ -306,10 +306,28 @@ def upload_model(s: requests.Session, base: str, title: str, filename: str,
                  xml: str) -> None:
     # Look up existing by title; if present, update id-bound. The
     # /api/resource endpoint accepts POST for both create and update.
-    existing = s.get(f"{base}/api/resource?pageSize=200&page=0",
+    # NOTE pageSize: a stock ThingsBoard CE ships ~200 SYSTEM LwM2M models (the
+    # whole OMA registry), so a small page can hide our own tenant resources and
+    # cause duplicate creates. Ask for a page big enough to hold both sets.
+    existing = s.get(f"{base}/api/resource?pageSize=1000&page=0",
                      timeout=15).json()
+    # Only ever id-bind (i.e. UPDATE) a resource this TENANT owns. Stock CE
+    # already provides system-scope models for the standard objects (3.xml,
+    # 5.xml, 3303.xml ...); matching one of those and POSTing with its id is an
+    # attempt to modify a system resource and TB answers
+    #   403 "You don't have permission to perform this operation!"
+    # Ignoring system matches makes this a CREATE instead, producing a
+    # tenant-scoped model that shadows the system one for this tenant.
+    # (Bench-hit 2026-08-04 on a fresh CE install; the fleet Edge had no system
+    # models so the old code never saw it.)
+    SYSTEM_TENANT_ID = "13814000-1dd2-11b2-8080-808080808080"
+
+    def _tenant_owned(r: dict) -> bool:
+        return (r.get("tenantId") or {}).get("id") != SYSTEM_TENANT_ID
+
     match = next((r for r in existing.get("data", [])
-                  if r.get("title") == title or r.get("fileName") == filename),
+                  if (r.get("title") == title or r.get("fileName") == filename)
+                  and _tenant_owned(r)),
                  None)
     body = {
         "title": title,

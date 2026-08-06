@@ -1,0 +1,982 @@
+<title>AMI Lab e2e Monitor</title>
+
+<!--
+  lab_dashboard.html — self-contained instrument console for the AMI benchtop
+  e2e lab (OpenThread mesh + LwM2M metering node under real USB power monitoring).
+
+  WHY this file exists
+  --------------------
+  The lab e2e monitor (tools/lab_e2e_monitor.py) writes a single JSON document,
+  tools/lab_e2e_snapshot.json, every cycle. This page renders exactly that
+  document. It is fully self-contained (inline CSS + JS, zero network / CDN /
+  webfonts) so it can be published verbatim as a claude.ai Artifact and also
+  opened straight off disk.
+
+  DATA CONTRACT
+  -------------
+  The snapshot shape is frozen and shared with the monitor (see the schema in
+  the lab bring-up notes). Every numeric field degrades gracefully: a dead
+  source arrives as null / 0 / missing and renders as an em-dash, never a crash.
+
+  RE-POINTING AT LIVE DATA
+  ------------------------
+  The page reads its snapshot from the inline JSON blob below (the script element
+  whose id is "lab-data", type application/json) — a realistic sample so the page
+  renders immediately. Three ways to drive it with live data, least to most coupling:
+
+    1. Replace that element's text content with the current
+       tools/lab_e2e_snapshot.json and reload. (This is what the Artifact
+       publisher does each cycle: read the JSON, splice it into the blob,
+       re-publish. The id "lab-data" appears on exactly one real element so a
+       splice targeting it is unambiguous.)
+    2. From anywhere with the parsed object, call  window.renderLab(obj)  — the
+       render() entry point is exposed on window and repaints from scratch.
+    3. For a standalone (non-Artifact) deployment that may fetch, set
+       window.LAB_DATA_URL to the snapshot URL before this script runs; the tiny
+       poll loop at the bottom (disabled by default, since the Artifact CSP
+       blocks network) will fetch + renderLab on an interval.
+
+  PSU RISK THRESHOLDS (on i_peak_ma; the monitor computes psu_risk, the page also
+  documents + falls back to them):  OK < 350 mA  |  WARN 350–499 mA  |  BLOCK >= 500 mA.
+  Rationale: a single ESP32-C6 idles ~120–150 mA and bursts to ~250–300 mA on
+  Thread/LwM2M TX; sustained peaks approaching 500 mA are the signature of the
+  USB-host overcurrent "cliff" that has masqueraded as brownouts in this fleet.
+-->
+
+<style>
+  /* ── Design tokens: light is the base :root; dark is redefined under both the
+        OS media query and the viewer's data-theme stamp (which wins both ways). ── */
+  :root {
+    color-scheme: light;
+    --plane:      #eef1f1;
+    --surface:    #ffffff;
+    --surface-2:  #f3f6f6;   /* inset readout wells */
+    --raised:     #fbfdfd;
+    --ink:        #0c1517;
+    --ink-2:      #46595c;
+    --ink-3:      #6d8184;
+    --line:       rgba(12,21,23,0.11);
+    --line-2:     rgba(12,21,23,0.06);
+    --accent:     #0e8f84;   /* phosphor teal, deepened for light contrast */
+    --accent-2:   #0b6f66;
+    --accent-soft:rgba(14,143,132,0.12);
+    --series-avail:#2a6fd6;  /* second sparkline hue (validated blue) */
+    --good:       #12a150;
+    --good-ink:   #ffffff;
+    --warn:       #d68a09;
+    --warn-ink:   #201400;
+    --bad:        #d64545;
+    --bad-ink:    #ffffff;
+    --off:        #8a9a9c;
+    --track:      rgba(12,21,23,0.10);
+    --shadow:     0 1px 2px rgba(12,21,23,0.05), 0 8px 24px rgba(12,21,23,0.06);
+    --radius:     12px;
+    --radius-sm:  8px;
+    --font-mono:  ui-monospace, "Cascadia Code", "Cascadia Mono", "SFMono-Regular",
+                  "Segoe UI Mono", Consolas, Menlo, monospace;
+    --font-ui:    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --plane:      #0a0e0f;
+      --surface:    #12181a;
+      --surface-2:  #0d1315;
+      --raised:     #161e21;
+      --ink:        #e7f0f0;
+      --ink-2:      #9db0b2;
+      --ink-3:      #6b7e80;
+      --line:       rgba(255,255,255,0.09);
+      --line-2:     rgba(255,255,255,0.05);
+      --accent:     #35d0c0;
+      --accent-2:   #58e0d2;
+      --accent-soft:rgba(53,208,192,0.14);
+      --series-avail:#5b9bf0;
+      --good:       #34c26b;
+      --good-ink:   #05130a;
+      --warn:       #f5b83d;
+      --warn-ink:   #201400;
+      --bad:        #f0605f;
+      --bad-ink:    #1a0505;
+      --off:        #61797b;
+      --track:      rgba(255,255,255,0.10);
+      --shadow:     0 1px 2px rgba(0,0,0,0.4), 0 10px 30px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --plane:      #0a0e0f;
+    --surface:    #12181a;
+    --surface-2:  #0d1315;
+    --raised:     #161e21;
+    --ink:        #e7f0f0;
+    --ink-2:      #9db0b2;
+    --ink-3:      #6b7e80;
+    --line:       rgba(255,255,255,0.09);
+    --line-2:     rgba(255,255,255,0.05);
+    --accent:     #35d0c0;
+    --accent-2:   #58e0d2;
+    --accent-soft:rgba(53,208,192,0.14);
+    --series-avail:#5b9bf0;
+    --good:       #34c26b;
+    --good-ink:   #05130a;
+    --warn:       #f5b83d;
+    --warn-ink:   #201400;
+    --bad:        #f0605f;
+    --bad-ink:    #1a0505;
+    --off:        #61797b;
+    --track:      rgba(255,255,255,0.10);
+    --shadow:     0 1px 2px rgba(0,0,0,0.4), 0 10px 30px rgba(0,0,0,0.35);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    font-family: var(--font-ui);
+    background: var(--plane);
+    color: var(--ink);
+    line-height: 1.45;
+    font-size: 14px;
+    /* faint grid texture — reads as bench/graph paper without shouting */
+    background-image:
+      linear-gradient(var(--line-2) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line-2) 1px, transparent 1px);
+    background-size: 40px 40px, 40px 40px;
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 20px 56px; }
+
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .num  { font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .eyebrow {
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--ink-3);
+  }
+
+  /* ── Console header ── */
+  header.console {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--plane) 86%, transparent);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .console-in {
+    max-width: 1240px; margin: 0 auto; padding: 14px 20px;
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .brand .mark {
+    width: 34px; height: 34px; flex: none; border-radius: 9px;
+    background: var(--accent-soft); color: var(--accent);
+    display: grid; place-items: center;
+  }
+  .brand h1 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+  .brand .sub { margin: 0; font-size: 11px; color: var(--ink-3); letter-spacing: 0.02em; }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .snap-time { text-align: right; line-height: 1.25; }
+  .snap-time .abs { font-size: 12px; color: var(--ink-2); }
+  .snap-time .rel { font-size: 11px; color: var(--ink-3); display: inline-flex; align-items: center; gap: 6px; }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 0 var(--good); }
+  .live-dot.stale { background: var(--off); animation: none !important; }
+  @media (prefers-reduced-motion: no-preference) {
+    .live-dot { animation: pulse 2.4s ease-out infinite; }
+    @keyframes pulse {
+      0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 60%, transparent); }
+      70%  { box-shadow: 0 0 0 6px transparent; }
+      100% { box-shadow: 0 0 0 0 transparent; }
+    }
+  }
+
+  /* ── Health / status pills ── */
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 6px 12px 6px 10px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .pill svg { width: 13px; height: 13px; flex: none; }
+  .pill.big { font-size: 12.5px; padding: 8px 15px 8px 12px; }
+  .pill.ok   { background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good);
+               border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+  .pill.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn);
+               border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .pill.bad  { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad);
+               border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .pill.off  { background: color-mix(in srgb, var(--off) 15%, transparent); color: var(--off);
+               border-color: color-mix(in srgb, var(--off) 40%, transparent); }
+
+  .btn-theme {
+    display: inline-grid; place-items: center; width: 34px; height: 34px;
+    border-radius: 9px; border: 1px solid var(--line); background: var(--surface);
+    color: var(--ink-2); cursor: pointer; flex: none;
+  }
+  .btn-theme:hover { color: var(--ink); border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
+  .btn-theme svg { width: 16px; height: 16px; }
+  .btn-theme .i-sun { display: none; }
+  :root[data-theme="dark"] .btn-theme .i-sun { display: block; }
+  :root[data-theme="dark"] .btn-theme .i-moon { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .btn-theme .i-sun { display: block; }
+    :root:not([data-theme="light"]) .btn-theme .i-moon { display: none; }
+  }
+
+  /* ── Panels ── */
+  .rail { display: grid; grid-template-columns: 1.35fr 1fr; gap: 18px; margin-top: 22px; }
+  @media (max-width: 900px) { .rail { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 18px; min-width: 0;
+  }
+  .panel-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .panel-head h2 { margin: 0; font-size: 13px; font-weight: 650; letter-spacing: 0.01em; }
+  .panel-head .spacer { margin-left: auto; }
+
+  /* metric grid inside OTBR panel */
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
+             background: var(--line-2); border: 1px solid var(--line-2); border-radius: var(--radius-sm); overflow: hidden; }
+  .metric { background: var(--surface); padding: 11px 12px; }
+  .metric .k { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+  .metric .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+               font-size: 18px; font-weight: 600; margin-top: 3px; letter-spacing: -0.01em; }
+  .metric .v small { font-size: 11px; color: var(--ink-3); font-weight: 500; margin-left: 3px; }
+  .metric .v.accent { color: var(--accent); }
+  .metric .v.warnv  { color: var(--warn); }
+  .metric .v.badv   { color: var(--bad); }
+
+  /* ── Power panel + gauge ── */
+  .power-body { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: center; }
+  @media (max-width: 480px) { .power-body { grid-template-columns: 1fr; justify-items: center; } }
+  .gauge { width: 200px; max-width: 100%; }
+  .gauge svg { width: 100%; height: auto; display: block; }
+  .gauge .g-val { font-family: var(--font-mono); font-weight: 650; }
+  .power-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 14px; min-width: 0; }
+  .pstat .k { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+  .pstat .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; margin-top: 1px; }
+  .pstat .v small { font-size: 10.5px; color: var(--ink-3); font-weight: 500; margin-left: 2px; }
+  .psu-legend { font-size: 10px; color: var(--ink-3); margin-top: 12px; letter-spacing: 0.01em; }
+  .psu-legend b { color: var(--ink-2); font-weight: 600; }
+
+  /* ── Trends strip ── */
+  .trends { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 18px; }
+  @media (max-width: 720px) { .trends { grid-template-columns: 1fr; } }
+  .spark-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+  .spark-head .now { margin-left: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+                     font-size: 15px; font-weight: 650; }
+  .spark svg { width: 100%; height: auto; display: block; }
+  .spark .foot { display: flex; justify-content: space-between; margin-top: 4px; font-size: 10px; color: var(--ink-3);
+                 font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+  /* ── Node cards ── */
+  .section-label { display: flex; align-items: center; gap: 10px; margin: 26px 0 12px; }
+  .section-label .line { flex: 1; height: 1px; background: var(--line); }
+  .nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .card.unreachable { opacity: 0.72; }
+  .card-top { padding: 15px 16px 13px; border-bottom: 1px solid var(--line); }
+  .card-top .row1 { display: flex; align-items: center; gap: 10px; }
+  .card-top .name { font-weight: 650; font-size: 14px; letter-spacing: -0.01em; }
+  .card-top .omr { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-3); margin-top: 3px;
+                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fwtag { font-family: var(--font-mono); font-size: 10.5px; color: var(--accent);
+           background: var(--accent-soft); padding: 2px 7px; border-radius: 6px; font-weight: 600; }
+
+  .card-body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 14px; }
+
+  .counter-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+                   background: var(--line-2); border: 1px solid var(--line-2); border-radius: var(--radius-sm); overflow: hidden; }
+  .counter { background: var(--surface-2); padding: 9px 8px; text-align: center; }
+  .counter .k { font-size: 9.5px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-3); }
+  .counter .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 17px; font-weight: 650; margin-top: 2px; }
+  .counter .v.zero { color: var(--ink); }
+  .counter .v.nonzero-bad { color: var(--bad); }
+  .counter .v.nonzero-ok  { color: var(--good); }
+
+  /* availability meter */
+  .avail .row { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 5px; }
+  .avail .pct { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 14px; font-weight: 650; }
+  .meter { height: 8px; border-radius: 5px; background: var(--track); overflow: hidden; position: relative; }
+  .meter > span { display: block; height: 100%; border-radius: 5px; }
+
+  /* OBIS quad */
+  .obis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+          background: var(--line-2); border: 1px solid var(--line-2); border-radius: var(--radius-sm); overflow: hidden; }
+  .obis .cell { background: var(--surface-2); padding: 10px 6px; text-align: center; }
+  .obis .k { font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+  .obis .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 16px; font-weight: 600; margin-top: 3px; }
+  .obis .v small { font-size: 9.5px; color: var(--ink-3); margin-left: 1px; font-weight: 500; }
+
+  /* OSI breakdown */
+  .osi .bar-row { display: grid; grid-template-columns: 58px 1fr auto; align-items: center; gap: 9px; margin: 6px 0; }
+  .osi .lyr { font-size: 10px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-2); }
+  .osi .lyr small { color: var(--ink-3); font-weight: 500; }
+  .osi .bar { height: 7px; border-radius: 4px; background: var(--track); overflow: hidden; }
+  .osi .bar > span { display: block; height: 100%; border-radius: 4px; background: var(--accent);
+                     opacity: 0.85; transition: width .4s ease; }
+  .osi .val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 11px; color: var(--ink-2); }
+  .osi .subhead { font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); margin: 10px 0 2px; }
+  .osi-chips { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .chip { background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 7px; padding: 6px 10px; }
+  .chip .k { font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-3); }
+  .chip .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; }
+  .chip .v small { font-size: 9.5px; color: var(--ink-3); font-weight: 500; margin-left: 2px; }
+
+  .empty { color: var(--ink-3); font-size: 12px; padding: 8px 2px; }
+
+  a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px;
+  }
+  footer.foot { margin-top: 34px; padding-top: 16px; border-top: 1px solid var(--line);
+                font-size: 11px; color: var(--ink-3); display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  footer.foot .mono { color: var(--ink-2); }
+</style>
+
+<!-- ═══ INLINE SNAPSHOT (replace this blob's contents with the live
+         tools/lab_e2e_snapshot.json each publish cycle) ═══ -->
+<script id="lab-data" type="application/json">
+{
+  "ts_iso": "2026-08-03T12:00:00",
+  "otbr": {
+    "up": true, "role": "leader", "channel": 25, "panid": "0xEFEB",
+    "routers": 1, "children": 1, "eid_resolved": 2, "eid_retry": 0,
+    "tx_err_cca": 1, "rx_total": 41822, "tx_total": 39140
+  },
+  "nodes": [
+    {
+      "name": "ami-esp32c6-3bb0",
+      "omr": "fd11:22:0:0:8a3:1661:3bb0:1",
+      "reachable": true,
+      "fw": "0.7.17-ami", "role": "Child", "uptime_s": 8460, "resets": 0,
+      "reg_ok": 5, "recover": 0, "wdog": 0, "rloc16": "0xe014",
+      "availability_pct": 99.4, "last_seen_s": 4,
+      "osi": {
+        "l2_mac_tx": 39140, "l2_mac_rx": 41822, "l3_ipv6_bytes": 1288440,
+        "l4_udp_coap_bytes": 902310, "l7_lwm2m_tx_bytes": 511744,
+        "app_msgs": 1873, "bytes_per_min": 77.9, "avg_pkt_bytes": 68.4
+      },
+      "ami": { "voltage": 122.4, "current": 0.48, "power": 58.2, "freq": 59.98 }
+    }
+  ],
+  "power": {
+    "source": "FNB-C2", "v_bus": 5.06, "i_ma": 127.5, "p_w": 0.645,
+    "mah_cum": 76.1, "wh_cum": 0.3848, "i_peak_ma": 285.7, "samples": 5400,
+    "psu_risk": "OK"
+  },
+  "history": [
+    {"ts_iso":"2026-08-03T11:30:20","i_ma":238.6,"availability":98.69,"bytes_per_min":113.4},
+    {"ts_iso":"2026-08-03T11:30:40","i_ma":129.6,"availability":98.65,"bytes_per_min":77.7},
+    {"ts_iso":"2026-08-03T11:31:00","i_ma":130.8,"availability":99.15,"bytes_per_min":83.3},
+    {"ts_iso":"2026-08-03T11:31:20","i_ma":132.3,"availability":99.42,"bytes_per_min":88.6},
+    {"ts_iso":"2026-08-03T11:31:40","i_ma":136.9,"availability":99.87,"bytes_per_min":93.6},
+    {"ts_iso":"2026-08-03T11:32:00","i_ma":199.9,"availability":98.75,"bytes_per_min":130.5},
+    {"ts_iso":"2026-08-03T11:32:20","i_ma":135.6,"availability":99.43,"bytes_per_min":102.2},
+    {"ts_iso":"2026-08-03T11:32:40","i_ma":139.4,"availability":98.68,"bytes_per_min":105.7},
+    {"ts_iso":"2026-08-03T11:33:00","i_ma":141.2,"availability":99.01,"bytes_per_min":108.4},
+    {"ts_iso":"2026-08-03T11:33:20","i_ma":140.0,"availability":99.63,"bytes_per_min":110.4},
+    {"ts_iso":"2026-08-03T11:33:40","i_ma":138.9,"availability":99.28,"bytes_per_min":111.6},
+    {"ts_iso":"2026-08-03T11:34:00","i_ma":285.7,"availability":99.87,"bytes_per_min":136.7},
+    {"ts_iso":"2026-08-03T11:34:20","i_ma":143.8,"availability":99.24,"bytes_per_min":111.6},
+    {"ts_iso":"2026-08-03T11:34:40","i_ma":200.8,"availability":99.74,"bytes_per_min":142.9},
+    {"ts_iso":"2026-08-03T11:35:00","i_ma":142.8,"availability":99.19,"bytes_per_min":108.4},
+    {"ts_iso":"2026-08-03T11:35:20","i_ma":145.5,"availability":99.46,"bytes_per_min":105.6},
+    {"ts_iso":"2026-08-03T11:35:40","i_ma":201.0,"availability":99.67,"bytes_per_min":133.6},
+    {"ts_iso":"2026-08-03T11:36:00","i_ma":142.8,"availability":99.2,"bytes_per_min":98.2},
+    {"ts_iso":"2026-08-03T11:36:20","i_ma":138.0,"availability":99.6,"bytes_per_min":93.6},
+    {"ts_iso":"2026-08-03T11:36:40","i_ma":138.6,"availability":99.73,"bytes_per_min":88.6},
+    {"ts_iso":"2026-08-03T11:37:00","i_ma":188.3,"availability":99.67,"bytes_per_min":137.8},
+    {"ts_iso":"2026-08-03T11:37:20","i_ma":138.6,"availability":99.75,"bytes_per_min":77.6},
+    {"ts_iso":"2026-08-03T11:37:40","i_ma":283.1,"availability":98.9,"bytes_per_min":101.4},
+    {"ts_iso":"2026-08-03T11:38:00","i_ma":138.2,"availability":98.61,"bytes_per_min":77.7},
+    {"ts_iso":"2026-08-03T11:38:20","i_ma":135.5,"availability":99.84,"bytes_per_min":83.3},
+    {"ts_iso":"2026-08-03T11:38:40","i_ma":135.7,"availability":99.48,"bytes_per_min":88.7},
+    {"ts_iso":"2026-08-03T11:39:00","i_ma":202.7,"availability":99.64,"bytes_per_min":129.4},
+    {"ts_iso":"2026-08-03T11:39:20","i_ma":130.2,"availability":98.68,"bytes_per_min":98.2},
+    {"ts_iso":"2026-08-03T11:39:40","i_ma":168.0,"availability":98.67,"bytes_per_min":122.3},
+    {"ts_iso":"2026-08-03T11:40:00","i_ma":128.0,"availability":98.63,"bytes_per_min":105.7},
+    {"ts_iso":"2026-08-03T11:40:20","i_ma":131.0,"availability":98.93,"bytes_per_min":108.4},
+    {"ts_iso":"2026-08-03T11:40:40","i_ma":127.9,"availability":99.7,"bytes_per_min":110.4},
+    {"ts_iso":"2026-08-03T11:41:00","i_ma":127.7,"availability":98.71,"bytes_per_min":111.6},
+    {"ts_iso":"2026-08-03T11:41:20","i_ma":221.9,"availability":99.68,"bytes_per_min":138.5},
+    {"ts_iso":"2026-08-03T11:41:40","i_ma":194.3,"availability":99.31,"bytes_per_min":132.7},
+    {"ts_iso":"2026-08-03T11:42:00","i_ma":129.0,"availability":99.51,"bytes_per_min":110.4},
+    {"ts_iso":"2026-08-03T11:42:20","i_ma":123.4,"availability":99.6,"bytes_per_min":108.4},
+    {"ts_iso":"2026-08-03T11:42:40","i_ma":126.0,"availability":98.89,"bytes_per_min":105.6},
+    {"ts_iso":"2026-08-03T11:43:00","i_ma":127.1,"availability":99.65,"bytes_per_min":102.2},
+    {"ts_iso":"2026-08-03T11:43:20","i_ma":124.6,"availability":99.27,"bytes_per_min":98.1},
+    {"ts_iso":"2026-08-03T11:43:40","i_ma":118.6,"availability":98.96,"bytes_per_min":93.5},
+    {"ts_iso":"2026-08-03T11:44:00","i_ma":123.7,"availability":99.18,"bytes_per_min":88.5},
+    {"ts_iso":"2026-08-03T11:44:20","i_ma":125.9,"availability":99.07,"bytes_per_min":83.2},
+    {"ts_iso":"2026-08-03T11:44:40","i_ma":119.8,"availability":98.87,"bytes_per_min":77.6},
+    {"ts_iso":"2026-08-03T11:45:00","i_ma":252.8,"availability":99.22,"bytes_per_min":118.2},
+    {"ts_iso":"2026-08-03T11:45:20","i_ma":119.1,"availability":99.78,"bytes_per_min":77.8},
+    {"ts_iso":"2026-08-03T11:45:40","i_ma":124.8,"availability":98.83,"bytes_per_min":83.4},
+    {"ts_iso":"2026-08-03T11:46:00","i_ma":121.9,"availability":99.86,"bytes_per_min":88.7},
+    {"ts_iso":"2026-08-03T11:46:20","i_ma":123.1,"availability":99.54,"bytes_per_min":93.7},
+    {"ts_iso":"2026-08-03T11:46:40","i_ma":121.6,"availability":99.78,"bytes_per_min":98.3},
+    {"ts_iso":"2026-08-03T11:47:00","i_ma":122.5,"availability":99.87,"bytes_per_min":102.3},
+    {"ts_iso":"2026-08-03T11:47:20","i_ma":125.0,"availability":98.77,"bytes_per_min":105.7},
+    {"ts_iso":"2026-08-03T11:47:40","i_ma":197.2,"availability":99.81,"bytes_per_min":145.8},
+    {"ts_iso":"2026-08-03T11:48:00","i_ma":130.8,"availability":98.93,"bytes_per_min":110.4},
+    {"ts_iso":"2026-08-03T11:48:20","i_ma":127.1,"availability":98.94,"bytes_per_min":111.6},
+    {"ts_iso":"2026-08-03T11:48:40","i_ma":242.5,"availability":99.06,"bytes_per_min":150.3},
+    {"ts_iso":"2026-08-03T11:49:00","i_ma":134.6,"availability":99.79,"bytes_per_min":111.6},
+    {"ts_iso":"2026-08-03T11:49:20","i_ma":132.8,"availability":98.62,"bytes_per_min":110.3},
+    {"ts_iso":"2026-08-03T11:49:40","i_ma":131.1,"availability":99.64,"bytes_per_min":108.3},
+    {"ts_iso":"2026-08-03T11:50:00","i_ma":134.5,"availability":99.32,"bytes_per_min":105.6},
+    {"ts_iso":"2026-08-03T11:50:20","i_ma":135.9,"availability":99.62,"bytes_per_min":102.1},
+    {"ts_iso":"2026-08-03T11:50:40","i_ma":137.2,"availability":98.96,"bytes_per_min":98.1},
+    {"ts_iso":"2026-08-03T11:51:00","i_ma":137.8,"availability":99.59,"bytes_per_min":93.5},
+    {"ts_iso":"2026-08-03T11:51:20","i_ma":138.1,"availability":99.26,"bytes_per_min":88.5},
+    {"ts_iso":"2026-08-03T11:51:40","i_ma":140.9,"availability":99.29,"bytes_per_min":83.1},
+    {"ts_iso":"2026-08-03T11:52:00","i_ma":143.6,"availability":99.74,"bytes_per_min":77.5},
+    {"ts_iso":"2026-08-03T11:52:20","i_ma":285.3,"availability":99.83,"bytes_per_min":125.8},
+    {"ts_iso":"2026-08-03T11:52:40","i_ma":138.1,"availability":98.69,"bytes_per_min":77.8},
+    {"ts_iso":"2026-08-03T11:53:00","i_ma":138.1,"availability":99.62,"bytes_per_min":83.4},
+    {"ts_iso":"2026-08-03T11:53:20","i_ma":139.1,"availability":99.46,"bytes_per_min":88.8},
+    {"ts_iso":"2026-08-03T11:53:40","i_ma":145.0,"availability":98.89,"bytes_per_min":93.8},
+    {"ts_iso":"2026-08-03T11:54:00","i_ma":141.2,"availability":99.89,"bytes_per_min":98.3},
+    {"ts_iso":"2026-08-03T11:54:20","i_ma":139.2,"availability":99.27,"bytes_per_min":102.3},
+    {"ts_iso":"2026-08-03T11:54:40","i_ma":139.2,"availability":99.54,"bytes_per_min":105.7},
+    {"ts_iso":"2026-08-03T11:55:00","i_ma":193.0,"availability":99.03,"bytes_per_min":153.4},
+    {"ts_iso":"2026-08-03T11:55:20","i_ma":137.4,"availability":99.62,"bytes_per_min":110.4},
+    {"ts_iso":"2026-08-03T11:55:40","i_ma":137.1,"availability":98.65,"bytes_per_min":111.6},
+    {"ts_iso":"2026-08-03T11:56:00","i_ma":274.5,"availability":99.15,"bytes_per_min":168.5},
+    {"ts_iso":"2026-08-03T11:56:20","i_ma":136.9,"availability":99.79,"bytes_per_min":111.6},
+    {"ts_iso":"2026-08-03T11:56:40","i_ma":139.6,"availability":98.67,"bytes_per_min":110.3},
+    {"ts_iso":"2026-08-03T11:57:00","i_ma":136.5,"availability":99.82,"bytes_per_min":108.3},
+    {"ts_iso":"2026-08-03T11:57:20","i_ma":138.5,"availability":99.71,"bytes_per_min":105.5},
+    {"ts_iso":"2026-08-03T11:57:40","i_ma":199.2,"availability":99.32,"bytes_per_min":159.2},
+    {"ts_iso":"2026-08-03T11:58:00","i_ma":131.0,"availability":98.91,"bytes_per_min":98.0},
+    {"ts_iso":"2026-08-03T11:58:20","i_ma":130.2,"availability":98.86,"bytes_per_min":93.5},
+    {"ts_iso":"2026-08-03T11:58:40","i_ma":130.2,"availability":98.98,"bytes_per_min":88.4},
+    {"ts_iso":"2026-08-03T11:59:00","i_ma":128.1,"availability":98.62,"bytes_per_min":83.1},
+    {"ts_iso":"2026-08-03T11:59:20","i_ma":125.7,"availability":99.32,"bytes_per_min":77.5},
+    {"ts_iso":"2026-08-03T11:59:40","i_ma":229.7,"availability":98.74,"bytes_per_min":125.0},
+    {"ts_iso":"2026-08-03T12:00:00","i_ma":127.5,"availability":99.11,"bytes_per_min":77.9}
+  ]
+}
+</script>
+
+<header class="console">
+  <div class="console-in">
+    <div class="brand">
+      <div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12h3l2-6 4 12 3-9 2 3h4"/>
+        </svg>
+      </div>
+      <div>
+        <h1>AMI Lab &middot; e2e Monitor</h1>
+        <p class="sub">OpenThread mesh &middot; LwM2M metering node &middot; USB power</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="snap-time">
+        <div class="abs mono" id="snap-abs">--</div>
+        <div class="rel"><span class="live-dot" id="live-dot"></span><span id="snap-rel">--</span></div>
+      </div>
+      <span id="health-pill" class="pill big off" role="status" aria-live="polite">--</span>
+      <button class="btn-theme" id="theme-toggle" type="button" aria-label="Toggle light / dark theme">
+        <svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        <svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="rail" aria-label="Network and power status">
+    <div class="panel" id="otbr-panel"></div>
+    <div class="panel" id="power-panel"></div>
+  </section>
+
+  <section class="trends" aria-label="Trends">
+    <div class="panel spark" id="spark-current"></div>
+    <div class="panel spark" id="spark-avail"></div>
+  </section>
+
+  <div class="section-label">
+    <span class="eyebrow">Nodes under test</span>
+    <span class="line" aria-hidden="true"></span>
+    <span class="eyebrow" id="nodes-count">--</span>
+  </div>
+  <section class="nodes" id="nodes" aria-label="Per-node status"></section>
+
+  <footer class="foot">
+    <span>Source: <span class="mono" id="foot-src">lab_e2e_snapshot.json</span></span>
+    <span>Power meter: <span class="mono" id="foot-power">--</span></span>
+    <span>PSU thresholds (i_peak): <span class="mono">OK&lt;350 &middot; WARN&lt;500 &middot; BLOCK&ge;500 mA</span></span>
+  </footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  // ── PSU-risk thresholds on i_peak_ma (documented; used only as fallback when
+  //    the snapshot omits power.psu_risk — the monitor is the source of truth). ──
+  var PSU_WARN_MA = 350, PSU_BLOCK_MA = 500;
+  var GAUGE_FULL_MA = 600;          // gauge full-scale (BLOCK sits inside the dial)
+
+  // ── tiny helpers ──────────────────────────────────────────────────────────
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c];
+    });
+  }
+  function isNum(v) { return typeof v === "number" && isFinite(v); }
+  // format number or em-dash; d = decimals
+  function num(v, d) {
+    if (!isNum(v)) return "&mdash;";
+    return v.toLocaleString("en-US", { minimumFractionDigits: d || 0, maximumFractionDigits: d == null ? 0 : d });
+  }
+  function intc(v) { return isNum(v) ? Math.round(v).toLocaleString("en-US") : "&mdash;"; }
+  function humanBytes(n) {
+    if (!isNum(n)) return "&mdash;";
+    var u = ["B", "KB", "MB", "GB", "TB"], i = 0, x = n;
+    while (x >= 1024 && i < u.length - 1) { x /= 1024; i++; }
+    return (i === 0 ? x.toFixed(0) : x.toFixed(x < 10 ? 2 : 1)) + " " + u[i];
+  }
+  function humanDur(s) {
+    if (!isNum(s)) return "&mdash;";
+    s = Math.max(0, Math.floor(s));
+    var d = Math.floor(s / 86400); s -= d * 86400;
+    var h = Math.floor(s / 3600);  s -= h * 3600;
+    var m = Math.floor(s / 60);    var sec = s - m * 60;
+    if (d > 0) return d + "d " + h + "h";
+    if (h > 0) return h + "h " + m + "m";
+    if (m > 0) return m + "m " + sec + "s";
+    return sec + "s";
+  }
+  function relAge(iso) {
+    var t = Date.parse(iso);
+    if (isNaN(t)) return { text: "&mdash;", stale: true };
+    var s = Math.max(0, (Date.now() - t) / 1000);
+    var stale = s > 90;
+    var text;
+    if (s < 60) text = Math.round(s) + "s ago";
+    else if (s < 3600) text = Math.round(s / 60) + "m ago";
+    else if (s < 86400) text = Math.round(s / 3600) + "h ago";
+    else text = Math.round(s / 86400) + "d ago";
+    return { text: text, stale: stale };
+  }
+
+  // status icons (shape carries meaning, not color alone)
+  var ICON = {
+    ok:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+    warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4M12 17.5v.5"/></svg>',
+    bad:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+    off:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg>'
+  };
+  function pill(kind, label, big) {
+    return '<span class="pill ' + kind + (big ? ' big' : '') + '">' + ICON[kind] + esc(label) + '</span>';
+  }
+
+  function psuRiskOf(power) {
+    if (!power) return "OFF";
+    if (typeof power.psu_risk === "string") return power.psu_risk.toUpperCase();
+    var pk = power.i_peak_ma;                       // fallback from thresholds
+    if (!isNum(pk)) return "OFF";
+    if (pk >= PSU_BLOCK_MA) return "BLOCK";
+    if (pk >= PSU_WARN_MA) return "WARN";
+    return "OK";
+  }
+  var RISK_KIND = { OK: "ok", WARN: "warn", BLOCK: "bad", OFF: "off" };
+  var RISK_VAR  = { OK: "var(--good)", WARN: "var(--warn)", BLOCK: "var(--bad)", OFF: "var(--off)" };
+
+  // ── SVG arc gauge (semicircle) ────────────────────────────────────────────
+  function polar(cx, cy, r, deg) {
+    var a = deg * Math.PI / 180;
+    return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+  }
+  // arc along the TOP half: angle 180 (left) -> 360 (right), sweep=1
+  function arcPath(cx, cy, r, startDeg, endDeg) {
+    var s = polar(cx, cy, r, startDeg), e = polar(cx, cy, r, endDeg);
+    var large = (endDeg - startDeg) <= 180 ? 0 : 1;
+    return "M " + s.x.toFixed(2) + " " + s.y.toFixed(2) +
+           " A " + r + " " + r + " 0 " + large + " 1 " + e.x.toFixed(2) + " " + e.y.toFixed(2);
+  }
+  function tickAt(cx, cy, r, ma, color) {
+    var f = Math.max(0, Math.min(1, ma / GAUGE_FULL_MA));
+    var deg = 180 + f * 180;
+    var p1 = polar(cx, cy, r - 7, deg), p2 = polar(cx, cy, r + 3, deg);
+    return '<line x1="' + p1.x.toFixed(2) + '" y1="' + p1.y.toFixed(2) +
+           '" x2="' + p2.x.toFixed(2) + '" y2="' + p2.y.toFixed(2) +
+           '" stroke="' + color + '" stroke-width="2" stroke-linecap="round" opacity="0.9"/>';
+  }
+  function gauge(power) {
+    var cx = 100, cy = 100, r = 82;
+    var i_ma = power && isNum(power.i_ma) ? power.i_ma : null;
+    var peak = power && isNum(power.i_peak_ma) ? power.i_peak_ma : null;
+    var risk = psuRiskOf(power);
+    var col = RISK_VAR[risk] || "var(--off)";
+    var f = i_ma == null ? 0 : Math.max(0, Math.min(1, i_ma / GAUGE_FULL_MA));
+    var valDeg = 180 + f * 180;
+    var track = arcPath(cx, cy, r, 180, 360);
+    var val = i_ma == null ? "" : arcPath(cx, cy, r, 180, valDeg);
+    var peakTick = peak == null ? "" : tickAt(cx, cy, r, peak, "var(--ink-2)");
+    var valTxt = i_ma == null ? "&mdash;" : i_ma.toFixed(0);
+    return '' +
+      '<div class="gauge">' +
+      '<svg viewBox="0 0 200 122" role="img" aria-label="Bus current ' + valTxt + ' milliamps, risk ' + risk + '">' +
+        '<path d="' + track + '" fill="none" stroke="var(--track)" stroke-width="13" stroke-linecap="round"/>' +
+        // threshold ticks document the WARN / BLOCK bands right on the dial
+        tickAt(cx, cy, r, PSU_WARN_MA, "var(--warn)") +
+        tickAt(cx, cy, r, PSU_BLOCK_MA, "var(--bad)") +
+        (val ? '<path d="' + val + '" fill="none" stroke="' + col + '" stroke-width="13" stroke-linecap="round"/>' : '') +
+        peakTick +
+        '<text x="100" y="86" text-anchor="middle" class="g-val" fill="var(--ink)" font-size="30">' + valTxt + '</text>' +
+        '<text x="100" y="104" text-anchor="middle" fill="var(--ink-3)" font-size="11" font-family="var(--font-ui)" letter-spacing="0.5">mA  BUS</text>' +
+        '<text x="18" y="118" text-anchor="middle" fill="var(--ink-3)" font-size="9">0</text>' +
+        '<text x="182" y="118" text-anchor="middle" fill="var(--ink-3)" font-size="9">' + GAUGE_FULL_MA + '</text>' +
+      '</svg></div>';
+  }
+
+  // ── SVG sparkline (single series, area fill + emphasized endpoint) ─────────
+  function sparkline(vals, opt) {
+    opt = opt || {};
+    var W = 300, H = 64, padT = 6, padB = 8, padX = 2;
+    var color = opt.color || "var(--accent)";
+    var pts = vals.filter(isNum);
+    if (pts.length < 2) {
+      return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none"></svg>' +
+             '<div class="empty" style="text-align:center">no history yet</div>';
+    }
+    var lo = opt.min != null ? opt.min : Math.min.apply(null, pts);
+    var hi = opt.max != null ? opt.max : Math.max.apply(null, pts);
+    if (hi - lo < 1e-9) { hi = lo + 1; }
+    var n = vals.length;
+    var xAt = function (i) { return padX + (W - 2 * padX) * (i / (n - 1)); };
+    var yAt = function (v) { return padT + (H - padT - padB) * (1 - (v - lo) / (hi - lo)); };
+    var d = "", area = "", started = false, lastX = 0, lastY = 0, lastV = null;
+    for (var i = 0; i < n; i++) {
+      var v = vals[i];
+      if (!isNum(v)) continue;
+      var x = xAt(i), y = yAt(v);
+      d += (started ? " L " : "M ") + x.toFixed(1) + " " + y.toFixed(1);
+      if (!started) area = "M " + x.toFixed(1) + " " + (H - padB) + " L " + x.toFixed(1) + " " + y.toFixed(1);
+      else area += " L " + x.toFixed(1) + " " + y.toFixed(1);
+      started = true; lastX = x; lastY = y; lastV = v;
+    }
+    area += " L " + lastX.toFixed(1) + " " + (H - padB) + " Z";
+    var uid = "sg" + Math.random().toString(36).slice(2, 8);
+    return '' +
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="' + esc(opt.aria || "trend") + '">' +
+        '<defs><linearGradient id="' + uid + '" x1="0" y1="0" x2="0" y2="1">' +
+          '<stop offset="0" stop-color="' + color + '" stop-opacity="0.28"/>' +
+          '<stop offset="1" stop-color="' + color + '" stop-opacity="0"/>' +
+        '</linearGradient></defs>' +
+        '<line x1="0" y1="' + (H - padB) + '" x2="' + W + '" y2="' + (H - padB) + '" stroke="var(--line)" stroke-width="1"/>' +
+        '<path d="' + area + '" fill="url(#' + uid + ')"/>' +
+        '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>' +
+        '<circle cx="' + lastX.toFixed(1) + '" cy="' + lastY.toFixed(1) + '" r="3.2" fill="' + color + '"/>' +
+        '<circle cx="' + lastX.toFixed(1) + '" cy="' + lastY.toFixed(1) + '" r="3.2" fill="none" stroke="var(--surface)" stroke-width="1.4"/>' +
+      '</svg>';
+  }
+
+  // ── panel renderers ───────────────────────────────────────────────────────
+  function renderOtbr(o) {
+    var el = $("otbr-panel");
+    var up = o && o.up;
+    var head = '<div class="panel-head">' +
+      '<h2>OTBR &middot; Thread mesh</h2>' +
+      '<span class="spacer"></span>' +
+      (up ? pill("ok", (o.role || "up")) : pill("off", "offline")) +
+      '</div>';
+    if (!up) {
+      el.innerHTML = head + '<div class="empty">Border router not reachable &mdash; run <span class="mono">docker exec &lt;otbr&gt; ot-ctl state</span>.</div>';
+      return;
+    }
+    var eidRetry = isNum(o.eid_retry) ? o.eid_retry : null;
+    var cca = isNum(o.tx_err_cca) ? o.tx_err_cca : null;
+    var m = [
+      ["Role", esc(o.role || "&mdash;"), ""],
+      ["Channel", num(o.channel), ""],
+      ["PAN ID", esc(o.panid || "&mdash;"), ""],
+      ["Routers", num(o.routers), ""],
+      ["Children", num(o.children), ""],
+      ["EID resolved", num(o.eid_resolved), ""],
+      ["EID retry", num(o.eid_retry), eidRetry ? "warnv" : ""],
+      ["TX err (CCA)", num(o.tx_err_cca), (cca && cca > 5) ? "warnv" : ""],
+      ["Rx / Tx total", intc(o.rx_total) + '<small>/' + intc(o.tx_total) + '</small>', ""]
+    ];
+    var cells = m.map(function (row) {
+      return '<div class="metric"><div class="k">' + row[0] + '</div>' +
+             '<div class="v ' + row[2] + '">' + row[1] + '</div></div>';
+    }).join("");
+    el.innerHTML = head + '<div class="metrics">' + cells + '</div>';
+  }
+
+  function renderPower(p) {
+    var el = $("power-panel");
+    var risk = psuRiskOf(p);
+    var kind = RISK_KIND[risk] || "off";
+    var head = '<div class="panel-head"><h2>USB power</h2><span class="spacer"></span>' +
+      (risk === "OFF" ? pill("off", "no meter") : pill(kind, "PSU " + risk)) + '</div>';
+    if (!p) {
+      el.innerHTML = head + '<div class="empty">Power meter source down.</div>';
+      return;
+    }
+    var stats =
+      stat("Bus", num(p.v_bus, 2), "V") +
+      stat("Power", num(p.p_w, 3), "W") +
+      stat("Charge", num(p.mah_cum, 1), "mAh") +
+      stat("Energy", num(p.wh_cum, 3), "Wh") +
+      stat("Peak I", num(p.i_peak_ma, 0), "mA") +
+      stat("Samples", intc(p.samples), "");
+    el.innerHTML = head +
+      '<div class="power-body">' + gauge(p) +
+        '<div class="power-stats">' + stats + '</div>' +
+      '</div>' +
+      '<div class="psu-legend">Dial ticks mark <b>WARN ' + PSU_WARN_MA + ' mA</b> and <b>BLOCK ' + PSU_BLOCK_MA +
+      ' mA</b> peak-current bands. Grey tick = observed peak.</div>';
+    function stat(k, v, u) {
+      return '<div class="pstat"><div class="k">' + k + '</div><div class="v">' + v +
+             (u ? '<small>' + u + '</small>' : '') + '</div></div>';
+    }
+  }
+
+  function renderSparks(hist) {
+    hist = hist || [];
+    var cur = hist.map(function (h) { return h && isNum(h.i_ma) ? h.i_ma : NaN; });
+    var av  = hist.map(function (h) { return h && isNum(h.availability) ? h.availability : NaN; });
+    var curNow = lastFinite(cur), avNow = lastFinite(av);
+    var curVals = cur.filter(isNum), avVals = av.filter(isNum);
+
+    $("spark-current").innerHTML =
+      '<div class="spark-head"><span class="eyebrow">Bus current</span>' +
+      '<span class="now" style="color:var(--accent)">' + (curNow == null ? "&mdash;" : curNow.toFixed(0) + ' <small style="color:var(--ink-3);font-weight:500">mA</small>') + '</span></div>' +
+      sparkline(cur, { color: "var(--accent)", aria: "bus current over time" }) +
+      foot(curVals, 0, "mA");
+
+    $("spark-avail").innerHTML =
+      '<div class="spark-head"><span class="eyebrow">Availability</span>' +
+      '<span class="now" style="color:var(--series-avail)">' + (avNow == null ? "&mdash;" : avNow.toFixed(1) + ' <small style="color:var(--ink-3);font-weight:500">%</small>') + '</span></div>' +
+      sparkline(av, { color: "var(--series-avail)", min: Math.max(0, Math.min.apply(null, avVals.length ? avVals : [0]) - 1), max: 100, aria: "availability percent over time" }) +
+      foot(avVals, avVals.length && Math.min.apply(null, avVals) > 95 ? 1 : 0, "%");
+
+    function foot(vals, d, u) {
+      if (!vals.length) return '<div class="foot"><span>&mdash;</span><span>' + vals.length + ' pts</span></div>';
+      return '<div class="foot"><span>min ' + Math.min.apply(null, vals).toFixed(d) + u +
+             '</span><span>max ' + Math.max.apply(null, vals).toFixed(d) + u +
+             '</span><span>' + vals.length + ' pts</span></div>';
+    }
+  }
+  function lastFinite(arr) { for (var i = arr.length - 1; i >= 0; i--) if (isNum(arr[i])) return arr[i]; return null; }
+
+  // ── node card ─────────────────────────────────────────────────────────────
+  function counter(k, v, badWhenNonzero) {
+    var cls = "zero";
+    if (isNum(v) && v > 0) cls = badWhenNonzero ? "nonzero-bad" : "nonzero-ok";
+    return '<div class="counter"><div class="k">' + k + '</div><div class="v ' + cls + '">' + num(v) + '</div></div>';
+  }
+  function osiBarRow(label, sub, value, maxv, fmt) {
+    var w = (isNum(value) && isNum(maxv) && maxv > 0) ? Math.max(2, (value / maxv) * 100) : 0;
+    return '<div class="bar-row">' +
+      '<span class="lyr">' + label + (sub ? ' <small>' + sub + '</small>' : '') + '</span>' +
+      '<span class="bar"><span style="width:' + w.toFixed(1) + '%"></span></span>' +
+      '<span class="val">' + fmt(value) + '</span></div>';
+  }
+  function nodeCard(nd) {
+    var reachable = !!(nd && nd.reachable);
+    var avail = isNum(nd.availability_pct) ? nd.availability_pct : null;
+    var availKind = avail == null ? "off" : (avail >= 99 ? "ok" : (avail >= 95 ? "warn" : "bad"));
+    var availColor = availKind === "ok" ? "var(--good)" : availKind === "warn" ? "var(--warn)" : availKind === "bad" ? "var(--bad)" : "var(--off)";
+
+    // header status: reachable + clean counters -> ok; reachable + any incident -> warn; unreachable -> bad
+    var incident = (isNum(nd.wdog) && nd.wdog > 0) || (isNum(nd.recover) && nd.recover > 0) || (isNum(nd.resets) && nd.resets > 0);
+    var hstat = !reachable ? pill("bad", "unreachable") : (incident ? pill("warn", "watch") : pill("ok", "online"));
+
+    var head = '<div class="card-top"><div class="row1">' +
+      '<span class="name">' + esc(nd.name || "node") + '</span>' +
+      '<span class="fwtag">' + esc(nd.fw || "?") + '</span>' +
+      '<span style="margin-left:auto">' + hstat + '</span></div>' +
+      '<div class="omr" title="' + esc(nd.omr || "") + '">' + esc(nd.omr || "&mdash;") + '</div></div>';
+
+    if (!reachable) {
+      return '<article class="card unreachable">' + head +
+        '<div class="card-body"><div class="empty">No CoAP /diag answer over IPv6 &mdash; node off-mesh or diag server down. ' +
+        'Last role <span class="mono">' + esc(nd.role || "?") + '</span>, rloc16 <span class="mono">' + esc(nd.rloc16 || "?") + '</span>.</div></div></article>';
+    }
+
+    // role/uptime line
+    var meta = '<div class="counter-strip" style="grid-template-columns:repeat(3,1fr)">' +
+      '<div class="counter"><div class="k">Role</div><div class="v" style="font-size:14px">' + esc(nd.role || "&mdash;") + '</div></div>' +
+      '<div class="counter"><div class="k">Uptime</div><div class="v" style="font-size:14px">' + humanDur(nd.uptime_s) + '</div></div>' +
+      '<div class="counter"><div class="k">RLOC16</div><div class="v" style="font-size:14px">' + esc(nd.rloc16 || "&mdash;") + '</div></div>' +
+      '</div>';
+
+    var counters = '<div class="counter-strip">' +
+      counter("reg_ok", nd.reg_ok, false) +
+      counter("recover", nd.recover, true) +
+      counter("wdog", nd.wdog, true) +
+      counter("resets", nd.resets, true) +
+      '</div>';
+
+    var lastSeen = isNum(nd.last_seen_s) ? nd.last_seen_s + "s ago" : "&mdash;";
+    var availBlock = '<div class="avail"><div class="row">' +
+      '<span class="eyebrow">Availability</span>' +
+      '<span class="pct" style="color:' + availColor + '">' + (avail == null ? "&mdash;" : avail.toFixed(1) + "%") + '</span></div>' +
+      '<div class="meter"><span style="width:' + (avail == null ? 0 : Math.max(0, Math.min(100, avail))) + '%;background:' + availColor + '"></span></div>' +
+      '<div style="font-size:10px;color:var(--ink-3);margin-top:4px">last diag ' + lastSeen + '</div></div>';
+
+    // OBIS quad
+    var a = nd.ami || {};
+    var obis = '<div><div class="eyebrow" style="margin-bottom:6px">Live OBIS</div><div class="obis">' +
+      obisCell("Voltage", a.voltage, 1, "V") +
+      obisCell("Current", a.current, 2, "A") +
+      obisCell("Power", a.power, 1, "W") +
+      obisCell("Freq", a.freq, 2, "Hz") +
+      '</div></div>';
+
+    // OSI breakdown
+    var o = nd.osi || {};
+    var byteMax = Math.max(o.l3_ipv6_bytes || 0, o.l4_udp_coap_bytes || 0, o.l7_lwm2m_tx_bytes || 0, 1);
+    var frameMax = Math.max(o.l2_mac_tx || 0, o.l2_mac_rx || 0, 1);
+    var osi = '<div class="osi"><div class="eyebrow" style="margin-bottom:2px">OSI throughput <span style="color:var(--ink-3);font-weight:500;letter-spacing:0.02em">(cumulative)</span></div>' +
+      '<div class="subhead">Payload &middot; bytes</div>' +
+      osiBarRow("L3", "IPv6", o.l3_ipv6_bytes, byteMax, humanBytes) +
+      osiBarRow("L4", "UDP/CoAP", o.l4_udp_coap_bytes, byteMax, humanBytes) +
+      osiBarRow("L7", "LwM2M tx", o.l7_lwm2m_tx_bytes, byteMax, humanBytes) +
+      '<div class="subhead">Link &middot; MAC frames</div>' +
+      osiBarRow("L2", "tx", o.l2_mac_tx, frameMax, intc) +
+      osiBarRow("L2", "rx", o.l2_mac_rx, frameMax, intc) +
+      '<div class="osi-chips">' +
+        chip("app msgs", intc(o.app_msgs), "") +
+        chip("rate", num(o.bytes_per_min, 1), "B/min") +
+        chip("avg pkt", num(o.avg_pkt_bytes, 1), "B") +
+      '</div></div>';
+
+    return '<article class="card">' + head + '<div class="card-body">' +
+      meta + counters + availBlock + obis + osi + '</div></article>';
+
+    function obisCell(k, v, d, u) {
+      return '<div class="cell"><div class="k">' + k + '</div><div class="v">' + num(v, d) +
+             '<small>' + u + '</small></div></div>';
+    }
+    function chip(k, v, u) {
+      return '<div class="chip"><div class="k">' + k + '</div><div class="v">' + v +
+             (u ? '<small>' + u + '</small>' : '') + '</div></div>';
+    }
+  }
+
+  // ── overall health ────────────────────────────────────────────────────────
+  function overallHealth(d) {
+    var otbrUp = d.otbr && d.otbr.up;
+    var nodes = Array.isArray(d.nodes) ? d.nodes : [];
+    var anyReach = nodes.some(function (n) { return n && n.reachable; });
+    var risk = psuRiskOf(d.power);
+
+    if (!otbrUp || !anyReach || risk === "BLOCK") return { kind: "bad", label: "Fault" };
+
+    var degraded =
+      risk === "WARN" ||
+      (d.otbr && isNum(d.otbr.eid_retry) && d.otbr.eid_retry > 0) ||
+      nodes.some(function (n) {
+        return n && n.reachable && (
+          (isNum(n.wdog) && n.wdog > 0) ||
+          (isNum(n.recover) && n.recover > 0) ||
+          (isNum(n.resets) && n.resets > 0) ||
+          (isNum(n.availability_pct) && n.availability_pct < 99)
+        );
+      }) ||
+      nodes.some(function (n) { return n && !n.reachable; });   // some (but not all) down
+
+    return degraded ? { kind: "warn", label: "Degraded" } : { kind: "ok", label: "Nominal" };
+  }
+
+  // ── entry point ───────────────────────────────────────────────────────────
+  function render(d) {
+    d = d || {};
+    // header time + live dot
+    var abs = $("snap-abs"), rel = $("snap-rel"), dot = $("live-dot");
+    if (d.ts_iso) {
+      var t = new Date(d.ts_iso);
+      abs.textContent = isNaN(t) ? d.ts_iso : t.toLocaleString([], { hour12: false });
+      var age = relAge(d.ts_iso);
+      rel.innerHTML = age.text;
+      dot.classList.toggle("stale", age.stale);
+    } else {
+      abs.textContent = "no snapshot";
+      rel.textContent = "--"; dot.classList.add("stale");
+    }
+
+    var h = overallHealth(d);
+    var hp = $("health-pill");
+    hp.className = "pill big " + h.kind;
+    hp.innerHTML = ICON[h.kind] + h.label;
+
+    renderOtbr(d.otbr);
+    renderPower(d.power);
+    renderSparks(d.history);
+
+    var nodes = Array.isArray(d.nodes) ? d.nodes : [];
+    $("nodes").innerHTML = nodes.length
+      ? nodes.map(nodeCard).join("")
+      : '<div class="panel empty">No nodes in snapshot.</div>';
+    var reach = nodes.filter(function (n) { return n && n.reachable; }).length;
+    $("nodes-count").textContent = reach + " / " + nodes.length + " reachable";
+
+    $("foot-power").textContent = (d.power && d.power.source) ? d.power.source : "—";
+  }
+  // exposed so a live harness can push fresh snapshots:  window.renderLab(obj)
+  window.renderLab = render;
+
+  function loadInline() {
+    var node = document.getElementById("lab-data");
+    if (!node) return {};
+    try { return JSON.parse(node.textContent); }
+    catch (e) { console.error("lab-data parse error", e); return {}; }
+  }
+
+  // ── theme toggle (also honored by the Artifact viewer's data-theme stamp) ──
+  function initTheme() {
+    var btn = $("theme-toggle");
+    var saved = null;
+    try { saved = localStorage.getItem("ami-lab-theme"); } catch (e) {}
+    if (saved === "light" || saved === "dark") document.documentElement.setAttribute("data-theme", saved);
+    btn.addEventListener("click", function () {
+      var cur = document.documentElement.getAttribute("data-theme");
+      if (!cur) cur = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      var next = cur === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      try { localStorage.setItem("ami-lab-theme", next); } catch (e) {}
+    });
+  }
+
+  // ── boot ──────────────────────────────────────────────────────────────────
+  initTheme();
+  render(loadInline());
+
+  // keep the "N s ago" label honest between snapshots
+  setInterval(function () {
+    var node = $("snap-rel"), dot = $("live-dot");
+    var data = loadInline();
+    if (data && data.ts_iso && node) {
+      var age = relAge(data.ts_iso);
+      node.innerHTML = age.text;
+      if (dot) dot.classList.toggle("stale", age.stale);
+    }
+  }, 5000);
+
+  // OPTIONAL live polling for a standalone (non-Artifact) deployment. Disabled
+  // unless window.LAB_DATA_URL is set, because the Artifact CSP blocks network.
+  if (window.LAB_DATA_URL) {
+    var poll = function () {
+      fetch(window.LAB_DATA_URL, { cache: "no-store" })
+        .then(function (r) { return r.json(); })
+        .then(function (obj) { window.renderLab(obj); })
+        .catch(function (e) { console.warn("lab poll failed (source down?)", e); });
+    };
+    poll();
+    setInterval(poll, window.LAB_POLL_MS || 15000);
+  }
+})();
+</script>
