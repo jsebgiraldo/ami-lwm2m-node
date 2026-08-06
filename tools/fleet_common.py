@@ -45,11 +45,56 @@ EDGE_TENANT_PASS = "tenant"
 EDGE_PROFILE = "AMI_LwM2M_Node"
 
 
+def _wsl_ip(distro: str = "Ubuntu-24.04") -> str | None:
+    """First IPv4 of the WSL distro, or None. Cached per process."""
+    global _WSL_IP_CACHE
+    if _WSL_IP_CACHE is not _UNSET:
+        return _WSL_IP_CACHE
+    _WSL_IP_CACHE = None
+    try:
+        out = subprocess.run(["wsl.exe", "-d", distro, "--", "hostname", "-I"],
+                             capture_output=True, text=True, timeout=20).stdout
+        ip = out.strip().split()[0] if out.strip() else ""
+        _WSL_IP_CACHE = ip or None
+    except Exception:
+        pass
+    return _WSL_IP_CACHE
+
+
+_UNSET = object()
+_WSL_IP_CACHE = _UNSET
+
+
 def edge_for_mesh(mesh: str) -> tuple[str, int]:
-    """Return (host, port) of the TB Edge instance bound to the given mesh."""
+    """Return (host, port) of the TB instance bound to the given mesh.
+
+    'lab' is resolved dynamically: the bench ThingsBoard runs inside WSL2, and
+    with networkingMode=NAT the Windows side canNOT reach it on 127.0.0.1 (no
+    localhost forwarding) — only on the distro's own IP, which changes on every
+    WSL restart. Hardcoding either one breaks half the time, so probe 127.0.0.1
+    first (works under mirrored networking / localhostForwarding) and fall back
+    to the live WSL IP.
+    """
     if mesh not in MESH_TO_EDGE:
         raise ValueError(f"Unknown mesh '{mesh}'. Choose: {tuple(MESH_TO_EDGE)}")
-    return MESH_TO_EDGE[mesh]
+    host, port = MESH_TO_EDGE[mesh]
+    if mesh == "lab":
+        import urllib.error
+        import urllib.request
+        for cand in (host, _wsl_ip()):
+            if not cand:
+                continue
+            # A TCP connect is NOT enough: under WSL2 NAT, connect() to
+            # 127.0.0.1:8080 SUCCEEDS but no data ever flows, so the probe must
+            # complete a real HTTP round-trip or it picks a dead host.
+            try:
+                urllib.request.urlopen(f"http://{cand}:{port}/login", timeout=4).read(1)
+                return (cand, port)
+            except urllib.error.HTTPError:
+                return (cand, port)          # answered (4xx/5xx) => it is alive
+            except Exception:
+                continue
+    return (host, port)
 
 # ── Firmware target ────────────────────────────────────────────────────
 DEFAULT_BOARD = "xiao_esp32c6/esp32c6/hpcore"

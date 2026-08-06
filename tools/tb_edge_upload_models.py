@@ -382,11 +382,24 @@ def upload_model(s: requests.Session, base: str, title: str, filename: str,
         "fileName": filename,
         "data": base64.b64encode(xml.encode("utf-8")).decode("ascii"),
     }
+    # LWM2M_MODEL resources are IMMUTABLE in ThingsBoard: POSTing with an
+    # existing id returns 400 "This type of resource can't be updated"
+    # (errorCode 31). So re-uploading a model — e.g. extending object 33000 from
+    # RIDs 0..22 to 0..41 — is DELETE + CREATE, not an update.
+    #
+    # This is the step that matters when the model changes: TB matches a
+    # registration's object list against the stored model, and a mismatch makes
+    # it silently drop the observes and ALL telemetry for that object, tenant
+    # wide. Deleting first keeps the window where no model exists as short as
+    # possible; re-register the nodes afterwards.
+    action = "create"
     if match:
-        body["id"] = match["id"]
-        action = "update"
-    else:
-        action = "create"
+        d = s.delete(f"{base}/api/resource/{match['id']['id']}", timeout=30)
+        if not d.ok:
+            raise RuntimeError(
+                f"  delete-before-recreate FAILED {d.status_code}: {d.text[:300]}\n"
+                f"  (LWM2M_MODEL cannot be updated in place; the old copy must go first)")
+        action = "recreate"
     r = s.post(f"{base}/api/resource", data=json.dumps(body), timeout=30)
     if not r.ok:
         raise RuntimeError(f"  upload FAILED {r.status_code}: {r.text[:300]}")

@@ -241,6 +241,156 @@
         <Units></Units>
         <Description>Monotonic reset counter, persisted in NVS — un-fakeable proof of a watchdog-driven reboot.</Description>
       </Item>
+      <Item ID="23">
+        <Name>Hang Uptime</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>s</Units>
+        <Description>Uptime at the last snapshot before the previous reset.</Description>
+      </Item>
+      <Item ID="24">
+        <Name>Hang Heap Free</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>B</Units>
+        <Description>Free heap bytes at that snapshot.</Description>
+      </Item>
+      <Item ID="25">
+        <Name>Hang Heap Min Free</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>B</Units>
+        <Description>Lifetime minimum free heap up to that snapshot.</Description>
+      </Item>
+      <Item ID="26">
+        <Name>Hang Reg Age</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>s</Units>
+        <Description>Seconds since the last REG_UPDATE_COMPLETE at that snapshot.</Description>
+      </Item>
+      <Item ID="27">
+        <Name>Hang LwM2M State</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Bitmap: 0x01 started, 0x02 registered, 0x04 observing, 0x08 recovering, 0x80 last_error set.</Description>
+      </Item>
+      <Item ID="28">
+        <Name>Hang Thread Role</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>OpenThread role at that snapshot: 0 disabled, 1 detached, 2 child, 3 router, 4 leader.</Description>
+      </Item>
+      <Item ID="29">
+        <Name>Keepalive Emit Count</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Heartbeats emitted; the silence watchdog's liveness signal.</Description>
+      </Item>
+      <Item ID="30">
+        <Name>Keepalive Consec Fail</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Consecutive keepalive failures the engine is otherwise hiding.</Description>
+      </Item>
+      <Item ID="31">
+        <Name>Last Emit Uptime</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>s</Units>
+        <Description>Uptime when the watchdog last saw a sign of life.</Description>
+      </Item>
+      <Item ID="32">
+        <Name>NoReg Boots</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Consecutive boots that never reached a first REGISTER.</Description>
+      </Item>
+      <Item ID="33">
+        <Name>In Recovery</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>1 while recover_work_fn is running, else 0.</Description>
+      </Item>
+      <Item ID="34">
+        <Name>Boot Burst</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Consecutive unstable boots; 0 = healthy. Alarm as it approaches CONFIG_AMI_BOOT_BURST_MAX.</Description>
+      </Item>
+      <Item ID="35">
+        <Name>Detached Total</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>s</Units>
+        <Description>Cumulative seconds spent detached from the mesh.</Description>
+      </Item>
+      <Item ID="36">
+        <Name>Heap Min Free Live</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units>B</Units>
+        <Description>Live lifetime minimum free heap for this boot.</Description>
+      </Item>
+      <Item ID="37">
+        <Name>Last Reboot Code</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Reboot path that caused this boot: 1-10 planned recovery paths, 11 kernel panic, 12-15 hardware-watchdog paths, 16 OTA apply, 99 unknown, 0 = did not pass through firmware (power-on, brownout or external reset).</Description>
+      </Item>
       <Item ID="38">
         <Name>LwM2M TX Bytes</Name>
         <Operations>R</Operations>
@@ -250,6 +400,36 @@
         <RangeEnumeration></RangeEnumeration>
         <Units>B</Units>
         <Description>Exact cumulative LwM2M/CoAP bytes put on the wire since boot, counted at the engine send chokepoint. Server computes bytes/min as a delta and avg packet size as tx_bytes_delta / notify_emitted_delta.</Description>
+      </Item>
+      <Item ID="39">
+        <Name>Panic Reason</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>K_ERR_* code passed to k_sys_fatal_error_handler; 0 = no panic.</Description>
+      </Item>
+      <Item ID="40">
+        <Name>Panic MEPC</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Address of the faulting instruction.</Description>
+      </Item>
+      <Item ID="41">
+        <Name>Panic RA</Name>
+        <Operations>R</Operations>
+        <MultipleInstances>Single</MultipleInstances>
+        <Mandatory>Mandatory</Mandatory>
+        <Type>Integer</Type>
+        <RangeEnumeration></RangeEnumeration>
+        <Units></Units>
+        <Description>Return address at the fault — one caller frame up from MEPC.</Description>
       </Item>
     </Resources>
     <Description2/>
