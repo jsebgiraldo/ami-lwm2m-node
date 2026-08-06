@@ -221,3 +221,18 @@ tools/flicker_log*.csv
 tools/node_history_*.json
 tools/node_report_*.html
 tools/node_monitor_cron.log
+
+# ---- bench lab captures (2026-08-05) — DATA, not source ----
+# FNB-C2 power captures: ~640 files and growing, one per logger run. The
+# analysis tools glob them from disk; the conclusions live in docs/ and memory.
+tools/fnb_power_*.csv
+tools/fnb_latest.json
+# Correlated burst captures (tools/lab_burst_capture.py) + their FNB side-files
+tools/lab_burst_*.csv
+tools/lab_burst_*.log
+# Live bench state written every refresh cycle by the e2e monitor / dashboard
+tools/lab_e2e_snapshot.json
+tools/lab_e2e_history.csv
+tools/lab_dashboard_live.html
+tools/lab_dashboard_served.html
+tools/lab_nodes.json

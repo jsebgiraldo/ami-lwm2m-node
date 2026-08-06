@@ -398,6 +398,16 @@ static int hw_watchdog_boot_arm(void)
 }
 SYS_INIT(hw_watchdog_boot_arm, POST_KERNEL, 90);
 
+void hw_watchdog_feed_boot(void)
+{
+	/* v0.7.18: silent feed for deliberate pre-init sleeps — see hw_watchdog.h.
+	 * Does NOT set boot_survived: a caller that is merely stalling on purpose
+	 * has not yet proven it cleared the whole boot path. */
+	if (chan_boot >= 0) {
+		(void)task_wdt_feed(chan_boot);
+	}
+}
+
 void hw_watchdog_note_boot_survived(void)
 {
 	/* One-shot: feed chan_boot now (proves NVS path cleared), then let

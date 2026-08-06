@@ -89,7 +89,7 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
 #define CLIENT_MANUFACTURER     "Tesis-AMI"
 #define CLIENT_MODEL_NUMBER     "ESP32-C6-Super-Mini"
 #define CLIENT_SERIAL_NUMBER    "AMI-001"
-#define CLIENT_FIRMWARE_VER     "0.7.17-ami"
+#define CLIENT_FIRMWARE_VER     "0.7.18-otfix"
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -2887,8 +2887,29 @@ static void apply_otbr_dataset(void)
 	};
 	const char *mesh_label = "AMI-fleet (Pi4 EKH01-DE87, Ch25)";
 	const char *mesh_local_str = "fd32:e7c9:e9af:adf2::/64";
+#elif defined(CONFIG_AMI_MESH_LAB)
+	static const uint8_t otbr_tlvs[] = {
+		/* LAB benchtop OTBR (SONOFF ZBDongle-E RCP, native otbr-agent in WSL2) —
+		 * Ch11, PAN 0x3940, Network "GatewaySmartGrid".
+		 * Mesh-local: fdfe:0139:817c:7d90::/64
+		 * Exported via: ot-ctl dataset active -x  (regen w/ tools/lab_thread_creds.py). */
+		0x4a, 0x03, 0x00, 0x00, 0x17, 0x35, 0x06, 0x00, 0x04, 0x00,
+		0x1f, 0xff, 0xe0, 0x02, 0x08, 0x84, 0xbc, 0x42, 0x45, 0x70,
+		0x87, 0xd8, 0xe0, 0x07, 0x08, 0xfd, 0xfe, 0x01, 0x39, 0x81,
+		0x7c, 0x7d, 0x90, 0x05, 0x10, 0xb6, 0x70, 0xcc, 0x4d, 0x5d,
+		0x50, 0xbb, 0x50, 0x5e, 0x38, 0x10, 0x57, 0x5b, 0x6f, 0x9f,
+		0x76, 0x01, 0x02, 0x39, 0x40, 0x04, 0x10, 0x19, 0xf7, 0x89,
+		0x3a, 0x36, 0x7b, 0x0b, 0x64, 0x23, 0xc3, 0x2d, 0x11, 0x99,
+		0xfd, 0x88, 0x40, 0x0c, 0x04, 0x02, 0xa0, 0xf7, 0xf8, 0x03,
+		0x10, 0x47, 0x61, 0x74, 0x65, 0x77, 0x61, 0x79, 0x53, 0x6d,
+		0x61, 0x72, 0x74, 0x47, 0x72, 0x69, 0x64, 0x00, 0x03, 0x00,
+		0x00, 0x0b, 0x0e, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+		0x00, 0x00,
+	};
+	const char *mesh_label = "LAB bench (GatewaySmartGrid, Ch11)";
+	const char *mesh_local_str = "fdfe:0139:817c:7d90::/64";
 #else
-#error "No AMI_MESH target selected (set CONFIG_AMI_MESH_PI4=y or CONFIG_AMI_MESH_R1000=y via overlay)"
+#error "No AMI_MESH target selected (set CONFIG_AMI_MESH_PI4=y, CONFIG_AMI_MESH_R1000=y or CONFIG_AMI_MESH_LAB=y via overlay)"
 #endif
 
 	openthread_mutex_lock();
@@ -2991,27 +3012,61 @@ static void apply_otbr_dataset(void)
 	 * we'd get OT_ERROR_ALREADY and infinite reboot loop.
 	 * Field forensics: v0.6.69 flashed to L30 left USB-Serial-JTAG silent
 	 * post-flash, consistent with an early boot-time reboot loop. */
+	/* v0.7.18 CRITICAL FIX — VERIFY THE STATE, DON'T TRUST THE ERROR CODE.
+	 *
+	 * The v0.6.69.1 logic treated OT_ERROR_INVALID_STATE as benign ("already in
+	 * the desired state"). It is NOT: from otIp6SetEnabled/otThreadSetEnabled it
+	 * means the call FAILED. Swallowing it left the node running forever with
+	 * `ot ifconfig` = down and `ot state` = disabled — radio completely silent,
+	 * never attaches, no reboot, no error logged (the code even logged "Thread
+	 * started"). Bench-confirmed 2026-08-04: a node in that state answered the
+	 * shell with state=disabled and attached INSTANTLY on a manual
+	 * `ot ifconfig up` + `ot thread start`, proving radio/dataset/RF were fine.
+	 * It survives power-cycles (deterministic boot path, not corrupt state) and
+	 * only an NVS erase appeared to "fix" it — a brick-until-reflash in the field
+	 * since OTA does not erase NVS.
+	 *
+	 * Checking the ACTUAL state handles both cases correctly: a genuinely-benign
+	 * INVALID_STATE (stack already enabled by the Zephyr wrapper) passes with no
+	 * action, while a real failure is retried and only then escalated.
+	 */
 	otError ot_err = otIp6SetEnabled(ot, true);
 	LOG_INF("IPv6 enabled, radio state: %d (err=%d)",
 		(int)otPlatRadioGetState(ot), ot_err);
-	if (ot_err != OT_ERROR_NONE && ot_err != OT_ERROR_ALREADY &&
-	    ot_err != OT_ERROR_INVALID_STATE) {
-		LOG_ERR("otIp6SetEnabled HARD FAIL (err=%d) — COLD reboot", ot_err);
-		lwm2m_diag_record_error(-EIO);
-		ami_reboot_drain(SYS_REBOOT_COLD, "ip6-enable-failed");
-		/* unreachable */
+	if (!otIp6IsEnabled(ot)) {
+		LOG_WRN("IPv6 STILL DISABLED after otIp6SetEnabled (err=%d) — off/on retry",
+			ot_err);
+		(void)otIp6SetEnabled(ot, false);
+		k_msleep(50);
+		ot_err = otIp6SetEnabled(ot, true);
+		if (!otIp6IsEnabled(ot)) {
+			LOG_ERR("otIp6SetEnabled HARD FAIL (err=%d, iface still down) — COLD reboot",
+				ot_err);
+			lwm2m_diag_record_error(-EIO);
+			ami_reboot_drain(SYS_REBOOT_COLD, "ip6-enable-failed");
+			/* unreachable */
+		}
+		LOG_WRN("IPv6 recovered on retry");
 	}
 
 	/* Start Thread (this triggers otPlatRadioReceive → radio RX) */
 	ot_err = otThreadSetEnabled(ot, true);
 	LOG_INF("Thread started, radio state: %d (err=%d)",
 		(int)otPlatRadioGetState(ot), ot_err);
-	if (ot_err != OT_ERROR_NONE && ot_err != OT_ERROR_ALREADY &&
-	    ot_err != OT_ERROR_INVALID_STATE) {
-		LOG_ERR("otThreadSetEnabled HARD FAIL (err=%d) — COLD reboot", ot_err);
-		lwm2m_diag_record_error(-EIO);
-		ami_reboot_drain(SYS_REBOOT_COLD, "thread-enable-failed");
-		/* unreachable */
+	if (otThreadGetDeviceRole(ot) == OT_DEVICE_ROLE_DISABLED) {
+		LOG_WRN("Thread STILL DISABLED after otThreadSetEnabled (err=%d) — off/on retry",
+			ot_err);
+		(void)otThreadSetEnabled(ot, false);
+		k_msleep(50);
+		ot_err = otThreadSetEnabled(ot, true);
+		if (otThreadGetDeviceRole(ot) == OT_DEVICE_ROLE_DISABLED) {
+			LOG_ERR("otThreadSetEnabled HARD FAIL (err=%d, still disabled) — COLD reboot",
+				ot_err);
+			lwm2m_diag_record_error(-EIO);
+			ami_reboot_drain(SYS_REBOOT_COLD, "thread-enable-failed");
+			/* unreachable */
+		}
+		LOG_WRN("Thread recovered on retry");
 	}
 
 	/* v0.6.65: SetRouterUpgradeThreshold(10) — raised from v0.6.64's 3 after
@@ -3230,8 +3285,41 @@ int main(void)
 					"(NVS-wear protection)",
 					burst,
 					CONFIG_AMI_BOOT_BURST_THROTTLE_S);
-				k_sleep(K_SECONDS(
-					CONFIG_AMI_BOOT_BURST_THROTTLE_S));
+				/* v0.7.18 CRITICAL FIX — feed the boot watchdog while we
+				 * deliberately stall.
+				 *
+				 * chan_boot is armed at SYS_INIT(POST_KERNEL) with
+				 * CONFIG_AMI_HW_WATCHDOG_TIMEOUT_S and is not fed until
+				 * hw_watchdog_note_boot_survived(), which runs AFTER this
+				 * block; the kernel feeder thread only exists after
+				 * hw_watchdog_init(), also later. So a flat
+				 * k_sleep(THROTTLE_S) with THROTTLE_S >= the watchdog
+				 * timeout (both 300 s by default!) ALWAYS let the watchdog
+				 * bite mid-throttle → SW reset → another "unstable boot" →
+				 * the burst counter never drains → a PERMANENT reboot loop
+				 * that OTA can never fix (the node never lives long enough
+				 * to register). Bench-proof 2026-08-04: total_resets 54→55,
+				 * post-mortem uptime 320 s (= 300 s throttle + boot), and
+				 * ZERO post-throttle init lines in the console capture.
+				 * The NVS danger zone (settings_load + post_mortem) has
+				 * already cleared by this point, so feeding here is correct:
+				 * we are stalling on purpose, not hung. */
+				{
+					uint32_t left =
+						CONFIG_AMI_BOOT_BURST_THROTTLE_S;
+					const uint32_t step = MAX(
+						1U,
+						(uint32_t)CONFIG_AMI_HW_WATCHDOG_TIMEOUT_S / 3U);
+
+					while (left > 0U) {
+						uint32_t chunk = MIN(left, step);
+
+						hw_watchdog_feed_boot();
+						k_sleep(K_SECONDS(chunk));
+						left -= chunk;
+					}
+					hw_watchdog_feed_boot();
+				}
 			}
 			lwm2m_diag_inc_boot_burst();
 		}

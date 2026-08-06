@@ -46,6 +46,21 @@ void hw_watchdog_init(void);
  */
 void hw_watchdog_note_boot_survived(void);
 
+/**
+ * @brief Feed the boot channel during a DELIBERATE pre-init sleep (v0.7.18).
+ *
+ * chan_boot is armed at SYS_INIT(POST_KERNEL) with CONFIG_AMI_HW_WATCHDOG_TIMEOUT_S
+ * and is normally fed for the first time by hw_watchdog_note_boot_survived(), then
+ * kept alive by the kernel feeder thread created in hw_watchdog_init(). Any code
+ * that intentionally blocks main() for longer than the watchdog timeout BEFORE
+ * hw_watchdog_init() (today: the boot-burst throttle) must call this periodically,
+ * otherwise the watchdog cannot tell a deliberate sleep from a hung NVS load and
+ * resets the SoC — which self-perpetuates the very reboot burst being throttled.
+ *
+ * Silent (no logging) so it is safe to call in a loop.
+ */
+void hw_watchdog_feed_boot(void);
+
 /*
  * Report end-to-end liveness: the LwM2M server has just ACKed us.
  *
