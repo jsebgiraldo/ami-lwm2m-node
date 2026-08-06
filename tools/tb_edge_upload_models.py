@@ -167,18 +167,65 @@ def xml_33000() -> str:
         (22, "Total Resets",            "R", "Mandatory", "Integer",
          "Monotonic reset counter, persisted in NVS — un-fakeable proof of "
          "a watchdog-driven reboot."),
+        # v2.4 — post-mortem: what the firmware was doing at the last hang (23..28).
+        # Populated at boot from the NVS snapshot owned by src/post_mortem.c.
+        (23, "Hang Uptime",             "R", "Mandatory", "Integer",
+         "Uptime at the last snapshot before the previous reset.", "s"),
+        (24, "Hang Heap Free",          "R", "Mandatory", "Integer",
+         "Free heap bytes at that snapshot.", "B"),
+        (25, "Hang Heap Min Free",      "R", "Mandatory", "Integer",
+         "Lifetime minimum free heap up to that snapshot.", "B"),
+        (26, "Hang Reg Age",            "R", "Mandatory", "Integer",
+         "Seconds since the last REG_UPDATE_COMPLETE at that snapshot.", "s"),
+        (27, "Hang LwM2M State",        "R", "Mandatory", "Integer",
+         "Bitmap: 0x01 started, 0x02 registered, 0x04 observing, "
+         "0x08 recovering, 0x80 last_error set."),
+        (28, "Hang Thread Role",        "R", "Mandatory", "Integer",
+         "OpenThread role at that snapshot: 0 disabled, 1 detached, 2 child, "
+         "3 router, 4 leader."),
+        # v2.5 — deadlock observability (29..33). Together these separate
+        # "alive but engine-suspended" from "server outage" from "boot loop".
+        (29, "Keepalive Emit Count",    "R", "Mandatory", "Integer",
+         "Heartbeats emitted; the silence watchdog's liveness signal."),
+        (30, "Keepalive Consec Fail",   "R", "Mandatory", "Integer",
+         "Consecutive keepalive failures the engine is otherwise hiding."),
+        (31, "Last Emit Uptime",        "R", "Mandatory", "Integer",
+         "Uptime when the watchdog last saw a sign of life.", "s"),
+        (32, "NoReg Boots",             "R", "Mandatory", "Integer",
+         "Consecutive boots that never reached a first REGISTER."),
+        (33, "In Recovery",             "R", "Mandatory", "Integer",
+         "1 while recover_work_fn is running, else 0."),
+        # v2.6 — at-risk indicators: a board trending toward brick before it fails.
+        (34, "Boot Burst",              "R", "Mandatory", "Integer",
+         "Consecutive unstable boots; 0 = healthy. Alarm as it approaches "
+         "CONFIG_AMI_BOOT_BURST_MAX."),
+        (35, "Detached Total",          "R", "Mandatory", "Integer",
+         "Cumulative seconds spent detached from the mesh.", "s"),
+        (36, "Heap Min Free Live",      "R", "Mandatory", "Integer",
+         "Live lifetime minimum free heap for this boot.", "B"),
+        # v0.7.4 — which reboot path caused this boot. See the canonical code
+        # map in src/main.c (ami_reboot_reason_to_code + the comment below it).
+        (37, "Last Reboot Code",        "R", "Mandatory", "Integer",
+         "Reboot path that caused this boot: 1-10 planned recovery paths, "
+         "11 kernel panic, 12-15 hardware-watchdog paths, 16 OTA apply, "
+         "99 unknown, 0 = did not pass through firmware (power-on, brownout "
+         "or external reset)."),
         # v2.7 — exact comms accounting (RID 38; observability Tier 2). Added
-        # 2026-06-21. RIDs 23-37 stay opaque (not advertised), but 38 IS
-        # advertised so TB Edge will Observe the exact wire-byte counter.
+        # 2026-06-21, and the precedent that proved a "1.0" model accepts new
+        # resources — which is why 23-37 are advertised here as of v0.7.18.
         (38, "LwM2M TX Bytes",          "R", "Mandatory", "Integer",
          "Exact cumulative LwM2M/CoAP bytes put on the wire since boot, counted "
          "at the engine send chokepoint. Server computes bytes/min as a delta "
          "and avg packet size as tx_bytes_delta / notify_emitted_delta.", "B"),
-        # Post-mortem RIDs 23-28 are populated by src/post_mortem.c but
-        # NOT advertised here: firmware advertises ver=2.2 (see thread_conn_monitor.c)
-        # so Leshan treats RIDs 23-28 as opaque pass-through. Once the v2.4
-        # schema path is validated end-to-end on an isolated node we'll bump
-        # this back to "2.4" and re-add the RID entries.
+        # v2.8 (v0.7.18) — panic crash site of the PREVIOUS boot. Feed 40 and 41
+        # to `riscv64-zephyr-elf-addr2line -f -e zephyr.elf` using the ELF of the
+        # exact build that was running, or the addresses are meaningless.
+        (39, "Panic Reason",            "R", "Mandatory", "Integer",
+         "K_ERR_* code passed to k_sys_fatal_error_handler; 0 = no panic."),
+        (40, "Panic MEPC",              "R", "Mandatory", "Integer",
+         "Address of the faulting instruction."),
+        (41, "Panic RA",                "R", "Mandatory", "Integer",
+         "Return address at the fault — one caller frame up from MEPC."),
     ]
     # ObjectVersion="1.0" deliberate: firmware compiles with
     # CONFIG_LWM2M_VERSION_1_0=y so REGISTER payload omits per-object ;ver=

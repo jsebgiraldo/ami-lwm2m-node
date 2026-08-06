@@ -16,9 +16,7 @@ Usage:  python tools/verify_fleet.py [period_s=180]
 import re, sys, time, urllib.request, json
 
 TB = 'http://192.168.8.111:8090'
-CODE = {0:'(none/HW/ext)',1:'boot-watchdog',2:'mesh-alone',3:'conn-mon-no-first-tick',
-        4:'conn-mon-WEDGED',5:'max-recover-attempts',6:'lwm2m-device-reboot',7:'shell',
-        8:'ip6-enable-fail',9:'thread-enable-fail',10:'dns-sd-boot-fail',11:'PANIC',99:'other'}
+from reboot_codes import REBOOT_CODE as CODE   # canonical map, incl. codes 12-16
 
 
 def login():

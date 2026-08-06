@@ -139,7 +139,30 @@
  * TB Edge will Observe it. */
 #define TD_LWM2M_TX_BYTES_RID          38   /* U32: exact LwM2M wire bytes since boot */
 
-#define TD_NUM_FIELDS             39
-#define TD_RES_INST_COUNT         39
+/* === v2.8 panic forensics — v0.7.18 (RIDs 39-41) ===
+ * RID 37 == 11 says a node panicked but not WHERE. These three carry the
+ * crash site out of the __noinit staging area main.c latches at boot, so a
+ * field node can be diagnosed over LwM2M without pulling a full coredump —
+ * and without ever attaching a console, which on the ESP32-C6 USB-Serial-JTAG
+ * would itself reset the board.
+ *
+ * Static for the lifetime of the boot (they describe the PREVIOUS boot), so
+ * main.c pushes them once via thread_diag_publish_panic() — same one-shot
+ * contract as the post-mortem RIDs 23-28.
+ *
+ * Turning RIDs 40/41 into source locations:
+ *   riscv64-zephyr-elf-addr2line -f -e build/zephyr/zephyr.elf <mepc> <ra>
+ * The ELF MUST be the one that produced the running image — keep the build
+ * artifacts of every version you flash to the fleet or the addresses are noise.
+ */
+#define TD_PANIC_REASON_RID            39   /* U32: K_ERR_* handed to k_sys_fatal_error_handler; 0 = no panic */
+#define TD_PANIC_MEPC_RID              40   /* U32: faulting instruction address */
+#define TD_PANIC_RA_RID                41   /* U32: return address — one caller frame up */
+
+/* Counters, NOT RIDs. TD_NUM_FIELDS dimensions thread_diag_res[]; every
+ * INIT_OBJ_RES_DATA in thread_conn_monitor.c consumes one slot, so this MUST
+ * be raised in the same commit that adds a resource. */
+#define TD_NUM_FIELDS             42
+#define TD_RES_INST_COUNT         42
 
 #endif /* LWM2M_OBJ_THREAD_DIAG_H */

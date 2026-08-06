@@ -59,9 +59,16 @@ LOG_MODULE_REGISTER(thread_conn, LOG_LEVEL_INF);
  * version change, but the underlying buffer-overflow root cause stayed.
  *
  * Must equal TD_NUM_FIELDS. Keep this assertion in step with the header. */
-#define THREAD_DIAG_MAX_ID    TD_NUM_FIELDS  /* 29 — RIDs 0..28 */
-BUILD_ASSERT(THREAD_DIAG_MAX_ID == TD_NUM_FIELDS,
-	     "thread_diag_res[] must cover every RID create_cb touches");
+#define THREAD_DIAG_MAX_ID    TD_NUM_FIELDS  /* 42 — RIDs 0..41 */
+/* v0.7.18: the assertion that used to live here compared THREAD_DIAG_MAX_ID
+ * against TD_NUM_FIELDS — but the line above DEFINES one as the other, so it
+ * was tautological and could never fire. It did not protect the buffer
+ * overflow described above; it only looked like it did.
+ *
+ * ARRAY_SIZE(thread_diag_fields) is a real, independent count, so this version
+ * actually catches the mistake it is meant to catch: adding an OBJ_FIELD_DATA
+ * without raising TD_NUM_FIELDS. The assert sits after the array definition
+ * (a BUILD_ASSERT here could not see it). */
 #define THREAD_DIAG_MAX_INST  1
 
 /* Static data buffers — reduced: only Role, Partition ID, MAC counters */
@@ -125,6 +132,12 @@ static uint32_t last_reboot_code_val;
  * exposes. */
 static atomic_t ami_lwm2m_tx_bytes = ATOMIC_INIT(0);
 static uint32_t lwm2m_tx_bytes_val;
+/* v2.8 (v0.7.18) — panic crash site of the PREVIOUS boot (RIDs 39-41).
+ * Written once from main.c via thread_diag_publish_panic(); never updated
+ * afterwards, so they are deliberately absent from update_connectivity_metrics(). */
+static uint32_t panic_reason_val;
+static uint32_t panic_mepc_val;
+static uint32_t panic_ra_val;
 
 /* Called by the Zephyr LwM2M engine on every successful wire send (weak hook in
  * lwm2m_message_handling.c resolves to this strong definition). */
@@ -184,7 +197,15 @@ static struct lwm2m_engine_obj_field thread_diag_fields[] = {
 	OBJ_FIELD_DATA(TD_LAST_REBOOT_CODE_RID, R, U32),
 	/* v2.7 — exact LwM2M wire bytes since boot */
 	OBJ_FIELD_DATA(TD_LWM2M_TX_BYTES_RID, R, U32),
+	/* v2.8 (v0.7.18) — panic crash site of the previous boot */
+	OBJ_FIELD_DATA(TD_PANIC_REASON_RID, R, U32),
+	OBJ_FIELD_DATA(TD_PANIC_MEPC_RID, R, U32),
+	OBJ_FIELD_DATA(TD_PANIC_RA_RID, R, U32),
 };
+BUILD_ASSERT(ARRAY_SIZE(thread_diag_fields) == TD_NUM_FIELDS,
+	     "TD_NUM_FIELDS must match thread_diag_fields[] — raise it in the "
+	     "same commit that adds an OBJ_FIELD_DATA, or thread_diag_res[] "
+	     "overflows at create_cb time");
 
 static struct lwm2m_engine_obj_inst thread_diag_inst;
 static struct lwm2m_engine_res thread_diag_res[THREAD_DIAG_MAX_ID];
@@ -289,6 +310,14 @@ static struct lwm2m_engine_obj_inst *thread_diag_create(uint16_t obj_inst_id)
 	INIT_OBJ_RES_DATA(TD_LWM2M_TX_BYTES_RID, thread_diag_res, i, thread_diag_ri, j,
 			  &lwm2m_tx_bytes_val, sizeof(lwm2m_tx_bytes_val));
 
+	/* v2.8 — panic crash site (previous boot) */
+	INIT_OBJ_RES_DATA(TD_PANIC_REASON_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &panic_reason_val, sizeof(panic_reason_val));
+	INIT_OBJ_RES_DATA(TD_PANIC_MEPC_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &panic_mepc_val, sizeof(panic_mepc_val));
+	INIT_OBJ_RES_DATA(TD_PANIC_RA_RID, thread_diag_res, i, thread_diag_ri, j,
+			  &panic_ra_val, sizeof(panic_ra_val));
+
 	thread_diag_inst.resources = thread_diag_res;
 	thread_diag_inst.resource_count = i;
 
@@ -363,6 +392,18 @@ void thread_diag_publish_post_mortem(uint32_t uptime_s, uint32_t heap_free,
 	hang_reg_age_s    = reg_age_s;
 	hang_lwm2m_state  = lwm2m_state;
 	hang_thread_role  = thread_role;
+}
+
+/* Public hook for main.c: surface the crash site of the PREVIOUS boot
+ * (RIDs 39-41). All zeros is the correct "this boot did not follow a panic"
+ * state — main.c latches the __noinit staging area and invalidates it, so a
+ * clean boot legitimately publishes zeros rather than a stale crash.
+ * Idempotent; call once, after ami_panic_capture_boot(). */
+void thread_diag_publish_panic(uint32_t reason, uint32_t mepc, uint32_t ra)
+{
+	panic_reason_val = reason;
+	panic_mepc_val   = mepc;
+	panic_ra_val     = ra;
 }
 
 /* ================================================================
