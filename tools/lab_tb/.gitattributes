@@ -1,0 +1,11 @@
+# lab_tb_up.sh is executed by bash inside WSL. A CRLF checkout breaks the
+# shebang and every quoted string. lab_tb.ps1 also sed-strips CR at call time,
+# but keeping the file LF in git means it works when run directly from WSL too.
+*.sh text eol=lf
+docker-compose.yml text eol=lf
+.env.example text eol=lf
+# Same reasoning for the files installed inside WSL: a CRLF systemd unit fails
+# with "/bin/sh^M: bad interpreter" on its ExecStart, and avahi silently
+# refuses to load a service definition it cannot parse.
+otbr-srp-lwm2m.service text eol=lf
+avahi-lwm2m.service text eol=lf

@@ -1,0 +1,57 @@
+; otbr-srp-lwm2m.service — keep ThingsBoard's LwM2M endpoint published in the
+; Thread SRP server, for as long as the OTBR is up.
+;
+; WHY A SERVICE AND NOT A ONE-SHOT COMMAND
+;   The SRP registration lives in otbr-agent's RAM. Anything that restarts
+;   otbr-agent (RCP renumbering, WSL shutdown, a `systemctl restart`) silently
+;   drops the record — and the node then loses its only way to find the server
+;   and reboot-loops on DNS-SD failure. This is the bench equivalent of the
+;   production Pi4's persistent `otbr-srp` UCI service (docs/DYNAMIC_DISCOVERY.md).
+;
+; INSTALL (from Windows, via the repo tool — it also normalises line endings):
+;   python tools/lab_tb/lab_tb_srp.py install
+; MANUAL EQUIVALENT (inside WSL, as root):
+;   install -m0755 srp_publish_lwm2m.sh /usr/local/sbin/srp_publish_lwm2m.sh
+;   install -m0644 otbr-srp-lwm2m.service /etc/systemd/system/
+;   systemctl daemon-reload && systemctl enable --now otbr-srp-lwm2m.service
+; CHECK:
+;   systemctl status otbr-srp-lwm2m.service
+;   journalctl -u otbr-srp-lwm2m.service -f
+
+[Unit]
+Description=Publish ThingsBoard-Edge._lwm2m._udp into the Thread SRP server (LAB bench)
+Documentation=file:///docs/LAB_LWM2M_DISCOVERY.md
+; otbr-agent owns /run/openthread-wpan0.sock; ot-ctl is useless without it.
+After=otbr-agent.service
+Wants=otbr-agent.service
+; PartOf makes systemd restart us whenever otbr-agent restarts, which is the
+; exact moment the in-RAM SRP registration is lost.
+PartOf=otbr-agent.service
+
+[Service]
+Type=simple
+User=root
+; ot-ctl on this bench is the native systemd install. For a containerised OTBR
+; override with:  systemctl edit otbr-srp-lwm2m.service
+;   [Service]
+;   Environment=OTCTL=docker exec otbr ot-ctl
+Environment=OTCTL=ot-ctl
+; MUST match the port the ThingsBoard LwM2M transport binds. 5683 is not a
+; preference: src/lwm2m_discover.c:22,148 hardcodes it on the host-AAAA path.
+Environment=LWM2M_PORT=5683
+; Contract strings from src/lwm2m_discover.c:24-26 — do not "tidy" these.
+Environment=INSTANCE=ThingsBoard-Edge
+Environment=SERVICE=_lwm2m._udp
+Environment=HOST_LABEL=thingsboard-edge
+; Re-assert the record every 2 min so a Thread re-attach or an OMR prefix
+; change is repaired without human intervention.
+Environment=RECHECK_S=120
+ExecStart=/usr/local/sbin/srp_publish_lwm2m.sh daemon
+ExecStop=/usr/local/sbin/srp_publish_lwm2m.sh remove
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

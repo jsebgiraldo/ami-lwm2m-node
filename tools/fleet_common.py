@@ -30,6 +30,13 @@ LEDGER_PATH = TOOLS_DIR / "deployment_ledger.csv"
 MESH_TO_EDGE = {
     "pi4":   ("192.168.1.111", 8090),
     "r1000": ("192.168.8.111", 8090),   # migrated 2026-05-16 from Seeed R1000 (.175) to Pi4 EKH01-DE87 (.111)
+    # Benchtop ThingsBoard on THIS PC (docker inside WSL2, host networking).
+    # Self-contained CE server, NOT an Edge paired to a cloud instance. Port
+    # 8080 because nothing else holds it here. Without this entry the tools
+    # that expose only --mesh (tb_edge_provision, tb_edge_upload_models,
+    # tb_edge_monitoring_setup) raise ValueError("Unknown mesh 'lab'") and
+    # cannot reach the bench at all. See tools/lab_tb/.
+    "lab":   ("127.0.0.1", 8080),
 }
 # Legacy module-level constants (preserved for callers that don't pass mesh)
 EDGE_HOST, EDGE_PORT = MESH_TO_EDGE["pi4"]
@@ -58,7 +65,11 @@ DEFAULT_VARIANT = "med"
 # Mesh targets: which OTBR / Thread network the firmware will join.
 #   pi4   = legacy UNAL-Thread on Pi4 EKH01 (192.168.1.111, channel 25)
 #   r1000 = production UNAL-R1000 on Seeed R1000 (192.168.8.175, channel 21)
-MESH_TARGETS = ("pi4", "r1000")
+#   lab   = benchtop OTBR on the dev PC (SONOFF ZBDongle-E RCP in WSL2, ch11) —
+#           now a FULL target: its own self-contained ThingsBoard at
+#           127.0.0.1:8080 (see MESH_TO_EDGE["lab"] and tools/lab_tb/);
+#           overlays/lab.conf.
+MESH_TARGETS = ("pi4", "r1000", "lab")
 DEFAULT_MESH = "r1000"  # production default — pi4 kept as legacy/optional
 
 

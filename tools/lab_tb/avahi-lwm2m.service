@@ -1,0 +1,62 @@
+<?xml version="1.0" standalone='no'?><!--*-nxml-*-->
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+
+<!--
+  avahi-lwm2m.service — FALLBACK discovery path for the LAB bench.
+  Install to: /etc/avahi/services/lwm2m-thingsboard.service
+
+  ONLY use this when `ot-ctl srp client state` answers "Error 35: InvalidCommand",
+  i.e. otbr-agent was built without OT_SRP_CLIENT=ON so it cannot register the
+  record into its own SRP server. The primary path is
+      python tools/lab_tb/lab_tb_srp.py publish
+  which puts the record straight in `ot-ctl srp server service`.
+
+  *** NEVER RUN BOTH AT ONCE ***
+  The OTBR's Advertising Proxy already mirrors every SRP registration out to
+  mDNS. Adding this file on top publishes a SECOND "ThingsBoard-Edge" instance
+  on the same link; avahi resolves the collision by renaming ours to
+  "ThingsBoard-Edge #2", which no longer matches SRV_INSTANCE_LABEL in
+  src/lwm2m_discover.c:24 and breaks discovery in a way that looks like a
+  firmware bug.
+
+  HOW THIS REACHES A THREAD NODE
+    avahi publishes _lwm2m._udp.local on the infra link (eth0 in WSL); the
+    OTBR's *Discovery Proxy* answers the node's query for
+    _lwm2m._udp.default.service.arpa. by browsing mDNS and translating the
+    names back into the Thread domain. That requires otbr-agent to have been
+    built with OTBR_DNSSD_DISCOVERY_PROXY=ON. There is no runtime switch, so
+    probe it empirically after installing:
+        ot-ctl dns browse _lwm2m._udp.default.service.arpa.
+    NXDOMAIN / "Error 25: NotFound" here means the proxy is not compiled in and
+    this path cannot work — rebuild otbr-agent, or fix the SRP-client path.
+
+  THE HOST RECORD IS THE OTHER HALF
+    <host-name> below points at thingsboard-edge.local, which avahi does not own.
+    Its AAAA must be published separately, and it MUST be the wpan0 OMR address
+    (not eth0's) or the node will resolve an address it cannot route to. Add it
+    to /etc/avahi/hosts and restart avahi-daemon:
+        echo "<OMR-address> thingsboard-edge.local" >> /etc/avahi/hosts
+        systemctl restart avahi-daemon
+    `python tools/lab_tb/lab_tb_srp.py install-avahi` does both steps and fills in
+    the OMR address it reads live from ot-ctl.
+
+  The port MUST match the ThingsBoard LwM2M transport bind port. 5683 is not
+  negotiable: src/lwm2m_discover.c:22,148 hardcodes it on the host-AAAA path.
+-->
+
+<service-group>
+
+  <!-- Service instance label. MUST equal SRV_INSTANCE_LABEL in
+       src/lwm2m_discover.c:24. replace-wildcards="no" keeps avahi from
+       substituting the machine name into it. -->
+  <name replace-wildcards="no">ThingsBoard-Edge</name>
+
+  <service protocol="any">
+    <type>_lwm2m._udp</type>
+    <port>5683</port>
+    <!-- Target of the SRV record. Resolved from /etc/avahi/hosts, which must
+         map it to the wpan0 OMR address. -->
+    <host-name>thingsboard-edge.local</host-name>
+  </service>
+
+</service-group>

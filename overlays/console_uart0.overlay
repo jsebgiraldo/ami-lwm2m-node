@@ -1,0 +1,29 @@
+/*
+ * LAB BENCH ONLY — redirect the Zephyr console + shell OFF the native
+ * USB-Serial-JTAG onto hardware UART0, so bench logs come out a wire that
+ * ALWAYS drains (no host-backpressure), and so the USB-JTAG variable is removed
+ * from the FNB stability tests.
+ *
+ * UART0 on this board: TX = GPIO16 (XIAO D6), RX = GPIO17 (XIAO D7), 115200 8N1.
+ * These pins are free (RS485 = D4/D5/D2, RF switch = GPIO3/14, LED = GPIO15,
+ * SPI = GPIO18/19/20) and are NOT ESP32-C6 strapping pins. uart0 is already
+ * status="okay" with pinctrl in the board DTS, so only the chosen override is
+ * needed here.
+ *
+ * Do NOT ship this to the fleet (leave it a lab overlay). Read logs with a
+ * USB-TTL adapter: adapter RX <- D6/GPIO16, adapter TX -> D7/GPIO17, GND<->GND.
+ *
+ * Build (build_firmware.py doesn't forward DTC overlays — use west directly):
+ *   cd C:/Users/jsgir/Documents/ESP32/zephyrproject
+ *   west build -p always -b xiao_esp32c6/esp32c6/hpcore \
+ *     C:/Users/jsgir/Documents/UNAL/Unal-Flash-tool/firmware/ami-lwm2m-node \
+ *     --build-dir build_med_lab -- \
+ *     -DEXTRA_CONF_FILE="overlays/med.conf;overlays/lab.conf" \
+ *     -DEXTRA_DTC_OVERLAY_FILE="overlays/console_uart0.overlay"
+ */
+/ {
+	chosen {
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+	};
+};
