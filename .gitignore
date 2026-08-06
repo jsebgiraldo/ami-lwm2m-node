@@ -236,3 +236,12 @@ tools/lab_e2e_history.csv
 tools/lab_dashboard_live.html
 tools/lab_dashboard_served.html
 tools/lab_nodes.json
+
+# ---- per-version build artefacts (tools/archive_build.py) ----
+# ELFs are ~10 MB each and git is the wrong store for them, but they MUST be
+# kept somewhere retrievable: RIDs 40/41 report raw mepc/ra and resolving them
+# needs the exact ELF of the build that was running (docs/PENDIENTES.md 2.2).
+# The manifest is tracked so we at least know which hashes existed.
+build_archive/*/zephyr.elf
+build_archive/*/zephyr.bin
+build_archive/*/.config
