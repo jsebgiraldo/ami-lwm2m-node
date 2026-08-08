@@ -96,8 +96,17 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
  * starves the boot watchdog, OT bring-up verifies state instead of swallowing
  * OT_ERROR_INVALID_STATE, log-thread priority pinned). A new number on purpose:
  * two different binaries must never share a version string, or the mepc/ra
- * addresses in RIDs 39-41 get resolved against the wrong ELF. */
+ * addresses in RIDs 39-41 get resolved against the wrong ELF.
+ *
+ * That rule bites immediately here: CONFIG_AMI_TEST_FAULT=y adds the `ami test
+ * panic` command, which shifts every address in the image. A fault-injection
+ * build therefore carries its own version, so archive_build.py --resolve picks
+ * the ELF that actually produced the mepc it is being asked to translate. */
+#ifdef CONFIG_AMI_TEST_FAULT
+#define CLIENT_FIRMWARE_VER     "0.7.19-fault"
+#else
 #define CLIENT_FIRMWARE_VER     "0.7.19-ami"
+#endif
 #define CLIENT_HW_VER           "1.0"
 
 /* Endpoint name built at runtime from MAC — e.g. "ami-esp32c6-2434" */
@@ -2297,11 +2306,64 @@ static int cmd_ami_test_all(const struct shell *sh, size_t argc, char **argv)
 	return overall;
 }
 
+#ifdef CONFIG_AMI_TEST_FAULT
+/* ================================================================
+ * ami test panic <kind> CONFIRM — deliberate fault injection (BENCH ONLY)
+ *
+ * The panic forensics added in v0.7.18 (Object 33000 RIDs 39/40/41 = reason,
+ * mepc, ra) are only worth trusting once someone has crashed a node ON PURPOSE
+ * at a known source line and confirmed addr2line resolves mepc to exactly that
+ * line. docs/PENDIENTES.md 2.2 asks for precisely that check; this is the
+ * trigger that makes it possible.
+ *
+ * `null` is the important kind: a store to address 0 raises a CPU exception, so
+ * the handler receives a populated stack frame and mepc points at the faulting
+ * instruction below. `oops`/`panic` take the software paths — `panic` in
+ * particular hands the handler a NULL esf, which is the case the NULL-guard in
+ * the fatal handler exists for, so it is worth exercising too.
+ *
+ * Gated behind CONFIG_AMI_TEST_FAULT (default n) and requires the literal
+ * argument CONFIRM: this must never be reachable on a fleet node.
+ * ================================================================ */
+static int cmd_ami_test_panic(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc < 3 || strcmp(argv[2], "CONFIRM") != 0) {
+		shell_print(sh, "usage: ami test panic <null|oops|panic> CONFIRM");
+		shell_print(sh, "  crashes the node on purpose; check RID 37 == 11 "
+			    "and RIDs 39/40/41 after it reboots");
+		return -EINVAL;
+	}
+
+	shell_print(sh, "crashing on purpose (%s) ...", argv[1]);
+	k_msleep(120);   /* let the shell flush before the world ends */
+
+	if (strcmp(argv[1], "oops") == 0) {
+		k_oops();
+	} else if (strcmp(argv[1], "panic") == 0) {
+		k_panic();          /* esf == NULL — exercises the guard */
+	} else {
+		/* Store to address 0. The instruction below is what mepc must
+		 * resolve to; keep it on its own line so the addr2line result is
+		 * unambiguous. volatile so the compiler cannot elide it. */
+		volatile uint32_t *nullp = (volatile uint32_t *)0;
+
+		*nullp = 0xDEADBEEFU;   /* <-- mepc should point HERE */
+	}
+	shell_print(sh, "still alive — the fault did not take");
+	return 0;
+}
+#endif /* CONFIG_AMI_TEST_FAULT */
+
 SHELL_STATIC_SUBCMD_SET_CREATE(ami_test_cmds,
 	SHELL_CMD(thread, NULL, "Test Thread network attachment", cmd_ami_test_thread),
 	SHELL_CMD(lwm2m,  NULL, "Test LwM2M server registration", cmd_ami_test_lwm2m),
 	SHELL_CMD(dlms,   NULL, "Trigger DLMS poll and report readings", cmd_ami_test_dlms),
 	SHELL_CMD(all,    NULL, "Run all tests", cmd_ami_test_all),
+#ifdef CONFIG_AMI_TEST_FAULT
+	SHELL_CMD_ARG(panic, NULL,
+		      "BENCH ONLY: crash on purpose — panic <null|oops|panic> CONFIRM",
+		      cmd_ami_test_panic, 2, 1),
+#endif
 	SHELL_SUBCMD_SET_END
 );
 

@@ -20,7 +20,7 @@ Referencias: `docs/BENCH_FINDINGS_2026-08.md` (lo medido) y `docs/PENDIENTES.md`
 | **Sniffer 802.15.4 propio** | ✅ | `tools/sniffer/` (app Zephyr para C6) + `tools/sniffer_capture.py` |
 | **Placas XIAO ESP32-C6** | ✅ ~30 | Flota + banco |
 | PC Windows + WSL2 | ✅ | OTBR nativo + ThingsBoard en docker |
-| Regleta AGEEN | ⚠️ sin verificar | Protocolo desconocido. Si es Tuya/SmartLife → control local con `tinytuya` (ya instalado). Ver §4 |
+| **Hub AGEEN 16 puertos** (B0F2NYJSX3) | ✅ pero **no automatizable** | USB 3.2 Gen 2, 16 puertos, alimentado, con **interruptor físico por puerto**. NO es una regleta inteligente: sin Tuya/Matter/Alexa, sin API. Los interruptores son mecánicos → sirven para aislar a mano, no para que un script haga power-cycle. Ver §4 |
 
 ---
 
@@ -56,11 +56,20 @@ cada recuperación necesitó una mano.
 🚨 **La trampa más cara de esta lista:** muchísimos hubs anuncian
 *"per-port power switching"* y **no lo implementan**.
 
-**Procedimiento obligatorio:**
-1. Abrir `github.com/mvp/uhubctl` → sección **"Compatible USB hubs"**
-2. Elegir un modelo **de esa tabla**
-3. Buscar en Amazon **ese modelo Y esa revisión** (la revisión importa: el mismo
-   modelo en otra revisión puede no funcionar)
+**Modelo recomendado: `Plugable USB3-HUB7BC`** (7 puertos, está en la lista de
+compatibilidad y se consigue hoy en Amazon).
+
+⚠️ **NO comprar el `USB3-HUB7C`** — es casi el mismo nombre y el README de
+uhubctl advierte que en ese *"solo funciona en 2 puertos de carga"*.
+
+Alternativa: `D-Link DUB-H7` **revisión D o E (carcasa negra)**. Las revisiones
+**B, C, F y G no funcionan** — mismo modelo, distinto silicio. Si el anuncio no
+dice la revisión, no lo compres.
+
+Por qué importa tanto: el propio README de uhubctl explica que un hub que
+anuncia conmutación por puerto sin implementarla *"corta la conexión de datos
+USB pero no puede apagar la alimentación"* — que es justo lo que necesitamos.
+La regla es verificar **corte real de VBUS**, no lo que dice la caja.
 
 ---
 
@@ -90,22 +99,27 @@ cada recuperación necesitó una mano.
 
 ---
 
-## 4. La regleta AGEEN — verificar antes de comprar nada más
+## 4. El AGEEN de 16 puertos — resuelto: no sustituye al hub PPPS
 
-Un escaneo Tuya de la LAN (`python -m tinytuya scan`) encontró **0
-dispositivos**, pero el **Wi-Fi del PC estaba desconectado** (`169.254.x`) y la
-regleta es Wi-Fi, así que **no es concluyente**.
+Se creyó por un tiempo que era una **regleta inteligente** y se llegó a escanear
+la LAN con `tinytuya` buscándola (0 dispositivos, además con el Wi-Fi del PC
+caído). La ficha del producto lo aclara: es un **hub USB 3.2 Gen 2 de 16
+puertos, alimentado, con interruptor mecánico por puerto**. Sin app, sin Tuya,
+sin Matter, **sin API**.
 
-Para decidir hace falta saber: **con qué app se maneja**.
+Consecuencias prácticas:
 
-- **Smart Life / Tuya** → control **local** con `tinytuya` (ya instalado). Hace
-  falta crear cuenta en Tuya IoT Platform, vincular la app y obtener
-  `device ID` + `local key`. Rápido y scriptable
-- **Solo Alexa/Google** → requiere nube; lento y frágil para automatizar
+- ✅ **Sí sirve** para dar corriente a muchos nodos y para aislar uno a mano
+- ❌ **No sirve** para que un script haga power-cycle → no reemplaza al
+  `Plugable USB3-HUB7BC` de §2.3
+- ⚠️ **Cuidado con el presupuesto de corriente**: 16 puertos no significan 16
+  nodos. El inrush medido es **246.9 mA por nodo**; lo que manda es cuántos
+  amperios entrega la fuente del hub, no cuántos conectores tiene
 
-**Si funciona, sustituye al hub PPPS** para el caso "reproducir *se cayó la
-regleta*": arranque simultáneo de N nodos, que es el escenario que el
-`BENCH_FINDINGS` §1 identifica como el disparador real del colapso.
+**Sigue haciendo falta** una forma programable de cortar energía para reproducir
+el escenario que `BENCH_FINDINGS` §1 señala como disparador real del colapso:
+**el arranque simultáneo de N nodos**. Hoy eso lo cubre el PPK2 para *un* nodo;
+para varios hace falta el hub PPPS.
 
 ---
 
