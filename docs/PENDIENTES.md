@@ -157,13 +157,63 @@ independiente.
 
 ### Pendiente
 
-- [ ] **Validar en banco antes de tocar la flota.** Flashear 0.7.18 con
-      `--erase-all`, provocar un panic, comprobar `RID 37 = 11` y `RIDs 39/40/41`
-      no nulos, y **pasar `mepc` por `addr2line` verificando que cae en la línea
-      que se provocó**. Sin ese último paso no hay garantía de que las
-      direcciones sirvan.
+- [x] **Validado en banco 2026-08-07 — y la validación encontró que la función
+      no servía.** Ver §2.5. Cerrado en `0.7.20`; `mepc` resuelto a la línea
+      exacta con `0.7.21-fault`.
 - [ ] Extraer el coredump de la partición y abrirlo con GDB vía
       `zephyr/scripts/coredump/coredump_gdbserver.py`.
+
+### 2.5 La validación de §2.2 encontró la función muerta (2026-08-07)
+
+Provocar un fallo a propósito exigió añadir `ami test panic <kind> CONFIRM`
+(`CONFIG_AMI_TEST_FAULT`, por defecto `n`, jamás en imagen de flota). Con eso, el
+resultado sobre `0.7.19`:
+
+| | medido |
+|---|---|
+| salida por consola tras el fallo | **cero bytes**, 22 s |
+| reinicio | **`TG0_WDT`** — nunca llegó a `sys_reboot` |
+| arranque siguiente | `WDT=1`, **sin registro de panic** |
+| RIDs 37 / 39 / 40 / 41 | **vacíos** |
+
+Reproducible dos veces. **Causa**: `LOG_PANIC()` era la primera línea de
+`k_sys_fatal_error_handler`. El logging diferido drena por un backend UART por
+interrupciones; en contexto de fallo las interrupciones están bloqueadas, ese
+drenaje no puede completarse y el `LOG_PANIC()` gira para siempre — arrastrando
+consigo la escritura del tag, el código de reinicio y el `sys_reboot`.
+
+Es decir: **un nodo que reventaba en campo quedaba indistinguible de un nodo
+ausente**, que es el síntoma crónico de la flota.
+
+**Arreglo (`0.7.20`)**: las escrituras a RAM retenida van primero — son almacenes
+planos, no pueden bloquearse — y el logging queda como cortesía posterior. Aunque
+el drenaje vuelva a colgarse, el reset por watchdog encuentra el tag completo.
+
+Verificado sobre hardware con `0.7.21-fault`:
+
+```
+<err> os:  mcause: 2, Illegal instruction
+<err> os:    mepc: 42001284
+<err> ami_lwm2m: FATAL panic (reason=0) mepc=0x42001284 ra=0x4200127c
+rst:0xc (SW_CPU)                                    <- reinicio limpio
+<wrn> ami_lwm2m: panic site: reason=0 mepc=0x42001284 ra=0x4200127c
+$ python tools/archive_build.py --resolve 0x42001284 0x4200127c --version 0.7.21-fault
+cmd_ami_test_panic at src/main.c:2386               <- la linea provocada
+```
+
+**Dos trampas sobre la inyección de fallos, que valen para cualquier validación
+futura de este tipo:**
+
+- **Escribir en la dirección 0 no genera excepción en este ESP32-C6.** El núcleo
+  acaba en un manejador del ROM (`Saved PC` en `0x4002xxxx`) y se cuelga hasta que
+  el watchdog lo rescata. No llega al camino de fallos de Zephyr, así que no
+  sirve para validar nada.
+- **`k_oops()` es un `ecall`** y el compilador lo atribuye a la sentencia
+  *siguiente*: su `mepc` cae una línea corrida. Prueba la cadena, no la
+  precisión.
+
+Por eso el tipo a usar es `illegal` (instrucción ilegal): la especificación
+RISC-V garantiza `mcause=2` con `mepc` apuntando **a** la instrucción.
 
 ---
 

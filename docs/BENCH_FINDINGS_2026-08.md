@@ -338,15 +338,62 @@ power-cycle, ni el modo download por ROM, ni bajar el baudrate lo resuelven —
 lo que sí funcionó fue **cambiar de puerto USB físico**. Para operar, el nodo
 puede quedarse en el FNB: habla por Thread y el USB-JTAG colgado no molesta.
 
+**Flasheo, la explicación real (2026-08-07).** Lo anterior describe el síntoma;
+la causa se aisló midiendo, y son *dos* fallos distintos que se parecían:
+
+- `PermissionError(31)` **al conectar** = el ESP32-C6 usa USB **nativo**. Al
+  resetearse para entrar en modo descarga, el dispositivo USB desaparece y
+  vuelve a enumerar, así que el handle abierto de esptool queda inválido.
+- `Write timeout` **con el puerto abierto** = con la consola movida a UART0
+  (`overlays/console_uart0.overlay`) **nadie lee ni escribe el USB-CDC**, el
+  búfer se llena y toda escritura expira. Es comportamiento esperado, no avería.
+
+Y el hallazgo que importa: **el USB nativo no sostiene la transferencia masiva**.
+Con stub muere tras el primer bloque de 16 KB; sin stub, tras el tercero de 1 KB.
+Determinista, con dos cables distintos — no es el cable.
+
+**La receta que sí funciona, y sin tocar botones:**
+
+```bash
+# 1) el USB dispara el reset a modo descarga (basta con que entre; puede reportar error)
+python -m esptool --chip esp32c6 --port <USB> --after no-reset flash-id
+# 2) el ROM escucha TAMBIEN en UART0 -> la escritura va por el FTDI, donde es fiable
+python -m esptool --chip esp32c6 --port <FTDI> --before no-reset --after no-reset \
+    write-flash --erase-all --flash-mode dio --flash-freq 80m --flash-size 4MB 0x0 zephyr.bin
+```
+
+33.9 s con hash verificado. El paso 1 es inestable (hizo falta repetirlo hasta 5
+veces); conviene envolverlo en un bucle. Alternativa manual siempre válida:
+mantener **BOOT hundido en el instante en que llega la energía** — no antes, no
+después — y flashear por UART0.
+
+**Lo que NO funciona:** meter el chip en modo descarga por software escribiendo
+`LP_AON_FORCE_DOWNLOAD_BOOT` (bit 30 de `LP_AON_SYS_CFG_REG`). Se probó: el nodo
+queda mudo, esptool no sincroniza por ninguna vía y hace falta cortar la
+alimentación para revivirlo. El comando se escribió y se retiró; el porqué queda
+anotado en `src/main.c` para que nadie lo reintente.
+
+**El PPK2 corta la alimentación del DUT cada vez que una sesión nueva reclama el
+instrumento.** Cualquier script que lo abra —aunque sea sólo para medir— hace un
+power-cycle silencioso del nodo. Eso destruye todo lo que dependa de estado que
+sobrevive: la forensia de panic en RAM retenida, un chip aparcado en el ROM, un
+soak de uptime. Se perdieron varias medidas por esto antes de detectarlo. Ahora
+`tools/lab_ppk2_hold.py` mantiene la sesión abierta y la salida encendida; nada
+más debe abrir el PPK2 mientras corre.
+
 ---
 
 ## 5. Qué queda abierto
 
-- [ ] **Validar la forensia de panic (RIDs 39-41).** Requiere consola: provocar
-      un panic, comprobar `RID 37 = 11`, y **pasar `mepc` por `addr2line`
-      verificando que cae en la línea provocada**. Sin ese último paso no hay
-      garantía de que las direcciones sirvan. `tools/archive_build.py` ya guarda
-      el ELF por versión, que es el requisito duro.
+- [x] **Forensia de panic (RIDs 39-41) — VALIDADA 2026-08-07, y estaba muerta.**
+      `LOG_PANIC()` abría el manejador de fallos y se colgaba en contexto de
+      excepción, así que nunca se estampaba el sitio del crash ni se llegaba al
+      `sys_reboot`: el nodo se colgaba 22 s hasta que el watchdog lo rescataba,
+      sin dejar rastro. Un nodo reventado se veía igual que un nodo ausente.
+      Arreglado en `0.7.20` (evidencia primero, logging después) y verificado
+      con `0.7.21-fault`: `mepc` resuelve a la línea exacta provocada. Detalle
+      completo y las dos trampas de inyección de fallos en
+      `docs/PENDIENTES.md` §2.5.
 - [ ] **Extraer el coredump** de la partición y abrirlo con
       `zephyr/scripts/coredump/coredump_gdbserver.py`.
 - [ ] **`ISR0` al 100 %** (0 de 8192 B sin tocar, con `CONFIG_INIT_STACKS=y`, o
