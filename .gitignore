@@ -246,3 +246,6 @@ build_archive/*/zephyr.elf
 build_archive/*/zephyr.bin
 build_archive/*/.config
 tools/lab_soak_*.csv
+# PPK2 captures: ~42M samples each (hundreds of MB) — data, not source
+tools/lab_ppk2_*.csv
+tools/lab_ppk2_*.log

@@ -70,11 +70,45 @@ Sustenta directamente `PENDIENTES.md` §1: la cohorte que murió con 27-61 s de
 uptime murió durante el REGISTER inicial, y pasar de 11 a 22 observaciones
 duplicó esa ráfaga.
 
+### Revisión con el PPK2 (2026-08-07) — el inrush, no el REGISTER
+
+Repetida la medición con un Nordic PPK2 a **~100 kHz** (900× el FNB),
+alimentando la placa en modo source-meter con **el USB desconectado**. Mismo
+punto de medida (bus de 5 V), 9.0 M de muestras:
+
+| | mA @ 5 V |
+|---|---|
+| idle (mediana) | **52.4** (el FNB decía 55.5 — los dos instrumentos se corroboran) |
+| ráfaga de radio TX | **~167** |
+| **inrush de encendido** | **246.9** ← el evento mayor de todos |
+
+**Corrección:** se había dicho que 262 mA era un *piso*. No lo era — el FNB leía
+un ~6 % **de más**, y el pico real es 246.9 mA. El FNB era más exacto de lo que
+se le atribuyó.
+
+**Aritmética corregida (host USB-2.0, 500 mA):** en reposo caben 9 nodos; con
+ráfagas de radio simultáneas (167 mA), 3; **con inrush de encendido simultáneo
+(246.9 mA), 2** — 494 mA, justo en el borde; tres suman 741 mA y se pasa.
+
+**El inrush es la restricción vinculante, no el REGISTER.** Eso reencuadra la
+§1 de `PENDIENTES.md`: el momento peligroso es el **encendido masivo**, antes de
+que ningún nodo alcance a registrar — consistente con la cohorte que murió con
+27-61 s de uptime tras un evento colectivo.
+
+Medido también en el riel de 3.3 V: los picos son ~227 mA en **todas** las fases
+(es el techo de TX del hardware, una constante), mientras el inrush llega a
+331 mA. Lo que cambia con el registro es la **densidad** de ráfagas (~10× la de
+estado estable: 0.22 % vs 0.02 % de muestras), **no su altura**.
+
+Herramienta: `tools/lab_ppk2_capture.py` — 100 kHz, alimenta el DUT, etiqueta
+cada muestra con la fase del firmware leyendo la consola en el mismo reloj, y
+hace **power-cycle por software** (POR verificado). Con el USB desenchufado el
+USB-Serial-JTAG nunca enumera, lo que además elimina los cuelgues de flasheo.
+
 ### Salvedades honestas
 
-- El FNB muestrea a ~100 Hz: **no resuelve transitorios <10 ms**, así que
-  262 mA es un **piso** del pico real, no un techo. El PPK2 (100 kHz) es el
-  instrumento correcto para la forma del transitorio.
+- El FNB muestrea a ~100 Hz: **no resuelve transitorios <10 ms**. Sirve para
+  medias y para vigilancia continua; para picos, usar el PPK2.
 - El medidor emite muestras basura ocasionales, CRC válido incluido (se
   observaron exactamente 1290 / 2097 / 8388 mA contra un piso de 55 mA). Las dos
   herramientas rechazan todo lo que supere 8× la mediana. **Nunca citar un `max`
