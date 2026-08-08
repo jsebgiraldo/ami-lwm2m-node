@@ -119,6 +119,56 @@ muestra etiquetada con la fase del firmware) y `tools/lab_burst_analyze.py`.
 
 ---
 
+## 1bis. El voltaje de muerte, y por qué un nodo en brownout es invisible
+
+`PENDIENTES.md` §1 pedía el voltaje al que un nodo realmente muere. Hacía falta
+una fuente programable; el PPK2 lo es. Barrido sobre **VSYS**, con power-cycle en
+cada paso (`tools/lab_voltage_sweep.py --mode boot`):
+
+| VSYS | resultado | I mediana | I pico |
+|---|---|---|---|
+| 5000 mV | arranca y corre | 52.8 mA | 242.9 mA |
+| 4000 mV | arranca y corre | 71.3 | 312.1 |
+| **3200 mV** | **arranca y corre — el mínimo** | 69.5 | 320.6 |
+| **3100 mV** | **bucle de brownout** (237 arranques / 35 s) | — | — |
+| 3000 mV | bucle de brownout (625 / 40 s ≈ 15 por segundo) | 23.8 | 108.1 |
+| ≤2800 mV | muerto | 0.4 | — |
+
+**El precipicio es filoso: entre 3100 y 3200 mV.** Desde los 5 V nominales eso
+es un 36 % de caída antes de que algo falle — el SoC es robusto; lo frágil es lo
+que pasa *después*.
+
+### La corriente SUBE cuando la tensión baja
+
+52.8 → 69.5 mA de mediana y 243 → 321 mA de pico al ir de 5000 a 3200 mV. La
+placa lleva un conversor **buck**, no un LDO: mantiene la potencia constante.
+**Es realimentación positiva** — un riel compartido que se hunde hace que cada
+nodo consuma *más*, hundiéndolo más. Junto con el inrush de 246.9 mA (dos nodos
+= 494 mA de un host de 500 mA), da un mecanismo completo y medido del colapso
+por encendido masivo.
+
+### Un nodo en brownout es forensicamente MUDO
+
+En el bucle, el ROM imprime `rst:0xf (LP_BOD_SYS)` en cada reinicio: **el
+detector de brownout del hardware sí dispara**. Pero a ~15 arranques por segundo
+el nodo **nunca alcanza el código de aplicación**. No registra, no emite
+telemetría, no imprime su propia línea de `Reset cause`. A lo largo de ~862
+arranques por brownout, `total_resets` avanzó solo ~120: el contador no puede
+contar lo que nunca llega a la escritura en NVS. Y en el arranque limpio de
+recuperación el firmware reporta `POR=1, BROWNOUT=0` — **ningún rastro**.
+
+**Para el servidor ese nodo es indistinguible de "ausente"** — el síntoma
+crónico de la flota.
+
+Esto refina §1: subir el umbral del BOD (`LVL_7 = 2.51 V`, por debajo del punto
+real de falla ~3.15 V) sirve para que **la primera caída** sea reportable, pero
+una vez arrancado el bucle **nada en el firmware puede reportar nada**. El
+rastro duradero es **`boot_burst` (RID 34)** — que sobrevive en NVS y es la
+huella de una tormenta de brownout pasada. Este nodo de banco cargaba
+`boot_burst = 184` de exactamente esa historia, y **solo se volvió visible en
+ThingsBoard tras el trabajo del modelo de 42 RIDs y el recorte de observes**
+(§3).
+
 ## 2. Dos bugs de firmware que dejaban nodos muertos
 
 ### 2.1 El throttle de boot-burst mataba de hambre al watchdog de arranque
