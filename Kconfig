@@ -605,6 +605,27 @@ config AMI_MESH_LAB
 
 endchoice
 
+config AMI_TEST_FAULT
+	bool "Bench-only: shell command that deliberately crashes the node"
+	default n
+	help
+	  Compiles `ami test panic <kind>`, which provokes a real fault so the
+	  panic forensics can be VALIDATED rather than assumed.
+
+	  v0.7.18 captures the faulting PC as Object 33000 RIDs 39-41 (reason,
+	  mepc, ra) for addr2line. Those addresses are only trustworthy once
+	  somebody has crashed a node ON PURPOSE at a known source line and
+	  confirmed addr2line resolves mepc to exactly that line — the check
+	  docs/PENDIENTES.md 2.2 asks for. Without a way to trigger a fault you
+	  can only wait for a field crash and hope the numbers mean something.
+
+	  Kinds: `null` (store to address 0 -> CPU exception, the only kind that
+	  carries a full stack frame), `oops` (k_oops) and `panic` (k_panic,
+	  whose esf is NULL — useful precisely to test that guard).
+
+	  Requires the literal argument CONFIRM, and is default n so it is never
+	  built into a fleet image. Enable it in a bench overlay only.
+
 config AMI_LED_QUIET_MODE
 	bool "Production-quiet LED mode"
 	default n
