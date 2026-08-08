@@ -249,3 +249,4 @@ tools/lab_soak_*.csv
 # PPK2 captures: ~42M samples each (hundreds of MB) — data, not source
 tools/lab_ppk2_*.csv
 tools/lab_ppk2_*.log
+tools/lab_vsweep_*.csv
