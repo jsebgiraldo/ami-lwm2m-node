@@ -102,10 +102,13 @@ SYS_INIT(boot_pre_kernel, PRE_KERNEL_1, 0);
  * panic` command, which shifts every address in the image. A fault-injection
  * build therefore carries its own version, so archive_build.py --resolve picks
  * the ELF that actually produced the mepc it is being asked to translate. */
+/* 0.7.20 = 0.7.19 + the fatal-handler ordering fix (stamp the crash site before
+ * LOG_PANIC, which can hang under deferred logging — see
+ * k_sys_fatal_error_handler). */
 #ifdef CONFIG_AMI_TEST_FAULT
-#define CLIENT_FIRMWARE_VER     "0.7.19-fault"
+#define CLIENT_FIRMWARE_VER     "0.7.21-fault"
 #else
-#define CLIENT_FIRMWARE_VER     "0.7.19-ami"
+#define CLIENT_FIRMWARE_VER     "0.7.21-ami"
 #endif
 #define CLIENT_HW_VER           "1.0"
 
@@ -548,27 +551,45 @@ void ami_reboot_drain(int reboot_type, const char *reason)
  */
 void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 {
-	LOG_PANIC();   /* flush any pending log records */
-
-	/* v0.7.18: stamp the crash site BEFORE anything else can fault again.
-	 * esf is NULL for panics raised outside an exception context (e.g. a
-	 * plain k_panic()), so guard it — a null deref here would recurse into
-	 * this very handler. */
+	/* v0.7.20: stamp the crash site FIRST — before logging, before anything
+	 * that can block. Bench-proven why (2026-08-07, `ami test panic`): with
+	 * LOG_PANIC() at the top of this handler, a deliberate crash produced
+	 * ZERO console output, never reached sys_reboot, and was rescued 22 s
+	 * later by TG0_WDT. The next boot reported WDT=1 and no panic record at
+	 * all — RIDs 37/39/40/41 stayed empty, so the whole v0.7.18 forensics
+	 * feature was silently inert.
+	 *
+	 * Cause: deferred logging (CONFIG_LOG_MODE_DEFERRED) drains through an
+	 * interrupt-driven UART backend. In fatal context interrupts are locked,
+	 * so that drain cannot complete and LOG_PANIC() spins forever — taking
+	 * every line below it with it.
+	 *
+	 * The ordering below is the fix: these stores are plain writes to retained
+	 * RAM and cannot block. Even if the logging that follows hangs again, the
+	 * watchdog reset still finds a fully populated tag, so the crash site
+	 * survives into the next boot instead of vanishing.
+	 *
+	 * esf is NULL for panics raised outside an exception context (e.g. a plain
+	 * k_panic()), so guard it — a null deref here would recurse into this very
+	 * handler. */
 	ami_panic_tag.magic  = AMI_PANIC_TAG_MAGIC;
 	ami_panic_tag.reason = (uint32_t)reason;
 	ami_panic_tag.mepc   = (esf != NULL) ? (uint32_t)esf->mepc : 0U;
 	ami_panic_tag.ra     = (esf != NULL) ? (uint32_t)esf->ra   : 0U;
-
-	LOG_ERR("FATAL panic (reason=%u) mepc=0x%08x ra=0x%08x: drain USB %dms "
-		"then sys_reboot COLD", reason, ami_panic_tag.mepc,
-		ami_panic_tag.ra, CONFIG_AMI_REBOOT_USB_DRAIN_MS);
+	ami_reboot_set_tag(11U);   /* v0.7.4: panic path (RID 37) */
 
 	/* Best-effort: persist the panic indicator. atomic_set is safe to call
 	 * from any context (single store, no scheduler interaction). */
 	atomic_set(&lwm2m_diag_last_error_code, (atomic_val_t)(-EFAULT));
 	atomic_set(&lwm2m_diag_last_error_uptime,
 		   (atomic_val_t)(uint32_t)(k_uptime_get() / 1000));
-	ami_reboot_set_tag(11U);   /* v0.7.4: panic path (RID 37) */
+
+	/* Everything forensic is now durable. Logging from here on is a
+	 * convenience for whoever has a console attached, never a prerequisite. */
+	LOG_PANIC();   /* flush any pending log records */
+	LOG_ERR("FATAL panic (reason=%u) mepc=0x%08x ra=0x%08x: drain USB %dms "
+		"then sys_reboot COLD", reason, ami_panic_tag.mepc,
+		ami_panic_tag.ra, CONFIG_AMI_REBOOT_USB_DRAIN_MS);
 
 	/* Busy-wait drain — interrupt-safe alternative to k_sleep().
 	 * k_busy_wait works even if interrupts are disabled by the panic path. */
@@ -2328,7 +2349,9 @@ static int cmd_ami_test_all(const struct shell *sh, size_t argc, char **argv)
 static int cmd_ami_test_panic(const struct shell *sh, size_t argc, char **argv)
 {
 	if (argc < 3 || strcmp(argv[2], "CONFIRM") != 0) {
-		shell_print(sh, "usage: ami test panic <null|oops|panic> CONFIRM");
+		shell_print(sh, "usage: ami test panic <illegal|oops|panic|null> CONFIRM");
+		shell_print(sh, "  use 'illegal' to verify addr2line — it is the only "
+			    "kind whose mepc lands on the intended line");
 		shell_print(sh, "  crashes the node on purpose; check RID 37 == 11 "
 			    "and RIDs 39/40/41 after it reboots");
 		return -EINVAL;
@@ -2341,17 +2364,50 @@ static int cmd_ami_test_panic(const struct shell *sh, size_t argc, char **argv)
 		k_oops();
 	} else if (strcmp(argv[1], "panic") == 0) {
 		k_panic();          /* esf == NULL — exercises the guard */
-	} else {
-		/* Store to address 0. The instruction below is what mepc must
-		 * resolve to; keep it on its own line so the addr2line result is
-		 * unambiguous. volatile so the compiler cannot elide it. */
+	} else if (strcmp(argv[1], "null") == 0) {
+		/* Kept for the record, but do NOT use it to verify addr2line
+		 * precision. Bench 2026-08-07: on this ESP32-C6 a store to
+		 * address 0 does not raise a CPU exception that reaches Zephyr —
+		 * the core ends up in a ROM handler (Saved PC in 0x4002xxxx) and
+		 * hangs there until TG0_WDT resets the chip. No fatal handler, no
+		 * forensics. Use `illegal` instead. */
 		volatile uint32_t *nullp = (volatile uint32_t *)0;
 
-		*nullp = 0xDEADBEEFU;   /* <-- mepc should point HERE */
+		*nullp = 0xDEADBEEFU;
+	} else {
+		/* `illegal` — THE kind to validate mepc precision against.
+		 *
+		 * Unlike k_oops() (an ecall, which the compiler attributes to the
+		 * following statement, so mepc lands on the wrong line) and unlike
+		 * the null store (no trap at all here), an illegal instruction is
+		 * guaranteed by the RISC-V spec to trap with mcause=2 and mepc
+		 * pointing AT the offending instruction. That makes the next line
+		 * the unambiguous addr2line target docs/PENDIENTES.md 2.2 asks for. */
+		__asm__ volatile ("unimp");   /* <-- mepc must resolve HERE */
 	}
 	shell_print(sh, "still alive — the fault did not take");
 	return 0;
 }
+
+/* ================================================================
+ * NOT IMPLEMENTED: "reboot into the ROM download mode by software"
+ *
+ * Reflashing this board costs a human — hold BOOT, apply power, release — so an
+ * `ami bootloader CONFIRM` command was written to do it in firmware, by setting
+ * LP_AON_SYS_CFG_REG bit 30 (LP_AON_FORCE_DOWNLOAD_BOOT, always-on domain, so it
+ * survives a reset) and rebooting.
+ *
+ * It was tried on the bench 2026-08-07 and REMOVED. Setting the bit and calling
+ * sys_reboot() did not land in the ROM loader: the node went silent, esptool
+ * could not sync on either transport, and it took a full power cycle to recover.
+ * Whatever the ROM checks, this is not sufficient on its own — and the failure
+ * mode is a dead board, which is a bad trade for saving a button press.
+ *
+ * The working button-free path lives outside the firmware: the native USB reset
+ * DOES put the chip in download mode (esptool over the USB port), and the ROM
+ * then listens on UART0 too, so the bulk write goes over the FTDI where it is
+ * reliable. See docs/BENCH_FINDINGS_2026-08.md.
+ * ================================================================ */
 #endif /* CONFIG_AMI_TEST_FAULT */
 
 SHELL_STATIC_SUBCMD_SET_CREATE(ami_test_cmds,
