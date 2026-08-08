@@ -1,9 +1,26 @@
 # AMI Fleet Deployment Runbook — 30 nodes (→ 60)
 
-**Sweet-spot firmware: `0.7.14-otacfm`** (commit baseline `18adbb1`). This is the
-validated production build: delivery-liveness gate, exact TX-byte telemetry
-(Obj 33000 RID 38), and — critically — **robust OTA (confirm-on-Thread-attach)**
-so updates don't roll back on a congested mesh.
+**Deploying now: `0.7.21-ami`** (bench-validated 2026-08-07). **Fleet is on
+`0.7.17-ami`.** `0.7.14-otacfm` remains the baseline whose 30-node 2-hour soak
+validated scaling to 60: delivery-liveness gate, exact TX-byte telemetry
+(Obj 33000 RID 38), and **robust OTA (confirm-on-Thread-attach)** so updates
+don't roll back on a congested mesh.
+
+### What `0.7.21` fixes, and why it is worth the rollout
+
+Every item below turns a node that dies *silently* into one that reports why.
+
+| Release | Fix |
+|---|---|
+| `0.7.19` | **Boot-burst throttle no longer starves the boot watchdog.** The two together were a *permanent* reboot loop — the node resets mid-throttle, counts another unstable boot, and repeats. OTA can never reach it; only erase-all clears the NVS counter. Prime suspect for the fleet's permanently-dead nodes |
+| `0.7.19` | **OT bring-up verifies its state** instead of swallowing `OT_ERROR_INVALID_STATE`, which left nodes with the radio disabled forever while logging "Thread started" |
+| `0.7.18` | Reboot-cause tags, crash-PC capture (RIDs 39-41), coredump to flash |
+| `0.7.20` | The fatal handler stamps the crash site **before** logging — it used to call `LOG_PANIC()` first, which hangs under deferred logging, so none of `0.7.18`'s forensics ever produced a record |
+
+⚠️ **Confirm-on-attach cuts both ways.** Since `0.7.14` the image is confirmed
+when Thread attaches, *not* after a successful REGISTER. A build that attaches
+but fails to register will therefore **stick — MCUboot will not revert it**.
+Deploy to a small, physically reachable group first.
 
 ---
 
@@ -12,7 +29,7 @@ so updates don't roll back on a congested mesh.
 | Knob | Value | Why |
 |---|---|---|
 | Firmware build | `build_prod` (ftd + resprobe_lwm2m + prod_fat) | canonical fat-production |
-| Version | `0.7.14-otacfm` | robust-OTA baseline |
+| Version | `0.7.21-ami` | robust-OTA baseline (`0.7.14`) + the silent-death fixes of `0.7.18`-`0.7.20` |
 | Router upgrade/downgrade | `10 / 12` (main.c:3000) | validated sweet spot; less router thrash |
 | MAX_CHILDREN | `32` per router | ~10 routers × 32 = ~320-node capacity |
 | OTA confirm | on Thread-attach | survives slow REGISTER on congested mesh |
@@ -33,8 +50,12 @@ PY="/c/Users/jsgir/Documents/ESP32/.venv/Scripts/python.exe"
 WS="/c/Users/jsgir/Documents/ESP32/zephyrproject"     # west workspace
 cd "/c/Users/jsgir/Documents/UNAL/Unal-Flash-tool/firmware/ami-lwm2m-node"
 ```
-- Pi4 OTBR up (PAN 0xEFEB, channel 25), SRP advertised. SSH root:root @192.168.8.111.
-- TB Edge up @192.168.8.111:8090 (tenant@thingsboard.org / tenant).
+- Pi4 OTBR up (PAN 0xEFEB, channel 25), SRP advertised. SSH root:root **@192.168.1.111**.
+- TB Edge up **@192.168.1.111:8090** (tenant@thingsboard.org / tenant).
+- `192.168.8.111` (R1000) is the **legacy** address — tools take `--mesh pi4` for
+  the active fleet, `--mesh r1000` only for the old one.
+- **No SRP advertised → nodes never find TB Edge.** After any OTBR restart:
+  `ot-ctl srp server enable` and re-publish the service.
 - **Out-of-tree Zephyr patch applied** (exact TX-byte hook) — see
   `tools/ZEPHYR_PATCHES.md`. Re-apply after any `west update`:
   ```bash
@@ -48,35 +69,87 @@ $PY tools/build_prod.py
 # artifact:
 BIN="$WS/build_prod/ami-lwm2m-node/zephyr/zephyr.signed.bin"   # the app (OTA)
 MCU="$WS/build_prod/mcuboot/zephyr/zephyr.bin"                 # mcuboot (USB only)
-# sanity:
-strings "$BIN" | grep -m1 0.7.14-otacfm
+```
+
+### Pre-flight — three checks, none optional
+
+```bash
+# 1. the version you think you are shipping
+strings "$BIN" | grep -m1 0.7.21-ami
+
+# 2. the fault-injection command must NOT be in a fleet image.
+#    CONFIG_AMI_TEST_FAULT compiles in `ami test panic`, which crashes the node
+#    on command. It defaults to n; this check exists because the cost of being
+#    wrong is a remote node anyone with shell access can kill.
+strings "$BIN" | grep -c "BENCH ONLY"        # MUST print 0
+grep -c "^CONFIG_AMI_TEST_FAULT=y" "$WS/build_prod/ami-lwm2m-node/zephyr/.config"   # MUST print 0
+
+# 3. archive the ELF — RIDs 40/41 report raw addresses, and resolving them needs
+#    the exact ELF of the build that was running. Skip this and a future crash
+#    report is unusable noise.
+$PY tools/archive_build.py --build-dir "$WS/build_prod/ami-lwm2m-node"
 ```
 
 ## 3. Deploy — TWO paths
 
-### Path A — Greenfield (fresh boards, USB) → joins mesh already on 0.7.14
-USB is unreliable on the SuperMini (host wedge). Single-shot, anti-wedge:
+### Path A — Greenfield (fresh boards, USB) → joins the mesh already on 0.7.21
+
 ```bash
-# space the boards ≥1 unit apart, connect to the hub, list their COM ports, then:
+# space the boards ≥1 unit apart, connect DIRECT to the PC (not clustered on a
+# hub: spread/direct/good-cables ≈ 100% success, hub-clustered ≈ 29%), then:
 $PY tools/flash_fleet_seq.py --coms COM19,COM20,COM21,... --build-dir build_prod
 ```
-- **Wedge** (`device not functioning` / 0 verified): power-cycle the board (unplug
-  USB) and re-run; if it re-wedges, **download-mode** = hold BOOT while replugging,
-  then re-run. RTS reset alone does NOT boot these.
-- After flash the board boots → attaches → registers on `0.7.14-otacfm`. No OTA needed.
+
+After flash the board boots → attaches → registers on `0.7.21-ami`. No OTA needed.
+
+#### When a board will not take the flash
+
+Two failures look alike and are not. Measured on the bench 2026-08-07:
+
+| Symptom | What it actually is |
+|---|---|
+| `PermissionError(31)` *while connecting* | The C6 uses **native USB**. Resetting into download mode makes the USB device drop and re-enumerate, so esptool's open handle dies. Not a broken cable |
+| `Write timeout` *on an open port* | With the console on UART0 **nothing reads the USB-CDC**, so the buffer fills. Expected, not a fault |
+| Transfer dies after 2-4 blocks | **Native USB does not sustain bulk writes.** Deterministic — same byte count on different cables. This one is not fixable by retrying |
+
+**The recipe that works** (two transports: USB resets, UART writes):
+
+```bash
+# 1) USB triggers the reset into download mode. May still print an error — fine.
+#    Flaky: loop it, it took 5 attempts once.
+$PY -m esptool --chip esp32c6 --port <USB_COM> --after no-reset flash-id
+
+# 2) the ROM also listens on UART0 → send the bulk write over the FTDI adapter
+$PY -m esptool --chip esp32c6 --port <FTDI_COM> --baud 115200 \
+    --before no-reset --after no-reset \
+    write-flash --erase-all --flash-mode dio --flash-freq 80m --flash-size 4MB \
+    0x0 build_prod/ami-lwm2m-node/zephyr/zephyr.bin
+```
+
+~34 s, hash verified. Needs a 3-wire FTDI on UART0 — `D6→RX`, `D7→TX`, `GND↔GND`
+(`overlays/console_uart0.overlay`).
+
+**Without an FTDI**, the manual fallback: **BOOT must be held at the instant
+power arrives** — not before, not after. Pressing it on an already-powered board
+does nothing. Hold BOOT, plug USB, wait 2 s, release, then flash with
+`--before no-reset`.
+
+Do **not** try to enter download mode in software via
+`LP_AON_FORCE_DOWNLOAD_BOOT` — it was tried and removed; the node goes silent and
+needs a power cut to revive.
 
 ### Path B — Update boards already on the mesh (older fw) → STAGED OTA
 **Never blast OTAs** — it congests the mesh and drops collateral nodes. Use the
 staged deployer (one node at a time, settle between, skip-current, resume-safe):
 ```bash
 # dry-run first: classify current / to-update / unreachable
-$PY tools/deploy_fleet_staged.py --version 0.7.14-otacfm --all --dry-run
+$PY tools/deploy_fleet_staged.py --version 0.7.21-ami --all --dry-run
 
 # then deploy (≈6 min/node + settle; 30 nodes ≈ 3–4 h — run + monitor):
-$PY tools/deploy_fleet_staged.py --version 0.7.14-otacfm --bin "$BIN" --all --settle 90
+$PY tools/deploy_fleet_staged.py --version 0.7.21-ami --bin "$BIN" --all --settle 90
 
 # subset / one node:
-$PY tools/deploy_fleet_staged.py --version 0.7.14-otacfm --bin "$BIN" \
+$PY tools/deploy_fleet_staged.py --version 0.7.21-ami --bin "$BIN" \
     --devices ami-esp32c6-1494 --settle 90
 ```
 Off-mesh nodes are flagged UNREACHABLE (can't OTA) → recover via Path A or power-cycle.
@@ -95,7 +168,7 @@ $PY tools/grafana_setup.py        # -> http://192.168.8.111:3000/d/ami-comms (ad
 $PY tools/fleet_audit.py
 ```
 **Green = success:** every flashed node streaming, RPC OK (~100 ms), 0 reboots after
-settle, version `0.7.14-otacfm`.
+settle, version `0.7.21-ami`.
 
 ## 5. Monitor — the scaling watch-items
 

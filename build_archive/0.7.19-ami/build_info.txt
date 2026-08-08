@@ -1,0 +1,5 @@
+version    : 0.7.19-ami
+archived   : 2026-08-05 21:45:53
+build_dir  : C:\Users\jsgir\Documents\ESP32\zephyrproject\build_med_lab
+elf sha256 : 83a4f1e4e156b899
+bin sha256 : 73c254a559ca5f2c

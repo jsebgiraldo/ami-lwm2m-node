@@ -18,6 +18,7 @@ import csv
 import glob
 import pathlib
 import statistics as st
+from lab_paths import captures_dir
 
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -48,8 +49,8 @@ def main() -> int:
                     help="FNB sample rate, for turning sample counts into seconds")
     args = ap.parse_args()
 
-    files = sorted(glob.glob(str(HERE / "fnb_power_*.csv"))
-                   + glob.glob(str(HERE / "lab_burst_fnb_*.csv")))
+    files = sorted(glob.glob(str(captures_dir() / "fnb_power_*.csv"))
+                   + glob.glob(str(captures_dir() / "lab_burst_fnb_*.csv")))
     if not files:
         print("no FNB captures found in tools/")
         return 1

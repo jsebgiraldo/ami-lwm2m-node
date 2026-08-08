@@ -34,6 +34,7 @@ import re
 import sys
 import threading
 import time
+from lab_paths import captures_dir
 
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -70,8 +71,8 @@ def main() -> int:
     from ppk2_api.ppk2_api import PPK2_API
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    csv_path = HERE / f"lab_ppk2_{stamp}.csv"
-    log_path = HERE / f"lab_ppk2_{stamp}.log"
+    csv_path = captures_dir() / f"lab_ppk2_{stamp}.csv"
+    log_path = captures_dir() / f"lab_ppk2_{stamp}.log"
 
     ppk = PPK2_API(args.ppk)
     ppk.get_modifiers()

@@ -25,6 +25,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import fleet_common as fc
 fc.bootstrap_venv()
 import requests
+from lab_paths import captures_dir
 requests.packages.urllib3.disable_warnings()
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -415,14 +416,14 @@ def main():
     s = collect(args.suffix)
     text_report(s)
     if not args.text:
-        hist_path = HERE / f"node_history_{args.suffix}.json"
+        hist_path = captures_dir() / f"node_history_{args.suffix}.json"
         try:
             hist = json.load(open(hist_path))
         except Exception:
             hist = []
         hist.append(s)
         json.dump(hist, open(hist_path, "w"), indent=0)
-        out_html = HERE / f"node_report_{args.suffix}.html"
+        out_html = captures_dir() / f"node_report_{args.suffix}.html"
         render(hist, out_html)
         print(f"history: {len(hist)} samples -> {hist_path.name} | dashboard -> {out_html.name}")
 

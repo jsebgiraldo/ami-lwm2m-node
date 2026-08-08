@@ -1,0 +1,5 @@
+version    : 0.7.20-fault
+archived   : 2026-08-07 21:42:04
+build_dir  : C:\Users\jsgir\Documents\ESP32\zephyrproject\build_med_lab
+elf sha256 : 04e0036bff225aeb
+bin sha256 : 8d02724c0ccb41c8

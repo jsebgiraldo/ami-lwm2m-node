@@ -33,6 +33,7 @@ import urllib.request
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import fleet_common as fc  # noqa: E402
+from lab_paths import captures_dir
 
 EP = "ami-esp32c6-3bb0"
 WATCH = ["total_resets", "watchdog_count", "boot_burst", "noreg_boots",
@@ -74,7 +75,7 @@ def main() -> int:
 
     host, port = fc.edge_for_mesh("lab")
     base = f"http://{host}:{port}"
-    out = HERE / f"lab_soak_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+    out = captures_dir() / f"lab_soak_{time.strftime('%Y%m%d_%H%M%S')}.csv"
     cols = ["t_min", "children", "keys"] + WATCH
     with out.open("w", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow(cols)

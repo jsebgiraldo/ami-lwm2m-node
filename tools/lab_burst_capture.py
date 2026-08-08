@@ -25,6 +25,7 @@ import subprocess
 import sys
 import threading
 import time
+from lab_paths import captures_dir
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -63,9 +64,9 @@ def main() -> int:
     import serial  # noqa: E402  (pyserial, present in the Zephyr venv)
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    csv_path = HERE / f"lab_burst_{stamp}.csv"
-    log_path = HERE / f"lab_burst_{stamp}.log"
-    fnb_csv = HERE / f"lab_burst_fnb_{stamp}.csv"
+    csv_path = captures_dir() / f"lab_burst_{stamp}.csv"
+    log_path = captures_dir() / f"lab_burst_{stamp}.log"
+    fnb_csv = captures_dir() / f"lab_burst_fnb_{stamp}.csv"
 
     # 1) FNB logger in the background, writing its own per-sample CSV.
     fnb = subprocess.Popen(

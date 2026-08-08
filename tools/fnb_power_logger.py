@@ -106,6 +106,7 @@ import sys
 import time
 import collections
 import statistics
+from lab_paths import captures_dir
 
 # ---------------------------------------------------------------------------
 # Device identity (override with --vid/--pid). FNB-C2 == FNB58-class.
@@ -471,8 +472,8 @@ def run(args):
         csv_path = args.csv
     else:
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        csv_path = os.path.join(_HERE, "fnb_power_%s.csv" % stamp)
-    json_path = args.json_out or os.path.join(_HERE, "fnb_latest.json")
+        csv_path = os.path.join(str(captures_dir()), "fnb_power_%s.csv" % stamp)
+    json_path = args.json_out or os.path.join(str(captures_dir()), "fnb_latest.json")
 
     csv_file, csv_w = open_csv(csv_path)
     acc = Accumulator()

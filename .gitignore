@@ -1,252 +1,62 @@
-﻿# Zephyr build output
+# .gitignore — AMI LwM2M Node
+#
+# Rule of thumb: this file lists CATEGORIES, never individual filenames. If you
+# find yourself adding one entry per file, the layout is wrong — put the output
+# in a directory that is already ignored instead.
+#
+# History: this file once held 183 patterns, ~120 of them the names of one-off
+# scratch files (prj_bisect3.conf, tools/recover_and_test3.py, com11_*.txt) and
+# ~50 the shapes of capture filenames, one per bench tool. Both classes are gone:
+# scratch files were deleted (git remembers them), and every tool now writes to
+# captures/ via tools/lab_paths.py.
+
+# ---- Build output (regenerable) ----
 build/
+build_*/
+!build_archive/
 
-# IDE
-.vscode/
-*.swp
-*.swo
-*~
+# ---- Measurement data (regenerable by re-running the bench) ----
+# One home for every capture: PPK2, FNB-C2, soaks, voltage sweeps, monitor
+# history/reports. Tools resolve it through tools/lab_paths.captures_dir(),
+# overridable with AMI_CAPTURES_DIR.
+captures/
+logs/
+soak_logs/
+results/
 
-# Python
+# ---- Per-version build artefacts (tools/archive_build.py) ----
+# ELFs are ~30 MB each and git is the wrong store, but they MUST stay
+# retrievable on disk: RIDs 40/41 report raw mepc/ra and resolving them needs
+# the exact ELF of the build that was running (docs/PENDIENTES.md §2.2).
+# build_info.txt IS tracked, so we always know which hashes existed.
+build_archive/*/zephyr.elf
+build_archive/*/zephyr.bin
+build_archive/*/.config
+
+# ---- Vendored toolchains and binaries ----
+tools/openocd-esp32/
+*.exe
+*.bin
+*.pdf
+
+# ---- Operator-local runtime state (specific to one machine) ----
+tools/deployment_ledger.csv
+memory-bank/
+.claude/
+edge/
+
+# ---- Experimental / scratch tools (prefix convention) ----
+tools/_*.py
+
+# ---- Python ----
 __pycache__/
 *.pyc
 .venv/
 
-# OS
+# ---- Editors / OS ----
+.vscode/
+*.swp
+*.swo
+*~
 Thumbs.db
 .DS_Store
-
-# ---- Debug / temp files (not part of firmware) ----
-
-# TB Edge deployment & debug scripts
-edge/
-
-# Backup / old config files
-CMakeLists_boottest.txt
-CMakeLists_orig.txt
-CMakeLists_test.txt
-CMakeLists.txt.bak
-CMakeLists.txt.full_bak
-CMakeLists.txt.full_backup
-CMakeLists.txt.main_backup
-prj_bisect.conf
-prj_bisect2.conf
-prj_bisect3.conf
-prj_bisect_thread.conf
-prj_boottest.conf
-prj_full_debug.conf
-prj_orig.conf
-prj_test.conf
-prj.conf.ami_bak
-prj.conf.full_backup
-prj.conf.main_backup
-src/main.c.bak
-src/main_test.c
-tests/run_tests.exe
-boards/esp32c6_devkitc_hpcore.conf
-boards/esp32c6_devkitc_hpcore.overlay
-
-# All runtime output / log / capture files
-*.log
-boot_output.txt
-diag_output.txt
-last_capture.bin
-build_log.txt
-build_*.txt
-build_b*.log
-build_fix*.log
-capture_*.txt
-flash_run.txt
-flash_log.txt
-flash_*.log
-flash_*.txt
-erase_log.txt
-wait_result.txt
-test_result.txt
-serial_capture.txt
-serial_diag_result.txt
-monitor_result.txt
-monitor_otbr_last.txt
-state_check.txt
-port_check.txt
-py_running.txt
-python_cmd.txt
-python_procs*.txt
-com11_*.txt
-dtr_rts_test.txt
-cfg_check.txt
-board_cmake*.txt
-ocd_flash.txt
-diag_*.txt
-full_ami_result.txt
-full_capture.txt
-hello_*.txt
-bisect_result.txt
-recover_result.txt
-recover2_result.txt
-ami_long_capture.txt
-atomic_recovery_run.txt
-atomic_recovery_boot.log
-boot_*.log
-boot_*.txt
-preopen_*.log
-hello_autoconf.txt
-hello_chosen.txt
-
-# Results directory (runtime output)
-results/
-
-# Root-level one-off scripts (superseded by tools/)
-check_otbr.py
-erase_nvs_reflash.py
-flash_boot_wait.py
-monitor_and_flash.py
-read_serial.py
-read_com11.py
-flash_now.bat
-do_build.ps1
-do_flash.ps1
-do_flash_slow.ps1
-do_recover.ps1
-
-# Stray directories
--Host
-
-# Experimental / underscore-prefix tools
-tools/_*.py
-
-# Duplicate/experimental tool variants
-tools/recover2.py
-tools/recover_and_test.py
-tools/recover_and_test2.py
-tools/recover_and_test3.py
-tools/recover_full.py
-tools/do_recover.py
-tools/do_flash.py
-tools/do_flash_capture.py
-tools/flash_and_capture.py
-tools/flash_and_join.py
-tools/flash_on_boot.py
-tools/flash_xiao.py
-tools/force_flash.py
-tools/flash_immediate.py
-tools/wait_and_flash.py
-tools/robust_flash.py
-tools/quick_flash.py
-tools/full_capture.py
-tools/simple_capture.py
-tools/capture_boot.py
-tools/capture_boot_with_reset.py
-tools/capture_clean.py
-tools/capture_only.py
-tools/erase_and_flash.py
-tools/read_serial.py
-tools/read_serial_win32.py
-tools/read_no_reset.py
-tools/serial_monitor_win32.py
-tools/serial_diag2.py
-tools/run_diag.ps1
-tools/atomic_recovery.py
-tools/bisect_build.py
-tools/check_build_state.py
-tools/analyze_failures.py
-tools/analyze_bin.py
-tools/test_dtr_rts.py
-tools/restore_and_test.py
-tools/flash_test.py
-
-# Required E2E automation scripts (keep versioned)
-!tools/read_no_reset.py
-!tools/restore_and_test.py
-
-# Benchmark / thesis / analysis scripts (dev-only, not part of firmware workflow)
-tools/benchmark_*.py
-tools/analyze_benchmark*.py
-tools/graph_benchmark.py
-tools/generate_thesis_figures.py
-tools/update_dashboard*.py
-tools/ami_watchdog*.py
-tools/ami_watchdog*.ps1
-
-# Test / scratch source
-src/boot_test.c
-
-# Large binaries & PDFs
-tesis-rev22.pdf
-*.pdf
-*.bin
-
-# Memory bank (contexto local del agente)
-memory-bank/
-
-# Scripts locales de build/flash (rutas absolutas a este PC)
-build_flash.ps1
-setup_env.ps1
-
-# Local scratch inputs
-plink_in.txt
-
-# Claude Code agent local state
-.claude/
-
-# Deployment ledger (operator-specific runtime state, not firmware code)
-tools/deployment_ledger.csv
-soak_logs/
-
-# ---- v0.7.5 session cleanup (2026-06-16) ----
-# Vendored OpenOCD/ESP toolchain (13 MB of binaries — NEVER commit)
-tools/openocd-esp32/
-*.exe
-# Runtime logs/captures directory
-logs/
-# Per-board QA + benchmark + soak RESULT data (outputs, regenerable — not source)
-tools/board_qa/
-tools/board_qa_results.csv
-tools/bench_*.csv
-tools/bench_*.json
-tools/*_results.csv
-tools/rotation_watch*.csv
-tools/phase0_report.csv
-tools/soak_*.csv
-
-# ---- v0.7.14 session cleanup (2026-06-22) ----
-# Sysbuild output dir built in-repo (1800+ artifacts — NEVER commit)
-build_sim/
-# Transient tool outputs / capture logs / live-state snapshots
-tools/*.out
-tools/*_last.json
-tools/flicker_log*.csv
-
-# Monitor output (regenerated hourly by tools/node_monitor.py — data, not source)
-tools/node_history_*.json
-tools/node_report_*.html
-tools/node_monitor_cron.log
-
-# ---- bench lab captures (2026-08-05) — DATA, not source ----
-# FNB-C2 power captures: ~640 files and growing, one per logger run. The
-# analysis tools glob them from disk; the conclusions live in docs/ and memory.
-tools/fnb_power_*.csv
-tools/fnb_latest.json
-# Correlated burst captures (tools/lab_burst_capture.py) + their FNB side-files
-tools/lab_burst_*.csv
-tools/lab_burst_*.log
-# Live bench state written every refresh cycle by the e2e monitor / dashboard
-tools/lab_e2e_snapshot.json
-tools/lab_e2e_history.csv
-tools/lab_dashboard_live.html
-tools/lab_dashboard_served.html
-tools/lab_nodes.json
-
-# ---- per-version build artefacts (tools/archive_build.py) ----
-# ELFs are ~10 MB each and git is the wrong store for them, but they MUST be
-# kept somewhere retrievable: RIDs 40/41 report raw mepc/ra and resolving them
-# needs the exact ELF of the build that was running (docs/PENDIENTES.md 2.2).
-# The manifest is tracked so we at least know which hashes existed.
-build_archive/*/zephyr.elf
-build_archive/*/zephyr.bin
-build_archive/*/.config
-tools/lab_soak_*.csv
-# PPK2 captures: ~42M samples each (hundreds of MB) — data, not source
-tools/lab_ppk2_*.csv
-tools/lab_ppk2_*.log
-tools/lab_vsweep_*.csv

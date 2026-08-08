@@ -39,6 +39,7 @@ import statistics as st
 import sys
 import threading
 import time
+from lab_paths import captures_dir
 
 HERE = pathlib.Path(__file__).resolve().parent
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -110,7 +111,7 @@ def main() -> int:
     ppk.use_source_meter()
 
     con = Console(args.console)
-    out = HERE / f"lab_vsweep_{args.mode}_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+    out = captures_dir() / f"lab_vsweep_{args.mode}_{time.strftime('%Y%m%d_%H%M%S')}.csv"
     with out.open("w", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow(
             ["mv", "alive", "booted", "attached", "i_median_ma", "i_peak_ma",
